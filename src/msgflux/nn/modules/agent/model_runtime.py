@@ -1,5 +1,6 @@
 # ruff: noqa: A002
 
+import asyncio
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -731,7 +732,7 @@ class AgentModelRuntimeMixin:
                     output=response,
                 ),
             )
-        except Exception as error:
+        except (Exception, asyncio.CancelledError) as error:
             raise _BeforeRunEndHookError(error) from error
         self._finalize_chat_turn(run_end.messages, raw_response)
         self._checkpoint_save(
@@ -838,7 +839,7 @@ class AgentModelRuntimeMixin:
                     output=response,
                 ),
             )
-        except Exception as error:
+        except (Exception, asyncio.CancelledError) as error:
             raise _BeforeRunEndHookError(error) from error
         self._finalize_chat_turn(run_end.messages, raw_response)
         await self._acheckpoint_save(

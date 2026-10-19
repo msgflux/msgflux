@@ -41,7 +41,7 @@ from msgflux.tasks import SQLiteTaskStore
         ),
         (
             "request_interrupt",
-            "BEFORE INSERT ON task_activity WHEN NEW.summary='Interrupt requested.'",
+            "BEFORE INSERT ON task_activity WHEN NEW.summary='Task interrupted.'",
             lambda store: store.request_interrupt("task"),
             lambda store, before: (
                 store.get("task").metadata.get("interrupt_requested") is not True

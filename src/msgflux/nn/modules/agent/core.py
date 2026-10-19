@@ -601,7 +601,11 @@ class Agent(
                     model_response,
                     **inputs,
                 )
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                asyncio.CancelledError,
+            ) as exc:
                 self._settle_terminal_run(inputs, "interrupted", exc)
                 self._raise_interrupted_from_abort(inputs, exc)
             except ApprovalReconciliationRequiredError:
@@ -613,7 +617,8 @@ class Agent(
                 settled_error = self._settle_processing_error(inputs, exc)
                 if settled_error is exc:
                     raise
-                raise settled_error from exc
+                # Unwrap the hook error without chaining it back to its marker.
+                raise settled_error from settled_error.__cause__
             return response
 
     @resource_call
@@ -699,7 +704,8 @@ class Agent(
                 settled_error = await self._asettle_processing_error(inputs, exc)
                 if settled_error is exc:
                     raise
-                raise settled_error from exc
+                # Unwrap the hook error without chaining it back to its marker.
+                raise settled_error from settled_error.__cause__
             return response
 
     @staticmethod

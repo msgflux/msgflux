@@ -30,7 +30,7 @@ from msgflux.nn.hooks import (
 )
 from msgflux.nn.modules.tool import ToolLibrary
 from msgflux.runtime import AbortSignal, ExecutionScope
-from msgflux.runtime.context import execution_context
+from msgflux.runtime.context import execution_context, get_execution_context
 from msgflux.tools.config import tool_config
 from msgflux.tools.runtime import FeedbackSpec, ToolIntent, ToolOutcome
 
@@ -561,6 +561,185 @@ async def test_async_extension_removal_wakes_safely_from_worker_thread():
     assert await run == "ok"
     await asyncio.wait_for(removal, timeout=1)
     assert cleaned.is_set()
+
+
+@pytest.mark.asyncio
+async def test_cancelled_async_extension_removal_keeps_cleanup_after_active_run():
+    started = asyncio.Event()
+    release = asyncio.Event()
+    cleaned = []
+
+    class AsyncCleanupExtension(AgentExtension):
+        def __init__(self):
+            super().__init__("cancelled_cleanup")
+
+        async def block(self, ctx):
+            started.set()
+            await release.wait()
+            return ctx
+
+        def hooks(self):
+            return (Hook(event="transform_system_prompt", handler=self.block),)
+
+        def on_remove(self, _agent):
+            cleaned.append("sync")
+
+        async def aon_remove(self, _agent):
+            cleaned.append("async")
+
+    agent = Agent(name="agent", model=_RecordingModel())
+    handle = agent.register_extension("cancelled_cleanup", AsyncCleanupExtension())
+    run = asyncio.create_task(agent.acall("first"))
+    await asyncio.wait_for(started.wait(), timeout=2)
+
+    removal = asyncio.create_task(handle.aremove())
+    await asyncio.sleep(0)
+    removal.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await removal
+
+    release.set()
+    assert await asyncio.wait_for(run, timeout=3) == "ok"
+    await asyncio.wait_for(handle.aremove(), timeout=2)
+
+    assert cleaned == ["async"]
+    assert not handle.active
+    assert "cancelled_cleanup" not in agent._pending_extensions
+    assert "cancelled_cleanup" not in agent.tool_library.library
+
+    second = agent.register_extension("cancelled_cleanup", AsyncCleanupExtension())
+    await asyncio.wait_for(second.aremove(), timeout=2)
+    assert cleaned == ["async", "async"]
+    await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_aclose_observes_async_cleanup_after_remove_caller_cancelled():
+    cleanup_started = asyncio.Event()
+    release_cleanup = asyncio.Event()
+    cleanup_error = OSError("extension cleanup failed")
+
+    class AsyncCleanupExtension(AgentExtension):
+        def __init__(self):
+            super().__init__("owned_cleanup")
+
+        async def aon_remove(self, _agent):
+            cleanup_started.set()
+            await release_cleanup.wait()
+            raise cleanup_error
+
+    agent = Agent(name="agent", model=_RecordingModel())
+    handle = agent.register_extension("owned_cleanup", AsyncCleanupExtension())
+    removal = asyncio.create_task(handle.aremove())
+    await asyncio.wait_for(cleanup_started.wait(), timeout=2)
+    removal.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await removal
+
+    shutdown = asyncio.create_task(agent.aclose())
+    await asyncio.sleep(0)
+    assert not shutdown.done()
+    release_cleanup.set()
+    with pytest.raises(BaseExceptionGroup) as raised:
+        await asyncio.wait_for(shutdown, timeout=3)
+    assert any(error is cleanup_error for error in raised.value.exceptions)
+    assert "owned_cleanup" in agent._pending_extensions
+
+
+@pytest.mark.asyncio
+async def test_aclose_keeps_managed_checkpoint_open_until_async_cleanup_finishes(
+    tmp_path,
+):
+    started, release = asyncio.Event(), asyncio.Event()
+    captured = []
+    order = []
+    scope = ExecutionScope(thread_id="thread", run_id="run")
+
+    class ManagedCleanupExtension(AgentExtension):
+        def __init__(self):
+            super().__init__("managed_cleanup")
+
+        def capture(self, _ctx):
+            captured.append(get_execution_context()["checkpoint_store"])
+
+        def hooks(self):
+            return (Hook(event="after_run_end", handler=self.capture),)
+
+        async def aon_remove(self, agent):
+            started.set()
+            await release.wait()
+            state = captured[0].load_state(agent.get_module_name(), "thread", "run")
+            assert state["status"] == "completed"
+            order.append("cleanup")
+
+    agent = Agent(name="agent", model=_RecordingModel(), agent_dir=tmp_path)
+    handle = agent.register_extension("managed_cleanup", ManagedCleanupExtension())
+    removal = shutdown = None
+    try:
+        assert await agent.acall("first", scope=scope) == "ok"
+        store = captured[0]
+        close = store.close
+
+        def record_close():
+            order.append("close")
+            close()
+
+        store.close = record_close
+        removal = asyncio.create_task(handle.aremove())
+        await asyncio.wait_for(started.wait(), timeout=2)
+        removal.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await removal
+        shutdown = asyncio.create_task(agent.aclose())
+        await asyncio.sleep(0)
+        assert not shutdown.done()
+        release.set()
+        await asyncio.wait_for(shutdown, timeout=3)
+        await agent.aclose()
+        assert order == ["cleanup", "close"]
+    finally:
+        release.set()
+        await asyncio.gather(
+            *(task for task in (removal, shutdown) if task is not None),
+            return_exceptions=True,
+        )
+        await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_rejected_async_extension_cleanup_task_submission_is_retryable():
+    class AsyncCleanupExtension(AgentExtension):
+        def __init__(self):
+            super().__init__("rejected_cleanup")
+
+        async def aon_remove(self, _agent):
+            pass
+
+    agent = Agent(name="agent", model=_RecordingModel())
+    extension = AsyncCleanupExtension()
+    handle = agent.register_extension("rejected_cleanup", extension)
+    loop = asyncio.get_running_loop()
+    task_factory = loop.get_task_factory()
+
+    def reject_cleanup_task(_loop, _coroutine, **_kwargs):
+        raise RuntimeError("task submission rejected")
+
+    loop.set_task_factory(reject_cleanup_task)
+    try:
+        with pytest.raises(RuntimeError, match="task submission rejected"):
+            await handle.aremove()
+    finally:
+        loop.set_task_factory(task_factory)
+
+    assert handle.active
+    assert "rejected_cleanup" in agent.extensions
+    assert "rejected_cleanup" not in agent._pending_extensions
+    assert "rejected_cleanup" not in agent._extension_async_cleanup_waiters
+    assert "rejected_cleanup" not in agent._extension_async_cleanup_tasks
+
+    await handle.aremove()
+    assert not handle.active
+    await agent.aclose()
 
 
 @pytest.mark.asyncio

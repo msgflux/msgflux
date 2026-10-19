@@ -476,14 +476,20 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
                 return None
             if task.status in {"completed", "failed", "interrupted"}:
                 return deepcopy(task)
-            task.updated_at = utc_now_isoformat()
+            if task.status == "queued" and task_id not in self._worker_leases:
+                return self.interrupt(
+                    task_id,
+                    reason="Task was cancelled before it started running.",
+                )
+            now = utc_now_isoformat()
+            task.updated_at = now
             task.metadata["interrupt_requested"] = True
             self._activities.setdefault(task_id, []).append(
                 TaskActivity(
                     task_id=task_id,
                     kind="status",
                     summary="Interrupt requested.",
-                    created_at=task.updated_at,
+                    created_at=now,
                     metadata={"status": task.status},
                 )
             )

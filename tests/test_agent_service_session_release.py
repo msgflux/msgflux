@@ -293,8 +293,10 @@ async def test_release_rejects_worker_finalizer_after_worker_map_is_cleared():
 
 
 @pytest.mark.asyncio
+@pytest.mark.parametrize("async_removal", [False, True])
 async def test_managed_stream_finalizer_pins_resources_through_cache_and_shutdown(
     tmp_path,
+    async_removal,
 ):
     finalizer_entered = Event()
     finish_finalizer = Event()
@@ -336,7 +338,14 @@ async def test_managed_stream_finalizer_pins_resources_through_cache_and_shutdow
         assert await agent.acall("hello", scope=scope) is response
         assert await asyncio.to_thread(finalizer_entered.wait, 3)
         assert agent._owned_threads[thread.thread_id].active == 1
-        agent.remove_extension("held-finalizer")
+        if async_removal:
+            removal = asyncio.create_task(agent.aremove_extension("held-finalizer"))
+            await asyncio.sleep(0)
+            removal.cancel()
+            with pytest.raises(asyncio.CancelledError):
+                await removal
+        else:
+            agent.remove_extension("held-finalizer")
         assert agent._pending_extensions["held-finalizer"] is extension
         await service._cache._sweep_once()
         assert not resources._closed

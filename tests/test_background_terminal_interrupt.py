@@ -130,7 +130,11 @@ def test_interrupt_racing_with_terminal_settlement_reports_latest_status(
         result = TaskInterruptTool()("race", handle=Handle())
         task = task_store.get("race")
         assert result["status"] == terminal_status
-        assert result["message"] == "Task already reached a terminal state."
+        assert result["message"] == (
+            "Task is interrupted."
+            if terminal_status == "interrupted"
+            else "Task already reached a terminal state."
+        )
         assert task.status == terminal_status
         assert task.metadata["interrupt_requested"] is False
         assert not any(
@@ -154,3 +158,77 @@ def test_interrupt_racing_with_terminal_settlement_reports_latest_status(
             )
         finally:
             reopened.close()
+
+
+def test_interrupt_store_failure_does_not_cancel_real_queued_dispatch(tmp_path):
+    import sqlite3
+    from concurrent.futures import ThreadPoolExecutor
+
+    from msgflux._private.executor import Executor
+    from msgflux.tools.builtin.task_tool import TaskInterruptTool
+    from msgflux.tools.handles import ToolLibraryHandle
+
+    blockers_release = threading.Event()
+    blocker_started = threading.Event()
+    effect_ran = threading.Event()
+
+    @mf.tool_config(background=True)
+    def queued_worker() -> str:
+        """Record execution if the queued background task gets scheduled."""
+        effect_ran.set()
+        return "executed"
+
+    task_store = SQLiteTaskStore(str(tmp_path / "queued-interrupt.sqlite3"))
+    library = ToolLibrary(
+        name="queued_interrupt", tools=[queued_worker], task_store=task_store
+    )
+    executor = Executor.get_instance()
+    previous_pool = executor.thread_pool
+    executor.thread_pool = ThreadPoolExecutor(
+        max_workers=1, initializer=executor._mark_thread_pool_worker
+    )
+    blocker = executor.submit(
+        lambda: (blocker_started.set(), blockers_release.wait(timeout=30))
+    )
+    future = None
+    try:
+        assert blocker_started.wait(timeout=5)
+        launch = library.run("queued_worker", {})
+        task_id = launch.split("task_id='")[1].split("'")[0]
+        future = library.get_background_dispatcher().get_task_future(task_id)
+        assert future is not None
+        assert not future.running()
+
+        with task_store._lock:
+            task_store._conn.execute(
+                "CREATE TRIGGER reject_interrupt BEFORE UPDATE ON tasks "
+                "WHEN NEW.status = 'interrupted' BEGIN "
+                "SELECT RAISE(ABORT, 'interrupt persistence failed'); END"
+            )
+            task_store._conn.commit()
+        with pytest.raises(
+            sqlite3.IntegrityError, match="interrupt persistence failed"
+        ):
+            TaskInterruptTool()(task_id, handle=ToolLibraryHandle(library))
+
+        assert not future.cancelled()
+        assert task_store.get(task_id).status == "queued"
+        with task_store._lock:
+            task_store._conn.execute("DROP TRIGGER reject_interrupt")
+            task_store._conn.commit()
+
+        retry = library.run("task_interrupt", {"task_id": task_id})
+        assert retry["status"] == "interrupted"
+        assert future.cancelled()
+        assert task_store.get(task_id).status == "interrupted"
+        blockers_release.set()
+        blocker.result(timeout=5)
+        assert not effect_ran.is_set()
+    finally:
+        blockers_release.set()
+        blocker.result(timeout=5)
+        if future is not None and not future.cancelled():
+            future.exception(timeout=5)
+        executor.thread_pool.shutdown(wait=True)
+        executor.thread_pool = previous_pool
+        task_store.close()

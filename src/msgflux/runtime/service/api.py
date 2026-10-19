@@ -1055,7 +1055,14 @@ class AgentService:
         """Wait for this attempt; cancelling the waiter leaves work running."""
         worker = self._workers.get((thread_id, request_id))
         if worker is not None:
-            await asyncio.shield(worker.task)
+            # Completion of a cancelled worker is not cancellation of its observer.
+            await asyncio.wait((worker.task,))
+            if worker.task.cancelled():
+                receipt = self.receipt(thread_id, request_id)
+                if receipt.status not in {"accepted", "running"}:
+                    return receipt
+            # Preserve execution/settlement errors when no terminal receipt exists.
+            worker.task.result()
         return self._wait_receipt(thread_id, request_id)
 
     @asynccontextmanager
@@ -1264,6 +1271,12 @@ class AgentService:
         )
         if state is None:
             raise ServiceRecoveryRequiredError("A started run has no checkpoint")
+        try:
+            session.agent._validated_checkpoint_messages(state)
+        except ValueError as error:
+            raise ServiceRecoveryRequiredError(
+                f"The checkpoint conversation history is malformed: {error}"
+            ) from error
         latest = store.load_latest_run(session.namespace, receipt.thread_id)
         if (
             state.get("status") not in {"completed", "interrupted"}

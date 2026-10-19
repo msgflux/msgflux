@@ -614,6 +614,11 @@ dictionary. This is intentional—the retry restores the same execution instead
 of adding another user message. Use the same `thread_id` with a new `run_id`
 when you want to continue the conversation with fresh input.
 
+Checkpoint conversation history is stored as a mapping whose `items` value is
+a list of message-item mappings. Missing or empty history remains valid, but an
+explicitly malformed history is rejected before the Agent resumes or continues
+the thread, so it cannot silently replace the saved timeline with an empty one.
+
 ### Interaction timeline
 
 `ChatMessages` persists one provider-neutral timeline. Messages, reasoning,
@@ -931,6 +936,13 @@ child_inbox = agent_inbox.fork(
 ```
 
 ### Inspecting And Rendering Inbox Items
+
+The Agent acknowledges delivered notifications only after their checkpoint is
+saved. If checkpoint persistence fails, it releases the notification leases for
+retry. An ordinary failure while releasing those leases is attached as a note
+to the checkpoint error; it does not hide a revision conflict or trigger another
+checkpoint write. A failed release leaves the notification pending under its
+existing lease until release is retried or that lease expires.
 
 `peek()` reads pending notifications without removing them:
 

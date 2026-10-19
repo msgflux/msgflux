@@ -70,6 +70,7 @@ def test_metadata_update_racing_with_interrupt_preserves_latest_metadata(
     first = SQLiteTaskStore(database_path)
     second = SQLiteTaskStore(database_path)
     first.create("worker", task_id="shared")
+    first.claim_worker("shared", "owner", lease_seconds=30)
     read_complete = Event()
     interrupt_started = Event()
     interrupt_begin_started = Event()
@@ -116,7 +117,7 @@ def test_metadata_update_racing_with_interrupt_preserves_latest_metadata(
             assert interrupt.result(timeout=3).metadata["interrupt_requested"] is True
 
         task = first.get("shared")
-        assert task.status == "queued"
+        assert task.status == "running"
         assert task.metadata["external"] == "kept"
         assert task.metadata["interrupt_requested"] is True
         assert any(
@@ -128,7 +129,7 @@ def test_metadata_update_racing_with_interrupt_preserves_latest_metadata(
         second.close()
 
     def assert_persisted(task, store):
-        assert task.status == "queued"
+        assert task.status == "running"
         assert task.metadata["external"] == "kept"
         assert task.metadata["interrupt_requested"] is True
         assert any(

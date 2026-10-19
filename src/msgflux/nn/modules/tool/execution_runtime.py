@@ -896,6 +896,16 @@ class ToolLibraryExecutionMixin:
         emit_event(
             EventType.HANDLER_ERROR, {"hook": "transform_tool_output", "error": message}
         )
+        if isinstance(
+            outcome.error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ),
+        ):
+            return replace(outcome, result=None)
         return replace(outcome, result=None, error=message)
 
     @staticmethod

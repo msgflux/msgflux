@@ -939,3 +939,68 @@ async def test_configured_agent_workspace_is_inherited_before_execution_context(
         await service.aclose()
         service.store.close()
         await workspace.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_waiter", [False, True])
+async def test_worker_cancellation_does_not_cancel_independent_waiter(cancel_waiter):
+    entered, release, settled = asyncio.Event(), asyncio.Event(), asyncio.Event()
+    checkpoints = InMemoryCheckpointStore()
+    agent = _agent("cancelled-worker")
+    agent.checkpoint_store = checkpoints
+
+    async def cancel_model(**_kwargs):
+        entered.set()
+        await release.wait()
+        raise asyncio.CancelledError("model request cancelled")
+
+    agent.generator.aforward = AsyncMock(side_effect=cancel_model)
+    journal = SQLiteServiceStore()
+    finish = journal.finish
+
+    def record_finish(*args, **kwargs):
+        result = finish(*args, **kwargs)
+        settled.set()
+        return result
+
+    journal.finish = record_finish
+    service = _service(
+        lambda _: AgentSession(agent, checkpoint_store=checkpoints), store=journal
+    )
+    thread = await service.open_thread("main", thread_id="cancelled-worker-thread")
+    waiter = None
+    try:
+        receipt = await service.prompt(
+            thread.thread_id, "question", request_id="request"
+        )
+        await asyncio.wait_for(entered.wait(), 3)
+        waiter = asyncio.create_task(service.wait(thread.thread_id, receipt.request_id))
+        await asyncio.sleep(0)
+        if cancel_waiter:
+            waiter.cancel("observer cancelled")
+            with pytest.raises(asyncio.CancelledError, match="observer cancelled"):
+                await waiter
+            assert (
+                service.receipt(thread.thread_id, receipt.request_id).status
+                == "running"
+            )
+        release.set()
+        if not cancel_waiter:
+            result = await asyncio.wait_for(waiter, 3)
+            assert not waiter.cancelled()
+            assert result.status == "interrupted"
+        await asyncio.wait_for(settled.wait(), 3)
+        result = await service.wait(thread.thread_id, receipt.request_id)
+        state = checkpoints.load_state(
+            "cancelled-worker", thread.thread_id, receipt.run_id
+        )
+        assert result.status == state["status"] == "interrupted"
+        assert agent.generator.aforward.await_count == 1
+    finally:
+        release.set()
+        if waiter is not None:
+            waiter.cancel()
+            await asyncio.gather(waiter, return_exceptions=True)
+        await service.aclose()
+        journal.close()
+        await agent.aclose()
