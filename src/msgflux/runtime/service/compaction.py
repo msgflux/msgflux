@@ -33,7 +33,9 @@ async def compact(service, thread_id, run_id=None):
         )
         service._maintenance_tasks[thread_id] = task
         task.add_done_callback(lambda _: _finished(service, thread_id, task))
-    return await task
+    # The request may disconnect, but service-owned maintenance keeps running.
+    await asyncio.wait((task,))
+    return task.result()
 
 
 def _finished(service, thread_id, task):
