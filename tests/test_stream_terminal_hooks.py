@@ -231,16 +231,9 @@ async def test_service_stream_precommit_control_matches_checkpoint(kind):
         receipt = await service.prompt(
             thread.thread_id, "question", request_id="request"
         )
-        if kind == "cancel":
-            with pytest.raises(asyncio.CancelledError):
-                await asyncio.wait_for(
-                    service.wait(thread.thread_id, receipt.request_id), 3
-                )
-            settled = service.receipt(thread.thread_id, receipt.request_id)
-        else:
-            settled = await asyncio.wait_for(
-                service.wait(thread.thread_id, receipt.request_id), 3
-            )
+        settled = await asyncio.wait_for(
+            service.wait(thread.thread_id, receipt.request_id), 3
+        )
         state = checkpoints.load_state(
             "stream-service", thread.thread_id, receipt.run_id
         )

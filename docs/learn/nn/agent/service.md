@@ -147,8 +147,11 @@ application needs persistence. Nothing is written to the home directory by defau
 
 `prompt()` returns after its admission record is committed and its worker is
 scheduled. The returned receipt initially has status `accepted`; `receipt()` or
-`wait()` returns the current state. A thread can have one foreground execution
-at a time, while different threads run concurrently.
+`wait()` returns the current state. If the worker is cancelled and its journal
+is settled, `wait()` returns that terminal receipt. Cancelling the caller
+waiting on `wait()` still raises `CancelledError` and leaves the worker running.
+Worker settlement failures continue to propagate. A thread can have one
+foreground execution at a time, while different threads run concurrently.
 
 A repeated `(thread_id, request_id)` with the same input returns the same run.
 Changing the prompt under the same identity raises `ServiceConflictError`.
