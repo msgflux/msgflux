@@ -68,7 +68,7 @@ class AgentCompactionMixin:
             BeforeCompaction(
                 scope=scope,
                 vars=vars,
-                messages=messages,
+                messages=messages.copy(),
                 estimated_input_tokens=estimate.input_tokens,
                 estimate_source=estimate.source,
                 context_capacity=getattr(model, "context_capacity", None),
@@ -168,7 +168,7 @@ class AgentCompactionMixin:
             BeforeCompaction(
                 scope=scope,
                 vars=vars,
-                messages=messages,
+                messages=messages.copy(),
                 estimated_input_tokens=estimate.input_tokens,
                 estimate_source=estimate.source,
                 context_capacity=getattr(model, "context_capacity", None),
