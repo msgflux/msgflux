@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import logging
 import math
 import os
 import stat
@@ -32,7 +33,9 @@ from msgflux.runtime.service.local.manifest import (
     validate_factory_path,
 )
 from msgflux.runtime.service.local.records import LocalServiceRecord, LocalServiceStatus
+from msgflux.utils.errors import exception_message
 
+_logger = logging.getLogger(__name__)
 _reapers: set[asyncio.Task[None]] = set()
 _cleanups: set[asyncio.Task[None]] = set()
 _STARTUP_LOCK = "startup.lock"
@@ -322,16 +325,21 @@ async def _start_and_wait(
     process = _start_child(runtime_dir, factory, cwd, manifest=manifest)
     try:
         return await _wait_for_child(process, runtime_dir, factory, manifest, deadline)
-    except BaseException:
+    except BaseException as error:
         cleanup = asyncio.create_task(_stop_owned_child(process))
         _cleanups.add(cleanup)
         cleanup.add_done_callback(_cleanups.discard)
         while not cleanup.done():
             try:
-                await asyncio.shield(cleanup)
+                await asyncio.wait((cleanup,))
             except asyncio.CancelledError:
                 continue
-        cleanup.result()
+        try:
+            cleanup.result()
+        except BaseException as cleanup_error:
+            error.add_note(
+                f"Local daemon child cleanup failed: {exception_message(cleanup_error)}"
+            )
         raise
 
 
@@ -432,6 +440,7 @@ def _start_child(
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(log_path, flags, 0o600)
+    process: subprocess.Popen[bytes]
     try:
         metadata = os.fstat(descriptor)
         if not stat.S_ISREG(metadata.st_mode) or metadata.st_uid != os.getuid():
@@ -453,7 +462,7 @@ def _start_child(
             if factory is None:
                 raise ValueError("provide exactly one of factory or config")
             command.extend(("--factory", factory))
-        return subprocess.Popen(  # noqa: S603
+        process = subprocess.Popen(  # noqa: S603
             command,
             cwd=cwd,
             stdin=subprocess.DEVNULL,
@@ -462,8 +471,23 @@ def _start_child(
             close_fds=True,
             start_new_session=True,
         )
-    finally:
+    except BaseException as error:
+        try:
+            os.close(descriptor)
+        except OSError as close_error:
+            error.add_note(
+                "Local daemon log descriptor cleanup failed: "
+                f"{exception_message(close_error)}"
+            )
+        raise
+    try:
         os.close(descriptor)
+    except OSError as close_error:
+        _logger.warning(
+            "Local daemon log descriptor cleanup failed: %s",
+            exception_message(close_error),
+        )
+    return process
 
 
 async def _wait_for_child(
