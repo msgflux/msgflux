@@ -28,6 +28,7 @@ from msgflux.runtime.workspace.receipts import (
     task_command_receipts,
 )
 from msgflux.runtime.workspace.references import encode_workspace_reference
+from msgflux.utils.errors import exception_message
 
 ProcessOutputCallback = Callable[[Literal["stdout", "stderr"], bytes], Awaitable[None]]
 MAX_PROCESS_OUTPUT_CHUNK = 65_536
@@ -321,33 +322,39 @@ class ExecutionEnvironment:
                     await_with_abort(operation, scope.abort_signal),
                     timeout=request.timeout_seconds,
                 )
-        except BaseException:
+            if not isinstance(result, ProcessResult):
+                raise TypeError("Process executor must return ProcessResult")
+            if on_output is not None and (result.stdout or result.stderr):
+                raise RuntimeError(
+                    "Streaming process executor returned duplicate buffered output"
+                )
+            if len(result.stdout) + len(result.stderr) > request.max_output_bytes:
+                raise RuntimeError("Process executor violated its output limit")
+            if on_output is not None and streamed_bytes > request.max_output_bytes:
+                raise RuntimeError("Process executor violated its output limit")
             if receipt_execution is not None and receipt_execution.receipt.state in {
                 "intent",
                 "launched",
             }:
-                await receipt_execution.update("unknown")
+                await receipt_execution.update(
+                    "completed",
+                    returncode=result.returncode,
+                    stdout=result.stdout,
+                    stderr=result.stderr,
+                )
+        except BaseException as error:
+            if receipt_execution is not None and receipt_execution.receipt.state in {
+                "intent",
+                "launched",
+            }:
+                try:
+                    await receipt_execution.update("unknown")
+                except BaseException as receipt_error:
+                    error.add_note(
+                        "Command receipt update failed: "
+                        f"{exception_message(receipt_error)}"
+                    )
             raise
-        if not isinstance(result, ProcessResult):
-            raise TypeError("Process executor must return ProcessResult")
-        if on_output is not None and (result.stdout or result.stderr):
-            raise RuntimeError(
-                "Streaming process executor returned duplicate buffered output"
-            )
-        if len(result.stdout) + len(result.stderr) > request.max_output_bytes:
-            raise RuntimeError("Process executor violated its output limit")
-        if on_output is not None and streamed_bytes > request.max_output_bytes:
-            raise RuntimeError("Process executor violated its output limit")
-        if receipt_execution is not None and receipt_execution.receipt.state in {
-            "intent",
-            "launched",
-        }:
-            await receipt_execution.update(
-                "completed",
-                returncode=result.returncode,
-                stdout=result.stdout,
-                stderr=result.stderr,
-            )
         return result
 
 

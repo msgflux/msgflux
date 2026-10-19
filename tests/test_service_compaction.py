@@ -170,6 +170,121 @@ async def test_compaction_excludes_same_thread_without_blocking_other_threads(
 
 
 @pytest.mark.asyncio
+async def test_disconnected_compaction_waiter_does_not_cancel_service_operation(
+    monkeypatch,
+):
+    (
+        service,
+        agent,
+        _approvals,
+        _calls,
+        thread,
+        receipt,
+        _review,
+        _compactor,
+    ) = await approval_compaction_fixture()
+    entered, release, provider_cancelled = (
+        asyncio.Event(),
+        asyncio.Event(),
+        asyncio.Event(),
+    )
+    original = agent.model.acompact_context
+
+    async def slow(*args, **kwargs):
+        entered.set()
+        try:
+            await release.wait()
+        except asyncio.CancelledError:
+            provider_cancelled.set()
+            raise
+        return await original(*args, **kwargs)
+
+    monkeypatch.setattr(agent.model, "acompact_context", slow)
+    before = agent.checkpoint_store.load_state(
+        agent.get_module_name(), thread.thread_id, receipt.run_id
+    )
+    waiter = asyncio.create_task(service.compact(thread.thread_id))
+    maintenance = None
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        maintenance = service._maintenance_tasks[thread.thread_id]
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+
+        assert not provider_cancelled.is_set()
+        assert not maintenance.cancelled()
+        assert service._maintenance_tasks[thread.thread_id] is maintenance
+        assert (
+            agent.checkpoint_store.load_state(
+                agent.get_module_name(), thread.thread_id, receipt.run_id
+            )
+            == before
+        )
+
+        release.set()
+        assert (await maintenance).status == "completed"
+        assert any(
+            item.get("type") == "compaction"
+            for item in agent.checkpoint_store.load_state(
+                agent.get_module_name(), thread.thread_id, receipt.run_id
+            )["messages"]["items"]
+        )
+        await asyncio.sleep(0)
+        assert thread.thread_id not in service._maintenance_tasks
+    finally:
+        release.set()
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+async def test_disconnected_waiter_provider_failure_is_consumed_by_service(
+    monkeypatch,
+):
+    (
+        service,
+        agent,
+        _approvals,
+        _calls,
+        thread,
+        _receipt,
+        _review,
+        _compactor,
+    ) = await approval_compaction_fixture()
+    entered, release = asyncio.Event(), asyncio.Event()
+    provider_error = RuntimeError("late compaction provider failure")
+    loop = asyncio.get_running_loop()
+    original_handler = loop.get_exception_handler()
+    unhandled = []
+    loop.set_exception_handler(lambda _loop, context: unhandled.append(context))
+
+    async def fail_after_release(*_args, **_kwargs):
+        entered.set()
+        await release.wait()
+        raise provider_error
+
+    monkeypatch.setattr(agent.model, "acompact_context", fail_after_release)
+    waiter = asyncio.create_task(service.compact(thread.thread_id))
+    try:
+        await asyncio.wait_for(entered.wait(), 2)
+        maintenance = service._maintenance_tasks[thread.thread_id]
+        waiter.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await waiter
+        assert service._maintenance_tasks[thread.thread_id] is maintenance
+
+        release.set()
+        await asyncio.wait_for(asyncio.wait((maintenance,)), 2)
+        await asyncio.sleep(0)
+        assert thread.thread_id not in service._maintenance_tasks
+        assert unhandled == []
+    finally:
+        release.set()
+        loop.set_exception_handler(original_handler)
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
 async def test_service_shutdown_cancels_compaction_before_closing_resources(
     monkeypatch,
 ):

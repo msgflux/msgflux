@@ -2953,6 +2953,13 @@ scope = mf.ExecutionScope(
 abort_signal.abort("User pressed Esc.")
 ```
 
+When a signal is attached, cancellation waits for the cancelled async operation's
+cleanup to finish. Repeated caller cancellation does not cut that cleanup short.
+Non-cooperative cleanup can delay interruption. The signal cannot forcibly stop
+synchronous code already running in a thread; that code must cooperate or finish.
+Independently dispatched background tasks have separate lifetimes and must be
+interrupted through their task handles.
+
 Providers observe the signal before output starts. After the first model token
 or tool call is produced, that model response is treated as committed; abort is
 then observed only at the next safe runtime boundary, such as before executing
@@ -2962,6 +2969,11 @@ with synthetic interrupted outputs, and the checkpoint/task status becomes
 `interrupted`. The canonical timeline retains that status for audit. If the
 timeline is later converted to Responses input, the corresponding
 `function_call_output` uses the protocol's `incomplete` wire status.
+
+A terminal streamed response may therefore finish with status `completed` after
+an interruption request: it has no later tool or model boundary at which to
+observe that signal. Accepting the request does not confirm that generation has
+stopped; inspect the settled run status.
 
 
 ## Revisioned checkpoints

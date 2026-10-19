@@ -872,9 +872,20 @@ class AgentService:
         self._workers[key] = worker
         # Clients may be observing another thread or a nested Agent. Never adopt
         # their ContextVars, event sink, task handle, or execution lineage.
-        worker.task = asyncio.create_task(
-            self._produce(record, worker), context=contextvars.Context()
-        )
+        coroutine = self._produce(record, worker)
+        try:
+            worker.task = asyncio.create_task(coroutine, context=contextvars.Context())
+        except BaseException as error:
+            if self._workers.get(key) is worker:
+                self._workers.pop(key, None)
+            try:
+                coroutine.close()
+            except BaseException as cleanup_error:
+                error.add_note(
+                    f"Could not close unsubmitted AgentService worker coroutine: "
+                    f"{cleanup_error}"
+                )
+            raise
         self._producer_tasks[worker.task] = worker
         worker.task.add_done_callback(self._producer_finished)
 
