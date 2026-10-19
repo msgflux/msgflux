@@ -92,10 +92,12 @@ async def await_with_abort(
         abort_signal.raise_if_aborted()
         return result
     finally:
-        if not operation.done():
-            operation.cancel()
+        try:
+            if not operation.done():
+                operation.cancel()
+                with suppress(asyncio.CancelledError):
+                    await operation
+        finally:
+            abort_waiter.cancel()
             with suppress(asyncio.CancelledError):
-                await operation
-        abort_waiter.cancel()
-        with suppress(asyncio.CancelledError):
-            await abort_waiter
+                await abort_waiter
