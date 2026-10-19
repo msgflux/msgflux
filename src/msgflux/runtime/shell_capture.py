@@ -11,6 +11,11 @@ from tempfile import TemporaryFile
 
 import msgspec
 
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.runtime.tool_results import ToolResultStore
 from msgflux.tools.shell import ShellCommandResult, ShellResult
 
@@ -170,4 +175,16 @@ class ShellOutputCapture:
                         (stderr, err_start, stderr.tell() - err_start),
                     )
                 )
-            return await _disk_call(self._finish, parts)
+            try:
+                return await _disk_call(self._finish, parts)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+            ):
+                raise
+            except Exception as error:
+                raise RuntimeError(
+                    f"Shell output processing failed ({type(error).__name__}). "
+                    "Commands may already have executed; do not retry automatically."
+                ) from error
