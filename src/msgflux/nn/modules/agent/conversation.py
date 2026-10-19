@@ -1,5 +1,6 @@
 # ruff: noqa: A001, A002
 
+import asyncio
 import contextvars
 import warnings
 from copy import deepcopy
@@ -1058,7 +1059,11 @@ class AgentConversationMixin:
                     settled, reason=str(error) if error is not None else None
                 )
             elif settled.get_active_turn() is not None:
-                settled.end_turn(event="complete" if status == "completed" else "fail")
+                settled.end_turn(
+                    event={"completed": "complete", "paused": "pause"}.get(
+                        status, "fail"
+                    )
+                )
 
         def release(settled, committed):
             if not tracked:
@@ -1084,9 +1089,10 @@ class AgentConversationMixin:
                 run_end = prepare(final_state)
                 try:
                     run_end = self._run_run_end_hook("before_run_end", run_end)
-                except Exception:
-                    close_turn(settled, "failed", final_state.error)
-                    self._checkpoint_save(settled, vars, status="failed")
+                except (Exception, asyncio.CancelledError) as error:
+                    outcome = self._terminal_error_outcome(error)
+                    close_turn(settled, outcome, error)
+                    self._checkpoint_save(settled, vars, status=outcome)
                     committed = True
                     raise
                 settled = run_end.messages
@@ -1110,9 +1116,10 @@ class AgentConversationMixin:
                 run_end = prepare(final_state)
                 try:
                     run_end = await self._arun_run_end_hook("before_run_end", run_end)
-                except Exception:
-                    close_turn(settled, "failed", final_state.error)
-                    await self._acheckpoint_save(settled, vars, status="failed")
+                except (Exception, asyncio.CancelledError) as error:
+                    outcome = self._terminal_error_outcome(error)
+                    close_turn(settled, outcome, error)
+                    await self._acheckpoint_save(settled, vars, status=outcome)
                     committed = True
                     raise
                 settled = run_end.messages

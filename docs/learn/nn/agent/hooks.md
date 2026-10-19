@@ -179,6 +179,9 @@ Control exceptions raised by `before_run_end` retain their meaning: pauses are
 checkpointed as `paused`, while interruptions and cancellation are checkpointed
 as `interrupted`. The failing hook is not invoked again during settlement;
 `after_run_end` observes the settled outcome. Ordinary hook errors record `failed`.
+The same checkpoint statuses apply when `before_run_end` runs during stream
+finalization: pause records `paused`, and interruption or cancellation records
+`interrupted`. The stream still propagates the hook error to its consumer.
 
 ```python
 agent = Agent(
