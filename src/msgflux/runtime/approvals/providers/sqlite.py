@@ -68,46 +68,62 @@ class SQLiteApprovalStore(ApprovalStore):
         values["binding"] = ApprovalBinding(**values["binding"])
         return ApprovalRecord(**values)
 
+    def _rollback_preserving_error(self, error: BaseException) -> None:
+        try:
+            if self._conn.in_transaction:
+                self._conn.rollback()
+        except BaseException as rollback_error:
+            error.add_note(
+                "SQLite approval rollback also failed "
+                f"({type(rollback_error).__name__})."
+            )
+
     def _update(
         self, namespace: str, request_id: str, update: UpdateApproval
     ) -> ApprovalRecord | None:
-        with self._lock, self._conn:
-            self._conn.execute("BEGIN IMMEDIATE")
-            row = self._conn.execute(
-                "SELECT payload FROM runtime_approvals "
-                "WHERE namespace=? AND request_id=?",
-                (namespace, request_id),
-            ).fetchone()
-            previous = self._decode(row[0]) if row is not None else None
-            record = update(previous)
-            if record is not None and record != previous:
-                self._conn.execute(
-                    """INSERT INTO runtime_approvals
+        with self._lock:
+            try:
+                self._conn.execute("BEGIN IMMEDIATE")
+                row = self._conn.execute(
+                    "SELECT payload FROM runtime_approvals "
+                    "WHERE namespace=? AND request_id=?",
+                    (namespace, request_id),
+                ).fetchone()
+                previous = self._decode(row[0]) if row is not None else None
+                record = update(previous)
+                if record is not None and record != previous:
+                    self._conn.execute(
+                        """INSERT INTO runtime_approvals
                     (namespace, request_id, thread_id, run_id, payload)
                     VALUES (?, ?, ?, ?, ?)
                     ON CONFLICT(namespace, request_id) DO UPDATE SET
                         payload=excluded.payload""",
-                    (
-                        namespace,
-                        request_id,
-                        record.binding.thread_id,
-                        record.binding.run_id,
-                        json.dumps(asdict(record), allow_nan=False),
-                    ),
-                )
-                self._conn.execute(
-                    """INSERT INTO runtime_approval_events
-                    (namespace, request_id, revision, payload) VALUES (?, ?, ?, ?)""",
-                    (
-                        namespace,
-                        request_id,
-                        record.revision,
-                        json.dumps(
-                            asdict(ApprovalEvent.from_record(record)), allow_nan=False
+                        (
+                            namespace,
+                            request_id,
+                            record.binding.thread_id,
+                            record.binding.run_id,
+                            json.dumps(asdict(record), allow_nan=False),
                         ),
-                    ),
-                )
-            return record
+                    )
+                    self._conn.execute(
+                        """INSERT INTO runtime_approval_events
+                    (namespace, request_id, revision, payload) VALUES (?, ?, ?, ?)""",
+                        (
+                            namespace,
+                            request_id,
+                            record.revision,
+                            json.dumps(
+                                asdict(ApprovalEvent.from_record(record)),
+                                allow_nan=False,
+                            ),
+                        ),
+                    )
+                self._conn.commit()
+                return record
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     def _records(
         self, namespace: str, thread_id: str, run_id: str

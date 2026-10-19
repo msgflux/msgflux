@@ -188,8 +188,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             self._conn.commit()
             return page
-        except BaseException:
-            self._conn.rollback()
+        except BaseException as error:
+            self._rollback_preserving_error(error)
             raise
 
     def __init__(self, path: str = ".msgflux/checkpoints.sqlite3") -> None:
@@ -213,6 +213,16 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     @property
     def routing_id(self) -> str:
         return f"sqlite:{self._routing_id}"
+
+    def _rollback_preserving_error(self, error: BaseException) -> None:
+        try:
+            if self._conn.in_transaction:
+                self._conn.rollback()
+        except BaseException as rollback_error:
+            error.add_note(
+                "SQLite checkpoint rollback also failed "
+                f"({type(rollback_error).__name__})."
+            )
 
     @staticmethod
     def _serialize(obj: Mapping[str, Any]) -> str:
@@ -455,14 +465,18 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     ) -> None:
         now = time.time()
         self._validate_checkpoint_envelope(state.get("_checkpoint"))
-        normalized = self._normalize_state(namespace, thread_id, state, now)
-        payload = self._serialize(normalized)
-        status = state.get("status", "running")
-        self._conn.execute(
-            _UPSERT_STATE,
-            (namespace, thread_id, run_id, status, payload, now, now),
-        )
-        self._conn.commit()
+        try:
+            normalized = self._normalize_state(namespace, thread_id, state, now)
+            payload = self._serialize(normalized)
+            status = state.get("status", "running")
+            self._conn.execute(
+                _UPSERT_STATE,
+                (namespace, thread_id, run_id, status, payload, now, now),
+            )
+            self._conn.commit()
+        except BaseException as error:
+            self._rollback_preserving_error(error)
+            raise
 
     @_locked
     def load_state(
@@ -490,11 +504,15 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         now = time.time()
         event_type = event.get("event_type", "unknown")
         data = self._serialize(event)
-        self._conn.execute(
-            _INSERT_EVENT,
-            (namespace, thread_id, run_id, event_type, now, data),
-        )
-        self._conn.commit()
+        try:
+            self._conn.execute(
+                _INSERT_EVENT,
+                (namespace, thread_id, run_id, event_type, now, data),
+            )
+            self._conn.commit()
+        except BaseException as error:
+            self._rollback_preserving_error(error)
+            raise
 
     @_locked
     def load_events(
@@ -595,9 +613,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 committed["_checkpoint"]["branch_id"],
                 committed["_checkpoint"]["head_item_id"],
             )
-        except BaseException:
-            if self._conn.in_transaction:
-                self._conn.rollback()
+        except BaseException as error:
+            self._rollback_preserving_error(error)
             raise
 
     @_locked
@@ -673,8 +690,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 ),
             )
             self._conn.commit()
-        except BaseException:
-            self._conn.rollback()
+        except BaseException as error:
+            self._rollback_preserving_error(error)
             raise
 
         loaded = self.load_state(namespace, target_thread_id, target_run_id)
@@ -714,8 +731,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 (namespace, thread_id, run_id, event_type, now, event_data),
             )
             self._conn.commit()
-        except BaseException:
-            self._conn.rollback()
+        except BaseException as error:
+            self._rollback_preserving_error(error)
             raise
 
     @_locked
@@ -750,13 +767,17 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         thread_id: str,
         run_id: str,
     ) -> bool:
-        deleted = self._conn.execute(
-            _DELETE_RUN,
-            (namespace, thread_id, run_id),
-        ).rowcount
-        self._cleanup_orphaned_items(namespace, thread_id)
-        self._conn.commit()
-        return bool(deleted)
+        try:
+            deleted = self._conn.execute(
+                _DELETE_RUN,
+                (namespace, thread_id, run_id),
+            ).rowcount
+            self._cleanup_orphaned_items(namespace, thread_id)
+            self._conn.commit()
+            return bool(deleted)
+        except BaseException as error:
+            self._rollback_preserving_error(error)
+            raise
 
     @_locked
     def clear(
@@ -772,12 +793,18 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             older_than=older_than,
         )
 
-        affected_threads = self._conn.execute(select_query, tuple(params)).fetchall()
-        deleted = self._conn.execute(delete_query, tuple(params)).rowcount
-        for ns, tid in set(affected_threads):
-            self._cleanup_orphaned_items(ns, tid)
-        self._conn.commit()
-        return deleted or 0
+        try:
+            affected_threads = self._conn.execute(
+                select_query, tuple(params)
+            ).fetchall()
+            deleted = self._conn.execute(delete_query, tuple(params)).rowcount
+            for ns, tid in set(affected_threads):
+                self._cleanup_orphaned_items(ns, tid)
+            self._conn.commit()
+            return deleted or 0
+        except BaseException as error:
+            self._rollback_preserving_error(error)
+            raise
 
     @_locked
     def close(self) -> None:
