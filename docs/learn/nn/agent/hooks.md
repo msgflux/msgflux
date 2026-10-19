@@ -175,6 +175,11 @@ settles later in its stream finalizer, so these hooks do not run when that
 stream is handed directly to the caller; use `stream_events()` when lifecycle
 observation must include the complete streamed execution.
 
+Control exceptions raised by `before_run_end` retain their meaning: pauses are
+checkpointed as `paused`, while interruptions and cancellation are checkpointed
+as `interrupted`. The failing hook is not invoked again during settlement;
+`after_run_end` observes the settled outcome. Ordinary hook errors record `failed`.
+
 ```python
 agent = Agent(
     name="reporter",

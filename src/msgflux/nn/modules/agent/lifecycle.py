@@ -19,6 +19,11 @@ from typing import (
 from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores.base import CheckpointConflictError
 from msgflux.data.stores.observation import observe_checkpoints
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.models.response import ModelStreamResponse
 from msgflux.nn.extensions.base import (
     AgentExtension,
@@ -593,11 +598,24 @@ class AgentLifecycleMixin:
             await self._acheckpoint_save_on_error(settled_inputs)
         return await self._arun_after_run_end_hook(run_end)
 
+    @staticmethod
+    def _terminal_error_outcome(
+        error: BaseException,
+    ) -> Literal["failed", "interrupted", "paused"]:
+        if isinstance(error, TaskPauseRequestedError):
+            return "paused"
+        if isinstance(
+            error,
+            (AbortRequestedError, TaskInterruptRequestedError, asyncio.CancelledError),
+        ):
+            return "interrupted"
+        return "failed"
+
     def _settle_processing_error(
         self,
         inputs: Mapping[str, Any],
         error: Exception,
-    ) -> Exception:
+    ) -> BaseException:
         if isinstance(error, CheckpointConflictError):
             return error
         if not isinstance(error, _BeforeRunEndHookError):
@@ -605,17 +623,19 @@ class AgentLifecycleMixin:
             return error
         self._settle_terminal_run(
             inputs,
-            "failed",
+            self._terminal_error_outcome(error.error),
             error.error,
             run_before_hook=False,
         )
+        if isinstance(error.error, AbortRequestedError):
+            self._raise_interrupted_from_abort(inputs, error.error)
         return error.error
 
     async def _asettle_processing_error(
         self,
         inputs: Mapping[str, Any],
         error: Exception,
-    ) -> Exception:
+    ) -> BaseException:
         if isinstance(error, CheckpointConflictError):
             return error
         if not isinstance(error, _BeforeRunEndHookError):
@@ -623,10 +643,12 @@ class AgentLifecycleMixin:
             return error
         await self._asettle_terminal_run(
             inputs,
-            "failed",
+            self._terminal_error_outcome(error.error),
             error.error,
             run_before_hook=False,
         )
+        if isinstance(error.error, AbortRequestedError):
+            self._raise_interrupted_from_abort(inputs, error.error)
         return error.error
 
     async def _atransform_module_output(self, output: Any) -> Any:

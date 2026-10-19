@@ -101,7 +101,7 @@ ToolFilter = Dict[str, ToolFilterValue]
 class _BeforeRunEndHookError(Exception):
     """Identify a failed pre-commit hook so it is not executed twice."""
 
-    def __init__(self, error: Exception):
+    def __init__(self, error: BaseException):
         super().__init__(str(error))
         self.error = error
 
