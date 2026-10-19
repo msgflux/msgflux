@@ -1,3 +1,4 @@
+import errno
 import json
 import multiprocessing
 import os
@@ -131,6 +132,89 @@ def test_atomic_replacement_leaves_only_complete_json(tmp_path):
     accounts.set_api_key("openai", "second")
     assert accounts.get("openai").value == "second"
     assert not list(accounts.account_dir().glob(".credential-*"))
+
+
+@pytest.mark.parametrize("provider", ["openai", "openai-codex"])
+@pytest.mark.parametrize("failure_point", ["fdopen", "fchmod"])
+def test_failed_credential_preparation_closes_fd_and_keeps_previous_credentials(
+    tmp_path, monkeypatch, provider, failure_point
+):
+    from msgflux.accounts import store
+
+    accounts = Accounts(tmp_path)
+
+    def write(value):
+        if provider == "openai":
+            return accounts.set_api_key(provider, value)
+        return accounts.set_oauth(provider, {"access_token": value})
+
+    write("previous-test-value")
+    target = accounts.credential_path(provider)
+    previous = target.read_bytes()
+    original_mkstemp = store.tempfile.mkstemp
+    captured = {}
+
+    def mkstemp(*args, **kwargs):
+        fd, path = original_mkstemp(*args, **kwargs)
+        captured["fd"] = fd
+        return fd, path
+
+    failure = PermissionError(errno.EPERM, "injected credential preparation failure")
+
+    def fail(*_args, **_kwargs):
+        raise failure
+
+    monkeypatch.setattr(store.tempfile, "mkstemp", mkstemp)
+    monkeypatch.setattr(store.os, failure_point, fail)
+    with pytest.raises(PermissionError) as raised:
+        write("replacement-test-value")
+
+    assert raised.value is failure
+    with pytest.raises(OSError) as closed:
+        os.fstat(captured["fd"])
+    assert closed.value.errno == errno.EBADF
+    assert target.read_bytes() == previous
+    assert target.stat().st_mode & 0o777 == 0o600
+    assert not list(target.parent.glob(".credential-*"))
+
+
+def test_credential_preparation_error_survives_all_cleanup_failures(
+    tmp_path, monkeypatch
+):
+    from msgflux.accounts import store
+
+    accounts = Accounts(tmp_path)
+    accounts.set_api_key("openai", "previous-test-value")
+    target = accounts.credential_path("openai")
+    previous = target.read_bytes()
+    real_close, real_unlink = os.close, os.unlink
+    cleanup_attempts = []
+    primary = OSError("injected credential open failure")
+
+    def fail_open(*_args, **_kwargs):
+        raise primary
+
+    def fail_close(fd):
+        real_close(fd)
+        cleanup_attempts.append("close")
+        raise OSError("injected credential close failure")
+
+    def fail_unlink(path):
+        real_unlink(path)
+        cleanup_attempts.append("unlink")
+        raise OSError("injected credential unlink failure")
+
+    monkeypatch.setattr(store.os, "fdopen", fail_open)
+    monkeypatch.setattr(store.os, "close", fail_close)
+    monkeypatch.setattr(store.os, "unlink", fail_unlink)
+    with pytest.raises(OSError) as raised:
+        accounts.set_api_key("openai", "replacement-test-value")
+
+    assert raised.value is primary
+    assert cleanup_attempts == ["close", "unlink"]
+    assert len(primary.__notes__) == 2
+    assert target.read_bytes() == previous
+    assert not list(target.parent.glob(".credential-*"))
 
 
 def test_concurrent_first_writes_create_account_and_provider_idempotently(tmp_path):
