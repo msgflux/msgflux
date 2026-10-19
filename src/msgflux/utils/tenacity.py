@@ -1,10 +1,31 @@
-from tenacity import retry, stop_after_attempt, stop_after_delay
+from tenacity import (
+    retry,
+    retry_if_exception_type,
+    retry_if_not_exception_type,
+    stop_after_attempt,
+    stop_after_delay,
+)
 
 from msgflux.envs import envs
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
+
+_control_exceptions = (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
+_default_retry_predicate = retry_if_exception_type(Exception) & (
+    retry_if_not_exception_type(_control_exceptions)
+)
 
 # Default retry decorator for tools
 default_tool_retry = retry(
     reraise=True,
+    retry=_default_retry_predicate,
     stop=(
         stop_after_delay(envs.tool_stop_after_delay)
         | stop_after_attempt(envs.tool_stop_after_attempt)
@@ -14,6 +35,7 @@ default_tool_retry = retry(
 # Default retry decorator for models
 default_model_retry = retry(
     reraise=True,
+    retry=_default_retry_predicate,
     stop=(
         stop_after_delay(envs.model_stop_after_delay)
         | stop_after_attempt(envs.model_stop_after_attempt)
