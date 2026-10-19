@@ -178,6 +178,23 @@ def _missing_origin_checkpoint(
 class AgentConversationMixin:
     """Conversation state, inbox, checkpoint, and durable-resume behavior."""
 
+    @staticmethod
+    def _validated_checkpoint_messages(state: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Validate and normalize stored conversation before resuming a run."""
+        if not isinstance(state, Mapping):
+            raise ValueError("Checkpoint state must be a mapping.")
+        messages = state.get("messages", {})
+        if not isinstance(messages, Mapping):
+            raise ValueError("Checkpoint messages must be a mapping.")
+        items = messages.get("items", [])
+        if not isinstance(items, list):
+            raise ValueError("Checkpoint messages `items` must be a list.")
+        if any(not isinstance(item, Mapping) for item in items):
+            raise ValueError("Checkpoint message items must be mappings.")
+        normalized = dict(messages)
+        normalized["items"] = [dict(item) for item in items]
+        return normalized
+
     def get_model_configuration(
         self, *, scope: ExecutionScope | None = None
     ) -> ModelConfiguration | None:
@@ -1509,7 +1526,7 @@ class AgentConversationMixin:
             return messages, vars, model_preference
 
         restored = ChatMessages()
-        restored._hydrate_state(latest.get("messages", {}))
+        restored._hydrate_state(self._validated_checkpoint_messages(latest))
         restored.configure_thread(thread_id=thread_id, namespace=namespace)
 
         restored_model_preference = (
@@ -1553,7 +1570,7 @@ class AgentConversationMixin:
             return messages, vars, model_preference
 
         restored = ChatMessages()
-        restored._hydrate_state(latest.get("messages", {}))
+        restored._hydrate_state(self._validated_checkpoint_messages(latest))
         restored.configure_thread(thread_id=thread_id, namespace=namespace)
 
         restored_model_preference = (
@@ -1594,12 +1611,13 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        messages_state = self._validated_checkpoint_messages(state)
         self._validate_checkpoint_command_receipts(state)
         self._validate_checkpoint_workspace(state, scope=scope)
 
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
-        restored._hydrate_state(state.get("messages", {}))
+        restored._hydrate_state(messages_state)
         if not restored.turns or restored.turns[-1]["turn_id"] != run_id:
             restored.begin_turn(turn_id=run_id)
         elif restored.get_active_turn() is None:
@@ -1656,12 +1674,13 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        messages_state = self._validated_checkpoint_messages(state)
         self._validate_checkpoint_command_receipts(state)
         self._validate_checkpoint_workspace(state, scope=scope)
 
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
-        restored._hydrate_state(state.get("messages", {}))
+        restored._hydrate_state(messages_state)
         if not restored.turns or restored.turns[-1]["turn_id"] != run_id:
             restored.begin_turn(turn_id=run_id)
         elif restored.get_active_turn() is None:

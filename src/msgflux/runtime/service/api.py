@@ -1271,6 +1271,12 @@ class AgentService:
         )
         if state is None:
             raise ServiceRecoveryRequiredError("A started run has no checkpoint")
+        try:
+            session.agent._validated_checkpoint_messages(state)
+        except ValueError as error:
+            raise ServiceRecoveryRequiredError(
+                f"The checkpoint conversation history is malformed: {error}"
+            ) from error
         latest = store.load_latest_run(session.namespace, receipt.thread_id)
         if (
             state.get("status") not in {"completed", "interrupted"}

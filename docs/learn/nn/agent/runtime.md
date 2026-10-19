@@ -614,6 +614,11 @@ dictionary. This is intentional—the retry restores the same execution instead
 of adding another user message. Use the same `thread_id` with a new `run_id`
 when you want to continue the conversation with fresh input.
 
+Checkpoint conversation history is stored as a mapping whose `items` value is
+a list of message-item mappings. Missing or empty history remains valid, but an
+explicitly malformed history is rejected before the Agent resumes or continues
+the thread, so it cannot silently replace the saved timeline with an empty one.
+
 ### Interaction timeline
 
 `ChatMessages` persists one provider-neutral timeline. Messages, reasoning,
