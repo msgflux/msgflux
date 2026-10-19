@@ -140,6 +140,12 @@ Use async removal only when the extension itself owns asynchronous cleanup:
 await handle.aremove()
 ```
 
+If the caller is cancelled while `aremove()` waits for active runs, the Agent
+keeps the removal and runs `aon_remove()` after those runs release their
+snapshots. Stop active Agent calls before invoking `Agent.aclose()`. It waits
+for detached stream finalizers and pending async extension cleanup before closing
+Agent-owned stores. Cleanup failures are reported by `aremove()` or `aclose()`.
+
 Registration and removal are intentionally not context managers. Keep the
 handle when ownership is temporary, or remove by name with
 `agent.remove_extension("customer_actions")`.

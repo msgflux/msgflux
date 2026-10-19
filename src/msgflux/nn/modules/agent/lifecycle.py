@@ -2,6 +2,7 @@
 
 import asyncio
 import contextvars
+import logging
 import warnings
 from contextlib import contextmanager, nullcontext
 from contextvars import ContextVar
@@ -58,6 +59,7 @@ from msgflux.runtime.event_hub import ThreadWatcher, get_event_hub
 from msgflux.runtime.permissions import intersect_permissions
 
 _AGENT_EVENT_STREAM_ROOT = ContextVar("msgflux_agent_event_stream_root", default=None)
+logger = logging.getLogger(__name__)
 
 
 def _note_terminal_hook_failure(primary_error: BaseException, hook_error: Exception):
@@ -102,6 +104,7 @@ class AgentLifecycleMixin:
         self._extension_refcounts: dict[str, int] = {}
         self._pending_extensions: dict[str, AgentExtension] = {}
         self._extension_async_cleanup_waiters: dict[str, Any] = {}
+        self._extension_async_cleanup_tasks: dict[str, asyncio.Task] = {}
 
     def _set_extensions(
         self,
@@ -251,35 +254,81 @@ class AgentLifecycleMixin:
 
     async def aremove_extension(self, name: str) -> None:
         """Async removal, using async cleanup when no active run retains it."""
-        loop = asyncio.get_running_loop()
-        ready = asyncio.Event()
         with self._extension_lock:
-            if name not in self.extensions:
-                return
-            extension = self.extensions[name]
-            del self.extensions[name]
-            self._pending_extensions[name] = extension
-            self._extension_async_cleanup_waiters[name] = (loop, ready)
-            cleanup_now = self._extension_refcounts.get(name, 0) == 0
-        if cleanup_now:
-            ready.set()
-        try:
-            await ready.wait()
-        except asyncio.CancelledError:
-            with self._extension_lock:
-                self._extension_async_cleanup_waiters.pop(name, None)
-                cleanup_now = self._extension_refcounts.get(name, 0) == 0
-            if cleanup_now:
-                self._cleanup_extension(name)
-            raise
+            task = self._extension_async_cleanup_tasks.get(name)
+            if task is None:
+                if name not in self.extensions:
+                    return
+                extension = self.extensions[name]
+                del self.extensions[name]
+                self._pending_extensions[name] = extension
+                loop = asyncio.get_running_loop()
+                ready = asyncio.Event()
+                self._extension_async_cleanup_waiters[name] = (loop, ready)
+                if self._extension_refcounts.get(name, 0) == 0:
+                    ready.set()
+                cleanup = self._finish_async_extension_removal(name, extension, ready)
+                try:
+                    task = asyncio.create_task(
+                        cleanup,
+                        context=contextvars.Context(),
+                    )
+                except BaseException:
+                    cleanup.close()
+                    self._extension_async_cleanup_waiters.pop(name, None)
+                    self._pending_extensions.pop(name, None)
+                    self.extensions[name] = extension
+                    raise
+                self._extension_async_cleanup_tasks[name] = task
+                task.add_done_callback(
+                    lambda done, extension_name=name: self._observe_extension_cleanup(
+                        extension_name, done
+                    )
+                )
+        # Shield only the owned cleanup task. Cancellation of this caller does
+        # not cancel cleanup or the waiter used by the last active run.
+        await asyncio.shield(task)
+
+    async def _finish_async_extension_removal(
+        self, name: str, extension: AgentExtension, ready: asyncio.Event
+    ) -> None:
+        await ready.wait()
         self._cleanup_extension_contributions(name)
-        self._pending_extensions.pop(name, None)
-        self._extension_refcounts.pop(name, None)
         try:
             await extension.aon_remove(self)
         finally:
             extension._unbind_agent()
+
+    def _observe_extension_cleanup(self, name: str, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Agent extension %r async cleanup failed",
+                name,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            return
+        with self._extension_lock:
+            if self._extension_async_cleanup_tasks.get(name) is not task:
+                return
+            extension = self._pending_extensions.pop(name, None)
+            self._extension_async_cleanup_tasks.pop(name, None)
+            if extension is not None:
+                self._extension_refcounts.pop(name, None)
             self._extension_async_cleanup_waiters.pop(name, None)
+
+    async def _wait_for_extension_cleanup_tasks(self) -> None:
+        """Join cancelled-caller removals before owned stores are closed."""
+        with self._extension_lock:
+            tasks = tuple(self._extension_async_cleanup_tasks.values())
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise BaseExceptionGroup("Agent extension cleanup failed", errors)
 
     def _cleanup_extension_contributions(self, name: str) -> None:
         for handle in self._extension_hook_handles.pop(name, ()):

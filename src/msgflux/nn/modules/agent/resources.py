@@ -404,6 +404,12 @@ class AgentResourceMixin:
                 return None
 
     async def _settle_thread_resources(self, thread_id, owned, before_close):
+        await self._quiesce_thread_resources(owned)
+        await self._run_thread_close_callback(thread_id, before_close)
+        with owned.lock:
+            owned.resources.close()
+
+    async def _quiesce_thread_resources(self, owned):
         with owned.lock:
             owned.closing = True
             idle_closing = owned.idle_closing
@@ -440,9 +446,6 @@ class AgentResourceMixin:
         with owned.lock:
             if owned.active:
                 raise RuntimeError("Stop active Agent calls before closing resources")
-        await self._run_thread_close_callback(thread_id, before_close)
-        with owned.lock:
-            owned.resources.close()
 
     @staticmethod
     async def _wait_for_detached_finalizers(owned):
@@ -504,11 +507,46 @@ class AgentResourceMixin:
         await asyncio.shield(task)
 
     async def _shutdown_resources(self):
+        # Match the existing active-call close boundary before joining async
+        # extension cleanup. A cancelled `aremove()` may still be waiting for
+        # one of these calls to release its extension snapshot.
+        with self._resource_lock:
+            if any(self._thread_activity.values()):
+                raise RuntimeError("Stop active Agent calls before closing resources")
+            owned_threads = tuple(self._owned_threads.items())
+        for _thread_id, owned in owned_threads:
+            with owned.lock:
+                if owned.active_calls:
+                    raise RuntimeError(
+                        "Stop active Agent calls before closing resources"
+                    )
+
+        await self._quiesce_for_extension_cleanup(owned_threads)
+        await self._wait_for_extension_cleanup_tasks()
+
         errors = []
-        for thread_id in tuple(self._owned_threads):
+        for thread_id, _owned in owned_threads:
             try:
                 await self._close_thread_resources(thread_id)
             except Exception as error:
                 errors.append(error)
         if errors:
             raise ExceptionGroup("Agent resource shutdown failed", errors)
+
+    async def _quiesce_for_extension_cleanup(self, owned_threads):
+        with self._extension_lock:
+            cleanup_tasks = tuple(self._extension_async_cleanup_tasks.values())
+        if not any(not task.done() for task in cleanup_tasks):
+            return
+        # Cleanup for an extension can be waiting on a stream finalizer owned
+        # by another thread. Skip stores already closed by idle release.
+        for thread_id, owned in owned_threads:
+            with self._resource_lock:
+                close_task = self._resource_close_tasks.get(thread_id)
+            already_closed = owned.resources._closed
+            if close_task is not None and close_task.done():
+                already_closed = not close_task.cancelled() and (
+                    close_task.exception() is None
+                )
+            if not already_closed:
+                await self._quiesce_thread_resources(owned)
