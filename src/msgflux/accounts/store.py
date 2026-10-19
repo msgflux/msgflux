@@ -150,19 +150,36 @@ class Accounts:
     @staticmethod
     def _atomic_write(path: Path, content: bytes) -> None:
         fd, temporary = tempfile.mkstemp(prefix=".credential-", dir=path.parent)
+        primary_error = None
         try:
-            os.fchmod(fd, 0o600)
             with os.fdopen(fd, "wb") as stream:
+                fd = None
+                os.fchmod(stream.fileno(), 0o600)
                 stream.write(content)
                 stream.flush()
                 os.fsync(stream.fileno())
             os.replace(temporary, path)
-            os.chmod(path, 0o600)
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
+            cleanup_errors = []
+            if fd is not None:
+                try:
+                    os.close(fd)
+                except OSError as error:
+                    cleanup_errors.append(error)
             try:
                 os.unlink(temporary)
             except FileNotFoundError:
                 pass
+            except OSError as error:
+                cleanup_errors.append(error)
+            if primary_error is not None:
+                for error in cleanup_errors:
+                    primary_error.add_note(f"Credential cleanup failed: {error}")
+            elif cleanup_errors:
+                raise cleanup_errors[0]
 
     def set_api_key(
         self, provider: str, value: str, account_name: str = "default"

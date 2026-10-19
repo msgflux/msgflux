@@ -150,33 +150,49 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             ).fetchone()
             return TaskLease(task_id, row[0], row[1]) if row is not None else None
 
+    def _rollback_preserving_error(self, error: BaseException) -> None:
+        try:
+            self._conn.rollback()
+        except BaseException as rollback_error:
+            error.add_note(
+                f"SQLite rollback also failed ({type(rollback_error).__name__})."
+            )
+
     def renew_worker(
         self, task_id: str, owner_id: str, *, lease_seconds: float
     ) -> bool:
         if lease_seconds <= 0:
             raise ValueError("`lease_seconds` must be positive")
         with self._lock:
-            now = self._clock()
-            updated = self._conn.execute(
-                "UPDATE task_worker_leases SET expires_at = ? "
-                "WHERE task_id = ? AND owner_id = ? AND expires_at > ? "
-                "AND EXISTS (SELECT 1 FROM tasks WHERE task_id = ? "
-                "AND status = 'running')",
-                (now + lease_seconds, task_id, owner_id, now, task_id),
-            ).rowcount
-            self._conn.commit()
-            return bool(updated)
+            try:
+                now = self._clock()
+                updated = self._conn.execute(
+                    "UPDATE task_worker_leases SET expires_at = ? "
+                    "WHERE task_id = ? AND owner_id = ? AND expires_at > ? "
+                    "AND EXISTS (SELECT 1 FROM tasks WHERE task_id = ? "
+                    "AND status = 'running')",
+                    (now + lease_seconds, task_id, owner_id, now, task_id),
+                ).rowcount
+                self._conn.commit()
+                return bool(updated)
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     def release_worker(self, task_id: str, owner_id: str) -> bool:
         with self._lock:
-            now = self._clock()
-            updated = self._conn.execute(
-                "UPDATE task_worker_leases SET expires_at = MIN(expires_at, ?) "
-                "WHERE task_id = ? AND owner_id = ?",
-                (now - 1, task_id, owner_id),
-            ).rowcount
-            self._conn.commit()
-            return bool(updated)
+            try:
+                now = self._clock()
+                updated = self._conn.execute(
+                    "UPDATE task_worker_leases SET expires_at = MIN(expires_at, ?) "
+                    "WHERE task_id = ? AND owner_id = ?",
+                    (now - 1, task_id, owner_id),
+                ).rowcount
+                self._conn.commit()
+                return bool(updated)
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     @staticmethod
     def _serialize(value: Any) -> str:
@@ -193,13 +209,17 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         with self._lock:
             if self.get(task_id) is None:
                 return False
-            self._conn.execute(
-                "INSERT OR IGNORE INTO task_messages "
-                "(message_id, task_id, message, created_at) VALUES (?, ?, ?, ?)",
-                (message_id, task_id, message, utc_now_isoformat()),
-            )
-            self._conn.commit()
-            return True
+            try:
+                self._conn.execute(
+                    "INSERT OR IGNORE INTO task_messages "
+                    "(message_id, task_id, message, created_at) VALUES (?, ?, ?, ?)",
+                    (message_id, task_id, message, utc_now_isoformat()),
+                )
+                self._conn.commit()
+                return True
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     def pending_messages(self, task_id: str) -> List[tuple[str, str]]:
         with self._lock:
@@ -213,11 +233,15 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         if not message_ids:
             return
         with self._lock:
-            self._conn.executemany(
-                "DELETE FROM task_messages WHERE task_id = ? AND message_id = ?",
-                ((task_id, message_id) for message_id in message_ids),
-            )
-            self._conn.commit()
+            try:
+                self._conn.executemany(
+                    "DELETE FROM task_messages WHERE task_id = ? AND message_id = ?",
+                    ((task_id, message_id) for message_id in message_ids),
+                )
+                self._conn.commit()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     def _row_to_task(self, row: sqlite3.Row | tuple[Any, ...]) -> TaskRecord:
         return TaskRecord(
@@ -337,17 +361,24 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             try:
                 self._insert_task(task)
             except sqlite3.IntegrityError as exc:
-                self._conn.rollback()
+                self._rollback_preserving_error(exc)
                 raise TaskIdCollisionError(task.task_id) from exc
-            self._append_activity(
-                task.task_id,
-                kind="status",
-                summary="Task queued.",
-                created_at=now,
-                metadata={"status": "queued", "tool": tool_name},
-            )
-            self._conn.commit()
-            return self.get(task.task_id)  # type: ignore[return-value]
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
+            try:
+                self._append_activity(
+                    task.task_id,
+                    kind="status",
+                    summary="Task queued.",
+                    created_at=now,
+                    metadata={"status": "queued", "tool": tool_name},
+                )
+                self._conn.commit()
+                return self.get(task.task_id)  # type: ignore[return-value]
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     def get(self, task_id: str, *, include_result: bool = True) -> TaskRecord | None:
         # This branch selects between two fixed, internal SQL fragments.
@@ -455,15 +486,19 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         with self._lock:
             if self.get(task_id) is None:
                 return None
-            activity = self._append_activity(
-                task_id,
-                kind=kind,
-                summary=summary,
-                created_at=utc_now_isoformat(),
-                metadata=metadata,
-            )
-            self._conn.commit()
-            return activity
+            try:
+                activity = self._append_activity(
+                    task_id,
+                    kind=kind,
+                    summary=summary,
+                    created_at=utc_now_isoformat(),
+                    metadata=metadata,
+                )
+                self._conn.commit()
+                return activity
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
 
     def update_metadata(
         self,

@@ -25,7 +25,7 @@ from msgflux.runtime import (
     execution_context,
 )
 from msgflux.runtime.shell_capture import ShellOutputCapture
-from msgflux.runtime.tool_results import ToolResultStore
+from msgflux.runtime.tool_results import ToolResultStore, ToolResultTooLargeError
 from msgflux.tools.builtin import BashTool
 from msgflux.tools.shell import ShellResult
 
@@ -161,8 +161,35 @@ async def test_capture_quota_fails_closed_and_storage_failure_does_not_return_re
             store, max_inline_bytes=32, preview_bytes=8, max_capture_bytes=256
         )
         executor = StreamingExecutor([("stdout", [b"x" * 128])])
-        with pytest.raises((RuntimeError, ValueError)):
+        with pytest.raises(RuntimeError, match="do not retry automatically") as raised:
             await _capture(capture, _environment(executor), [_request()])
+        assert isinstance(
+            raised.value.__cause__, (ToolResultTooLargeError, RuntimeError)
+        )
+
+
+@pytest.mark.asyncio
+async def test_capture_preserves_control_error_from_result_store(tmp_path):
+    from msgflux.exceptions import AbortRequestedError
+
+    control = AbortRequestedError("capture aborted")
+
+    class AbortingStore(FailingStore):
+        def put(self, chunks, *, media_type="application/octet-stream"):
+            for _ in chunks:
+                pass
+            raise control
+
+    capture = ShellOutputCapture(
+        AbortingStore(), max_inline_bytes=32, preview_bytes=8, max_capture_bytes=256
+    )
+    with pytest.raises(AbortRequestedError) as raised:
+        await _capture(
+            capture,
+            _environment(StreamingExecutor([("stdout", [b"x" * 128])])),
+            [_request()],
+        )
+    assert raised.value is control
 
 
 @pytest.mark.asyncio

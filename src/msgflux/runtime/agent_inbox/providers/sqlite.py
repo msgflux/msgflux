@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import sqlite3
 import time
+from contextlib import contextmanager
 from pathlib import Path
 from threading import RLock
 from typing import Any, Iterable, List, Mapping
@@ -83,6 +84,20 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         ).fetchone()[0]
         self._conn.commit()
 
+    @contextmanager
+    def _transaction(self):
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            yield
+            self._conn.commit()
+        except BaseException as error:
+            try:
+                if self._conn.in_transaction:
+                    self._conn.rollback()
+            except BaseException as rollback_error:
+                error.add_note(f"SQLite inbox rollback failed: {rollback_error}")
+            raise
+
     @property
     def routing_id(self) -> str:
         """Stable identity retained when this SQLite database is reopened or moved."""
@@ -128,7 +143,7 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         notifications: Iterable[Mapping[str, Any]],
     ) -> None:
         payloads = [dict(item) for item in notifications]
-        with self._lock:
+        with self._lock, self._transaction():
             now = time.time()
             created_at = self._conn.execute(
                 "SELECT created_at FROM agent_inboxes WHERE namespace=? AND thread_id=? AND run_id=?",
@@ -168,7 +183,6 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                     for item in payloads
                 ],
             )
-            self._conn.commit()
 
     def publish_notification(
         self,
@@ -179,47 +193,46 @@ class SQLiteAgentInboxStore(AgentInboxStore):
     ) -> Mapping[str, Any]:
         with self._lock:
             now = time.time()
-            self._conn.execute("BEGIN IMMEDIATE")
-            dedupe_key = notification.get("dedupe_key")
-            row = None
-            if dedupe_key:
-                row = self._conn.execute(
-                    "SELECT notification_id FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
-                    (namespace, thread_id, run_id, dedupe_key),
-                ).fetchone()
-            notification_id = notification.get("notification_id") or uuid4().hex
-            payload = self._serialize([dict(notification)])[1:-1]
-            if row is not None:
-                self._conn.execute(
-                    "UPDATE agent_inbox_notifications SET notification_id=?, payload=?, updated_at=? WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
-                    (
-                        notification_id,
-                        payload,
-                        now,
-                        namespace,
-                        thread_id,
-                        run_id,
-                        dedupe_key,
-                    ),
-                )
-            else:
-                self._conn.execute(
-                    """INSERT INTO agent_inbox_notifications
-                    (namespace,thread_id,run_id,notification_id,payload,dedupe_key,status,lease_id,lease_until,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?, 'pending',NULL,NULL,?,?)""",
-                    (
-                        namespace,
-                        thread_id,
-                        run_id,
-                        notification_id,
-                        payload,
-                        dedupe_key,
-                        now,
-                        now,
-                    ),
-                )
-            self._sync_legacy_row(namespace, thread_id, run_id)
-            self._conn.commit()
+            with self._transaction():
+                dedupe_key = notification.get("dedupe_key")
+                row = None
+                if dedupe_key:
+                    row = self._conn.execute(
+                        "SELECT notification_id FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
+                        (namespace, thread_id, run_id, dedupe_key),
+                    ).fetchone()
+                notification_id = notification.get("notification_id") or uuid4().hex
+                payload = self._serialize([dict(notification)])[1:-1]
+                if row is not None:
+                    self._conn.execute(
+                        "UPDATE agent_inbox_notifications SET notification_id=?, payload=?, updated_at=? WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
+                        (
+                            notification_id,
+                            payload,
+                            now,
+                            namespace,
+                            thread_id,
+                            run_id,
+                            dedupe_key,
+                        ),
+                    )
+                else:
+                    self._conn.execute(
+                        """INSERT INTO agent_inbox_notifications
+                        (namespace,thread_id,run_id,notification_id,payload,dedupe_key,status,lease_id,lease_until,created_at,updated_at)
+                        VALUES (?,?,?,?,?,?, 'pending',NULL,NULL,?,?)""",
+                        (
+                            namespace,
+                            thread_id,
+                            run_id,
+                            notification_id,
+                            payload,
+                            dedupe_key,
+                            now,
+                            now,
+                        ),
+                    )
+                self._sync_legacy_row(namespace, thread_id, run_id)
         return dict(notification, notification_id=notification_id)
 
     def claim_notifications(
@@ -233,13 +246,12 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         limit: int | None = None,
     ) -> List[Mapping[str, Any]]:
         now = time.time()
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._lock, self._transaction():
             self._migrate_legacy_locked(namespace, thread_id, run_id)
             query = """SELECT notification_id, payload FROM agent_inbox_notifications
-                WHERE namespace=? AND thread_id=? AND run_id=?
-                AND (status='pending' OR lease_until IS NULL OR lease_until<=?)
-                ORDER BY rowid"""
+            WHERE namespace=? AND thread_id=? AND run_id=?
+            AND (status='pending' OR lease_until IS NULL OR lease_until<=?)
+            ORDER BY rowid"""
             params = [namespace, thread_id, run_id, now]
             if limit is not None:
                 query += " LIMIT ?"
@@ -249,8 +261,8 @@ class SQLiteAgentInboxStore(AgentInboxStore):
             if ids:
                 self._conn.executemany(
                     """UPDATE agent_inbox_notifications SET status='leased', lease_id=?,
-                    lease_until=?, updated_at=? WHERE namespace=? AND thread_id=? AND
-                    run_id=? AND notification_id=?""",
+                lease_until=?, updated_at=? WHERE namespace=? AND thread_id=? AND
+                run_id=? AND notification_id=?""",
                     [
                         (
                             lease_id,
@@ -264,7 +276,6 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                         for item_id in ids
                     ],
                 )
-            self._conn.commit()
         return [self._deserialize("[" + row[1] + "]")[0] for row in rows]
 
     def ack_notifications(
@@ -279,7 +290,7 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         ids = list(set(notification_ids))
         if not ids:
             return
-        with self._lock:
+        with self._lock, self._transaction():
             clauses = " AND lease_id=?" if lease_id is not None else ""
             params = [namespace, thread_id, run_id, *ids]
             if lease_id is not None:
@@ -289,7 +300,6 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                 params,
             )
             self._sync_legacy_row(namespace, thread_id, run_id)
-            self._conn.commit()
 
     def release_notifications(
         self,
@@ -303,16 +313,21 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         ids = set(notification_ids) if notification_ids is not None else None
         if ids is not None and not ids:
             return
-        with self._lock:
+        with self._lock, self._transaction():
             query = """UPDATE agent_inbox_notifications SET status='pending', lease_id=NULL,
-                lease_until=NULL, updated_at=? WHERE namespace=? AND thread_id=? AND
-                run_id=? AND lease_id=?"""
-            params: list[object] = [time.time(), namespace, thread_id, run_id, lease_id]
+            lease_until=NULL, updated_at=? WHERE namespace=? AND thread_id=? AND
+            run_id=? AND lease_id=?"""
+            params: list[object] = [
+                time.time(),
+                namespace,
+                thread_id,
+                run_id,
+                lease_id,
+            ]
             if ids is not None:
                 query += f" AND notification_id IN ({','.join('?' for _ in ids)})"
                 params.extend(ids)
             self._conn.execute(query, params)
-            self._conn.commit()
 
     def move_notifications(
         self,
@@ -321,8 +336,7 @@ class SQLiteAgentInboxStore(AgentInboxStore):
     ) -> None:
         if previous == current:
             return
-        with self._lock:
-            self._conn.execute("BEGIN IMMEDIATE")
+        with self._lock, self._transaction():
             rows = self._conn.execute(
                 "SELECT notification_id, payload, dedupe_key, created_at FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=?",
                 previous,
@@ -330,9 +344,16 @@ class SQLiteAgentInboxStore(AgentInboxStore):
             for item_id, payload, dedupe_key, created_at in rows:
                 self._conn.execute(
                     """INSERT OR IGNORE INTO agent_inbox_notifications
-                    (namespace,thread_id,run_id,notification_id,payload,dedupe_key,status,lease_id,lease_until,created_at,updated_at)
-                    VALUES (?,?,?,?,?,?, 'pending',NULL,NULL,?,?)""",
-                    (*current, item_id, payload, dedupe_key, created_at, time.time()),
+                (namespace,thread_id,run_id,notification_id,payload,dedupe_key,status,lease_id,lease_until,created_at,updated_at)
+                VALUES (?,?,?,?,?,?, 'pending',NULL,NULL,?,?)""",
+                    (
+                        *current,
+                        item_id,
+                        payload,
+                        dedupe_key,
+                        created_at,
+                        time.time(),
+                    ),
                 )
             self._conn.execute(
                 "DELETE FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=?",
@@ -340,7 +361,6 @@ class SQLiteAgentInboxStore(AgentInboxStore):
             )
             self._sync_legacy_row(*previous)
             self._sync_legacy_row(*current)
-            self._conn.commit()
 
     def _migrate_legacy_locked(
         self, namespace: str, thread_id: str, run_id: str
@@ -424,7 +444,7 @@ class SQLiteAgentInboxStore(AgentInboxStore):
             query += " AND updated_at < ?"
             params.append(time.time() - older_than)
 
-        with self._lock:
+        with self._lock, self._transaction():
             child_query = "DELETE FROM agent_inbox_notifications WHERE 1=1"
             child_params: List[Any] = []
             if namespace is not None:
@@ -441,7 +461,6 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                 child_params.append(time.time() - older_than)
             self._conn.execute(child_query, tuple(child_params))
             deleted = self._conn.execute(query, tuple(params)).rowcount
-            self._conn.commit()
         return deleted or 0
 
     def close(self) -> None:

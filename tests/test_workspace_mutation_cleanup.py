@@ -168,7 +168,7 @@ def test_replace_failure_remains_primary_when_root_close_also_fails(
     assert any(
         "Workspace cleanup failed" in note for note in getattr(primary, "__notes__", ())
     )
-    assert "Workspace mutation cleanup failed" in caplog.text
+    assert "Workspace cleanup failed" in caplog.text
 
 
 def test_cancelled_replace_remains_primary_when_root_close_also_fails(

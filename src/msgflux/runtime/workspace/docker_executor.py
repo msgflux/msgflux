@@ -812,18 +812,30 @@ class DockerProcessExecutor(ProcessExecutor):
                 if container_id is None:
                     return
                 if execution is not None and not completed:
-                    if resource is None or resource.get("container_id") != container_id:
+                    persisted_resource = receipt_resource(execution.receipt) or {}
+                    if persisted_resource.get("container_id") != container_id or dict(
+                        persisted_resource
+                    ) != (resource or {}):
                         reference = execution.receipt.workspace_reference or {}
                         identity = reference.get("identity", {})
-                        resource = {
-                            "container_id": container_id,
-                            "name": name,
-                            "image": self.image,
-                            "daemon_config_revision": identity.get("config_revision"),
-                            "daemon_identity": daemon_identity,
-                        }
+                        if (
+                            resource is None
+                            or resource.get("container_id") != container_id
+                        ):
+                            resource = {
+                                "container_id": container_id,
+                                "name": name,
+                                "image": self.image,
+                                "daemon_config_revision": identity.get(
+                                    "config_revision"
+                                ),
+                                "daemon_identity": daemon_identity,
+                            }
                         try:
-                            await execution.update("launched", resource=resource)
+                            # A failed launch checkpoint may leave only the earlier
+                            # intent durable. Record the observed resource as unknown
+                            # before cleanup so the retained container is reconcilable.
+                            await execution.update("unknown", resource=resource)
                         except BaseException as error:
                             if failure is not None:
                                 failure.add_note(
