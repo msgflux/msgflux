@@ -60,6 +60,13 @@ from msgflux.runtime.permissions import intersect_permissions
 _AGENT_EVENT_STREAM_ROOT = ContextVar("msgflux_agent_event_stream_root", default=None)
 
 
+def _note_terminal_hook_failure(primary_error: BaseException, hook_error: Exception):
+    primary_error.add_note(
+        "before_run_end hook failed during terminal settlement: "
+        f"{type(hook_error).__name__}: {hook_error}"
+    )
+
+
 class AgentLifecycleMixin:
     """Agent extension, lifecycle-hook, event-stream, and watch behavior."""
 
@@ -544,7 +551,16 @@ class AgentLifecycleMixin:
             error=error,
         )
         if run_before_hook:
-            run_end = self._run_run_end_hook("before_run_end", run_end)
+            try:
+                run_end = self._run_run_end_hook("before_run_end", run_end)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+            ):
+                raise
+            except Exception as hook_error:
+                _note_terminal_hook_failure(error, hook_error)
         settled_inputs = {**inputs, "messages": run_end.messages}
         if outcome == "interrupted":
             self._checkpoint_interrupted(settled_inputs, error)
@@ -579,7 +595,16 @@ class AgentLifecycleMixin:
             error=error,
         )
         if run_before_hook:
-            run_end = await self._arun_run_end_hook("before_run_end", run_end)
+            try:
+                run_end = await self._arun_run_end_hook("before_run_end", run_end)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+            ):
+                raise
+            except Exception as hook_error:
+                _note_terminal_hook_failure(error, hook_error)
         settled_inputs = {**inputs, "messages": run_end.messages}
         if outcome == "interrupted":
             await self._acheckpoint_interrupted(settled_inputs, error)
