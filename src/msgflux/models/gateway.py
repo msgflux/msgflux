@@ -2,7 +2,12 @@ import warnings
 from datetime import datetime, time, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from msgflux.exceptions import ModelRouterError
+from msgflux.exceptions import (
+    AbortRequestedError,
+    ModelRouterError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.logger import logger
 from msgflux.models.base import BaseModel
 from msgflux.models.chat_extensions import validate_chat_speed
@@ -10,6 +15,12 @@ from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import validate_reasoning_effort
 from msgflux.utils.time import utc_now
+
+_CONTROL_EXCEPTIONS = (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 
 if TYPE_CHECKING:
     from msgflux.tools.catalog import ToolCatalogView
@@ -355,6 +366,8 @@ class ModelGateway:
             try:
                 response = model(**kwargs)
                 return response
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
@@ -390,6 +403,8 @@ class ModelGateway:
             try:
                 response = await model.acall(**kwargs)
                 return response
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
@@ -644,6 +659,8 @@ class ModelGateway:
         for name, model in available:
             try:
                 return getattr(model, method_name)(**kwargs)
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
@@ -677,6 +694,8 @@ class ModelGateway:
         for name, model in available:
             try:
                 return await getattr(model, method_name)(**kwargs)
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
