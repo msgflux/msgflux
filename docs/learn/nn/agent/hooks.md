@@ -66,7 +66,10 @@ successful run into a failure. `after_run_end` runs after that commit. If its
 handler raises, the committed output and outcome remain primary and the hook
 failure produces a runtime warning. The run is not executed or checkpointed a
 second time. A completed turn therefore cannot be silently rewritten as failed
-by an observational hook.
+by an observational hook. Cancellation delivered while `after_run_end` is
+running also stops that observer and produces a warning; the caller receives the
+already committed output or original run error. Cancellation before the commit
+still interrupts the run.
 
 Import typed payloads from `msgflux.nn.hooks`. Dataclass replacement keeps a
 handler explicit and preserves fields added to the contract later:

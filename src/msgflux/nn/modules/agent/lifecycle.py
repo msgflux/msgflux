@@ -504,7 +504,7 @@ class AgentLifecycleMixin:
     def _run_after_run_end_hook(self, context: RunEndContext) -> RunEndContext:
         try:
             return self._run_run_end_hook("after_run_end", context)
-        except Exception as hook_error:
+        except (Exception, asyncio.CancelledError) as hook_error:
             warnings.warn(
                 f"after_run_end hook failed after {context.outcome} run commit: "
                 f"{hook_error}",
@@ -519,7 +519,7 @@ class AgentLifecycleMixin:
     ) -> RunEndContext:
         try:
             return await self._arun_run_end_hook("after_run_end", context)
-        except Exception as hook_error:
+        except (Exception, asyncio.CancelledError) as hook_error:
             warnings.warn(
                 f"after_run_end hook failed after {context.outcome} run commit: "
                 f"{hook_error}",
