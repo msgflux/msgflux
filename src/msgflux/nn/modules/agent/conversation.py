@@ -1212,10 +1212,22 @@ class AgentConversationMixin:
                     stacklevel=2,
                 )
 
-    def _release_inbox_notifications(self) -> None:
+    def _release_inbox_notifications(self, primary_error: BaseException) -> None:
         inbox = self._get_effective_agent_inbox()
         if inbox is not None:
-            inbox.release()
+            try:
+                inbox.release()
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+            ):
+                raise
+            except Exception as cleanup_error:
+                primary_error.add_note(
+                    "Inbox lease cleanup failed after checkpoint failure: "
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
 
     def _checkpoint_save(
         self,
@@ -1259,8 +1271,8 @@ class AgentConversationMixin:
                 checkpoint_store.save_state(
                     self.get_module_name(), thread_id, run_id, state
                 )
-        except BaseException:
-            self._release_inbox_notifications()
+        except BaseException as error:
+            self._release_inbox_notifications(error)
             raise
         self._ack_inbox_notifications(messages)
 
@@ -1317,8 +1329,8 @@ class AgentConversationMixin:
                 checkpoint_store.save_state(
                     self.get_module_name(), thread_id, run_id, state
                 )
-        except BaseException:
-            self._release_inbox_notifications()
+        except BaseException as error:
+            self._release_inbox_notifications(error)
             raise
         self._ack_inbox_notifications(messages)
 

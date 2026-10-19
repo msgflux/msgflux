@@ -932,6 +932,13 @@ child_inbox = agent_inbox.fork(
 
 ### Inspecting And Rendering Inbox Items
 
+The Agent acknowledges delivered notifications only after their checkpoint is
+saved. If checkpoint persistence fails, it releases the notification leases for
+retry. An ordinary failure while releasing those leases is attached as a note
+to the checkpoint error; it does not hide a revision conflict or trigger another
+checkpoint write. A failed release leaves the notification pending under its
+existing lease until release is retried or that lease expires.
+
 `peek()` reads pending notifications without removing them:
 
 ```python
