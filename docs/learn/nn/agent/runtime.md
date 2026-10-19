@@ -614,6 +614,14 @@ dictionary. This is intentional—the retry restores the same execution instead
 of adding another user message. Use the same `thread_id` with a new `run_id`
 when you want to continue the conversation with fresh input.
 
+With checkpointing enabled, the Agent publishes a completed turn to its
+in-memory history after the final checkpoint succeeds. If that write is
+rejected and failure settlement succeeds, the saved turn is `failed` and can
+resume with the same `run_id`. Tool results
+already saved in that snapshot remain available on resume; the Agent does not
+replay those tool calls. A tool effect that happened without a saved result
+still requires reconciliation, as described above.
+
 Checkpoint conversation history is stored as a mapping whose `items` value is
 a list of message-item mappings. Missing or empty history remains valid, but an
 explicitly malformed history is rejected before the Agent resumes or continues

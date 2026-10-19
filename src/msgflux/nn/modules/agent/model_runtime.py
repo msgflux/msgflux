@@ -734,10 +734,14 @@ class AgentModelRuntimeMixin:
             )
         except (Exception, asyncio.CancelledError) as error:
             raise _BeforeRunEndHookError(error) from error
-        self._finalize_chat_turn(run_end.messages, raw_response)
+        checkpoint_messages = self._finalize_chat_turn(run_end.messages, raw_response)
         self._checkpoint_save(
-            run_end.messages, vars, status="completed", task_result=run_end.output
+            checkpoint_messages, vars, status="completed", task_result=run_end.output
         )
+        if isinstance(run_end.messages, ChatMessages) and (
+            checkpoint_messages is not run_end.messages
+        ):
+            run_end.messages._hydrate_state(checkpoint_messages._to_state())
         run_end = self._run_after_run_end_hook(run_end)
         return run_end.output
 
@@ -841,10 +845,14 @@ class AgentModelRuntimeMixin:
             )
         except (Exception, asyncio.CancelledError) as error:
             raise _BeforeRunEndHookError(error) from error
-        self._finalize_chat_turn(run_end.messages, raw_response)
+        checkpoint_messages = self._finalize_chat_turn(run_end.messages, raw_response)
         await self._acheckpoint_save(
-            run_end.messages, vars, status="completed", task_result=run_end.output
+            checkpoint_messages, vars, status="completed", task_result=run_end.output
         )
+        if isinstance(run_end.messages, ChatMessages) and (
+            checkpoint_messages is not run_end.messages
+        ):
+            run_end.messages._hydrate_state(checkpoint_messages._to_state())
         run_end = await self._arun_after_run_end_hook(run_end)
         return run_end.output
 

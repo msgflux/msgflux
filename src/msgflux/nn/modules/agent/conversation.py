@@ -1020,13 +1020,20 @@ class AgentConversationMixin:
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
         raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
-    ) -> None:
+    ) -> Union[ChatMessages, List[Mapping[str, Any]]]:
         if not isinstance(messages, ChatMessages):
-            return
+            return messages
 
         if isinstance(raw_response, ModelStreamResponse):
-            return
-        messages.end_turn(event="complete")
+            return messages
+
+        if self._get_effective_checkpoint_store() is None:
+            messages.end_turn(event="complete")
+            return messages
+
+        finalized = messages.copy()
+        finalized.end_turn(event="complete")
+        return finalized
 
     def _attach_stream_checkpoint_finalizer(  # noqa: C901
         self,
