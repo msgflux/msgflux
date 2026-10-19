@@ -29,6 +29,7 @@ def test_default_tool_retry_does_not_repeat_action_after_interrupt():
             release = asyncio.Event()
             store = InMemoryTaskStore()
             store.create("worker", task_id="retry-stop")
+            store.set_running("retry-stop", stage="work")
             task_handle = TaskHandle("retry-stop", store)
 
             @tool_config(runtime_inputs=["handle"])

@@ -282,9 +282,11 @@ interrupt_result = agent.tool_library([("call_6", "task_interrupt", {"task_id": 
 print(interrupt_result.tool_calls[0].result)
 ```
 
-If the task has not started yet, msgFlux may interrupt it immediately. If it is
-already running, the interrupt is observed at the next cooperative checkpoint. For
-background subagents, that means before the next provider call.
+A queued task with no worker lease transitions directly to `interrupted` in the
+task store. If a worker lease exists, or the task is already running or paused,
+msgFlux records a cooperative interrupt request instead. The worker observes it
+at its next cooperative checkpoint; for background subagents, that means before
+the next provider call.
 
 The task may complete before it observes the request. Completion and failure
 clear the pending interrupt flag while preserving the result or error and the

@@ -28,18 +28,6 @@ def _claim_then_exit(path: str, ready) -> None:
     os._exit(0)
 
 
-@pytest.fixture(params=["memory", "sqlite"])
-def task_store(request, tmp_path):
-    if request.param == "memory":
-        yield InMemoryTaskStore()
-        return
-    store = SQLiteTaskStore(str(tmp_path / "tasks.sqlite"))
-    try:
-        yield store
-    finally:
-        store.close()
-
-
 def test_task_store_contract_lifecycle_and_activity(task_store):
     assert isinstance(task_store, TaskStoreProtocol)
     task = task_store.create("worker", task_id="task-1", metadata={"kind": "agent"})
@@ -72,6 +60,7 @@ def test_task_store_contract_lifecycle_and_activity(task_store):
     assert completed.metadata["interrupt_requested"] is False
 
     task_store.create("failed-task", task_id="failed-task")
+    task_store.set_running("failed-task", stage="work")
     task_store.request_interrupt("failed-task")
     failed = task_store.fail("failed-task", "failed after interrupt request")
     assert failed.status == "failed"

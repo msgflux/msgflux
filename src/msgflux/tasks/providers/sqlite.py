@@ -840,17 +840,40 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
                 if requested and task.status in {"completed", "failed", "interrupted"}:
                     self._conn.rollback()
                     return task
-                task.metadata["interrupt_requested"] = requested
-                task.updated_at = utc_now_isoformat()
-                self._save_task(task)
-                if requested:
+                lease = None
+                if requested and task.status == "queued":
+                    lease = self._conn.execute(
+                        "SELECT 1 FROM task_worker_leases WHERE task_id = ?",
+                        (task_id,),
+                    ).fetchone()
+                now = utc_now_isoformat()
+                if requested and task.status == "queued" and lease is None:
+                    reason = "Task was cancelled before it started running."
+                    task.status = "interrupted"
+                    task.updated_at = now
+                    task.completed_at = now
+                    task.metadata["interrupt_requested"] = False
+                    task.metadata["interrupt_reason"] = reason
+                    self._save_task(task)
                     self._append_activity(
                         task_id,
                         kind="status",
-                        summary="Interrupt requested.",
-                        created_at=task.updated_at,
-                        metadata={"status": task.status},
+                        summary="Task interrupted.",
+                        created_at=now,
+                        metadata={"status": "interrupted", "reason": reason},
                     )
+                else:
+                    task.metadata["interrupt_requested"] = requested
+                    task.updated_at = now
+                    self._save_task(task)
+                    if requested:
+                        self._append_activity(
+                            task_id,
+                            kind="status",
+                            summary="Interrupt requested.",
+                            created_at=now,
+                            metadata={"status": task.status},
+                        )
                 self._conn.commit()
                 return self.get(task_id)
             except BaseException as error:

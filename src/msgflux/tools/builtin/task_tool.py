@@ -161,26 +161,20 @@ class TaskInterruptTool(ToolBackground):
         task = task_store.request_interrupt(task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
-        if task.status in {"completed", "failed", "interrupted"}:
+        if task.status in {"completed", "failed"}:
             return {
                 "task_id": task_id,
                 "status": task.status,
                 "message": "Task already reached a terminal state.",
             }
-
-        future = handle.get_task_future(task_id)
-        if future is not None and future.cancel():
-            interrupted = task_store.interrupt(
-                task_id,
-                reason="Task was cancelled before it started running.",
-            )
+        if task.status == "interrupted":
+            future = handle.get_task_future(task_id)
+            if future is not None:
+                future.cancel()
             return {
                 "task_id": task_id,
                 "status": "interrupted",
-                "message": "Task interrupted before execution started.",
-                "task_status": (
-                    interrupted.status if interrupted is not None else "interrupted"
-                ),
+                "message": "Task is interrupted.",
             }
 
         return {
