@@ -19,6 +19,9 @@ from msgflux.utils.time import parse_utc_timestamp
 _base_task_tools = Registry()
 _background_activity_tools = Registry()
 _background_message_tools = Registry()
+_TASK_WAIT_SETTLED_STATUSES = frozenset(
+    {"completed", "failed", "interrupted", "paused"}
+)
 
 
 @_base_task_tools
@@ -111,7 +114,7 @@ class TaskWaitTool(ToolBackground):
         task = task_store.get(task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
-        if task.status in {"completed", "failed", "interrupted"}:
+        if task.status in _TASK_WAIT_SETTLED_STATUSES:
             return build_task_result(task_id=task_id, task=task)
 
         future = handle.get_task_future(task_id)
@@ -120,6 +123,8 @@ class TaskWaitTool(ToolBackground):
                 future.result(timeout=timeout)
             except FutureTimeoutError:
                 task = task_store.get(task_id)
+                if task is None or task.status in _TASK_WAIT_SETTLED_STATUSES:
+                    return build_task_result(task_id=task_id, task=task)
                 return build_task_timeout_result(
                     task_id=task_id,
                     task=task,
@@ -133,7 +138,7 @@ class TaskWaitTool(ToolBackground):
         deadline = None if timeout is None else time.monotonic() + float(timeout)
         while True:
             task = task_store.get(task_id)
-            if task is None or task.status in {"completed", "failed", "interrupted"}:
+            if task is None or task.status in _TASK_WAIT_SETTLED_STATUSES:
                 return build_task_result(task_id=task_id, task=task)
             if deadline is not None and time.monotonic() >= deadline:
                 return build_task_timeout_result(

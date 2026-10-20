@@ -226,8 +226,9 @@ print(wait_result.tool_calls[0].result)
 
 When the task completes, `task_wait` returns the same payload as
 `task_output(task_id)`. If the task fails, it returns the failed payload. If
-the timeout is reached first, it returns a timeout payload with the current
-task status and progress.
+the task pauses, it returns the current paused status so the host can resume it
+explicitly. If the timeout is reached while the task is still queued or running,
+it returns a timeout payload with the current task status and progress.
 
 ### Streaming Agent Results
 
