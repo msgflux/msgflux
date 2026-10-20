@@ -7,7 +7,11 @@ from typing import Any, Dict, Iterable, List, Mapping
 from uuid import uuid4
 
 from msgflux.data.stores.registry import register_store
-from msgflux.runtime.agent_inbox.base import AgentInboxStore
+from msgflux.runtime.agent_inbox.base import (
+    _USER_CONTENT_SOURCES,
+    AgentInboxClosedError,
+    AgentInboxStore,
+)
 
 
 @register_store()
@@ -32,6 +36,22 @@ class InMemoryAgentInboxStore(AgentInboxStore):
         run_id: str,
     ) -> Dict[str, Any] | None:
         return self._data.get(namespace, {}).get(thread_id, {}).get(run_id)
+
+    def _ensure_run(
+        self, namespace: str, thread_id: str, run_id: str
+    ) -> Dict[str, Any]:
+        ns = self._data.setdefault(namespace, {})
+        thread = ns.setdefault(thread_id, {})
+        return thread.setdefault(
+            run_id,
+            {
+                "notifications": [],
+                "created_at": time.time(),
+                "updated_at": time.time(),
+                "claims": {},
+                "accepting_user_messages": True,
+            },
+        )
 
     def load_notifications(
         self,
@@ -64,6 +84,9 @@ class InMemoryAgentInboxStore(AgentInboxStore):
                 "notifications": payloads,
                 "created_at": created_at,
                 "updated_at": time.time(),
+                "accepting_user_messages": (
+                    existing.get("accepting_user_messages", True) if existing else True
+                ),
                 "claims": {
                     key: value for key, value in old_claims.items() if key in valid_ids
                 },
@@ -77,17 +100,13 @@ class InMemoryAgentInboxStore(AgentInboxStore):
         notification: Mapping[str, Any],
     ) -> Mapping[str, Any]:
         with self._lock:
-            ns = self._data.setdefault(namespace, {})
-            thread = ns.setdefault(thread_id, {})
-            run = thread.setdefault(
-                run_id,
-                {
-                    "notifications": [],
-                    "created_at": time.time(),
-                    "updated_at": time.time(),
-                    "claims": {},
-                },
-            )
+            run = self._ensure_run(namespace, thread_id, run_id)
+            if notification.get("source") in _USER_CONTENT_SOURCES and not run.get(
+                "accepting_user_messages", True
+            ):
+                raise AgentInboxClosedError(
+                    f"Run `{run_id}` no longer accepts incoming messages."
+                )
             dedupe_key = notification.get("dedupe_key")
             if dedupe_key:
                 for index, item in enumerate(run["notifications"]):
@@ -98,6 +117,39 @@ class InMemoryAgentInboxStore(AgentInboxStore):
             run["notifications"].append(deepcopy(dict(notification)))
             run["updated_at"] = time.time()
             return deepcopy(dict(notification))
+
+    def open_user_messages(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+    ) -> None:
+        with self._lock:
+            run = self._ensure_run(namespace, thread_id, run_id)
+            run["accepting_user_messages"] = True
+            run["updated_at"] = time.time()
+
+    def close_user_messages(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        *,
+        only_if_empty: bool = True,
+        consumed_ids: Iterable[str] = (),
+    ) -> bool:
+        ignored_ids = set(consumed_ids)
+        with self._lock:
+            run = self._ensure_run(namespace, thread_id, run_id)
+            if only_if_empty and any(
+                item.get("source") in _USER_CONTENT_SOURCES
+                and item.get("notification_id") not in ignored_ids
+                for item in run["notifications"]
+            ):
+                return False
+            run["accepting_user_messages"] = False
+            run["updated_at"] = time.time()
+            return True
 
     def claim_notifications(
         self,

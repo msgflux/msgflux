@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import asyncio
 import contextvars
 import inspect
@@ -39,6 +41,8 @@ class LMStreamEvent:
         "commentary.delta",
         "reasoning.delta",
         "reasoning_summary.delta",
+        "message.end",
+        "message.start",
     ]
     data: Any
 
@@ -155,12 +159,15 @@ class BaseStreamResponse(CoreResponse):
         self.metadata = None
         self.response_type = None
         self.error = None
+        self._source_error = None
         self._finalizers = []
         self._pending_finalizer_awaitables = []
         self._consumer_finalizers = []
         self._finalized = False
         self._consumer_finalized = False
         self._final_status = None
+        self._continuation: BaseStreamResponse | None = None
+        self._is_continuation_member = False
         self._finalizer_lock = threading.Lock()
         self.chat_accumulator = ChatStreamAccumulator()
 
@@ -282,6 +289,7 @@ class BaseStreamResponse(CoreResponse):
 
     def set_error(self, error: BaseException):
         self.error = error
+        self._source_error = error
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
         if not self._response_type_event.is_set():
@@ -350,6 +358,87 @@ class BaseStreamResponse(CoreResponse):
     def _is_finalized(self) -> bool:
         with self._finalizer_lock:
             return self._finalized
+
+    def _set_continuation(self, result: Any) -> None:
+        """Link a subsequent stream or terminal result to this response."""
+        if isinstance(result, BaseStreamResponse):
+            continuation = result
+        else:
+            continuation = BaseStreamResponse(mode="async")
+            continuation._settled_output = result
+            if isinstance(result, (str, bytes)):
+                continuation.add(result)
+            continuation.finish()
+
+        with self._finalizer_lock:
+            if self._continuation is not None:
+                raise RuntimeError("A stream continuation is already attached.")
+            if continuation is self or continuation._is_continuation_member:
+                raise ValueError("A stream continuation cannot be reused or cyclic.")
+            self._continuation = continuation
+            continuation._is_continuation_member = True
+
+    def _get_continuation(self) -> BaseStreamResponse | None:
+        with self._finalizer_lock:
+            return self._continuation
+
+    def _adopt_continuation_state(self, continuation: BaseStreamResponse) -> None:
+        self._settled_output = getattr(
+            continuation, "_settled_output", continuation.data
+        )
+        self._final_status = continuation._final_status
+        self.error = continuation.error
+
+    async def _cleanup_unconsumed_continuation(
+        self, primary_error: BaseException | None
+    ) -> None:
+        continuation = self._get_continuation()
+        if continuation is None:
+            return
+        cleanup_errors = []
+        if not continuation._is_finalized():
+            interrupted_error = (
+                primary_error
+                if isinstance(primary_error, asyncio.CancelledError)
+                else None
+            )
+            try:
+                continuation.finish(error=interrupted_error, status="interrupted")
+            except (asyncio.CancelledError, Exception) as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        for cleanup in (
+            lambda: continuation._await_pending_finalizers(primary_error),
+            continuation._run_consumer_finalizers,
+            lambda: continuation._cleanup_unconsumed_continuation(primary_error),
+        ):
+            try:
+                result = cleanup()
+                if inspect.isawaitable(result):
+                    await result
+            except (asyncio.CancelledError, Exception) as cleanup_error:
+                cleanup_errors.append(cleanup_error)
+        if cleanup_errors:
+            if primary_error is None:
+                raise cleanup_errors[0]
+            for cleanup_error in cleanup_errors:
+                primary_error.add_note(f"Continuation cleanup failed: {cleanup_error}")
+
+    @staticmethod
+    async def _close_consumer(iterator, primary_error: BaseException | None) -> None:
+        try:
+            await iterator.aclose()
+        except asyncio.CancelledError as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(
+                f"Continuation consumer close was cancelled: {cleanup_error}"
+            )
+        except Exception as cleanup_error:
+            if primary_error is None:
+                raise
+            primary_error.add_note(
+                f"Continuation consumer close failed: {cleanup_error}"
+            )
 
     @staticmethod
     def _combine_finalizer_error(
@@ -640,20 +729,39 @@ class BaseStreamResponse(CoreResponse):
         queue = self._bind_consumer_queue()
         chunk = await queue.get()
         if chunk is None:
-            if self.error is not None:
-                raise self.error
+            if self._source_error is not None:
+                raise self._source_error
             return None
         return chunk
 
     async def consume(self) -> AsyncGenerator[Union[bytes, str], None]:
         """Async generator that yields content chunks until None is received."""
         primary_error = None
+        completed = False
         try:
             while True:
                 chunk = await self.next_chunk()
                 if chunk is None:
                     break
                 yield chunk
+            await self._await_pending_finalizers()
+            continuation = self._get_continuation()
+            if continuation is not None or self._is_continuation_member:
+                self._run_consumer_finalizers()
+            if continuation is not None:
+                child_stream = continuation.consume()
+                child_error = None
+                try:
+                    async for chunk in child_stream:
+                        yield chunk
+                except BaseException as error:
+                    child_error = error
+                    self._adopt_continuation_state(continuation)
+                    raise
+                finally:
+                    await self._close_consumer(child_stream, child_error)
+                self._adopt_continuation_state(continuation)
+            completed = True
         except BaseException as error:
             # GeneratorExit is normal async-generator cleanup. Let a pending
             # finalizer failure escape instead of being suppressed by aclose().
@@ -661,6 +769,8 @@ class BaseStreamResponse(CoreResponse):
             raise
         finally:
             await self._await_pending_finalizers(primary_error)
+            if not completed:
+                await self._cleanup_unconsumed_continuation(primary_error)
 
     async def consume_reasoning(self) -> AsyncGenerator[str, None]:
         """Async generator that yields reasoning chunks until None is received."""
@@ -668,10 +778,25 @@ class BaseStreamResponse(CoreResponse):
         while True:
             chunk = await queue.get()
             if chunk is None:
-                if self.error is not None:
-                    raise self.error
+                if self._source_error is not None:
+                    raise self._source_error
                 break
             yield chunk
+        await self._await_pending_finalizers()
+        continuation = self._get_continuation()
+        if continuation is not None:
+            child_stream = continuation.consume_reasoning()
+            child_error = None
+            try:
+                async for chunk in child_stream:
+                    yield chunk
+            except BaseException as error:
+                child_error = error
+                self._adopt_continuation_state(continuation)
+                raise
+            finally:
+                await self._close_consumer(child_stream, child_error)
+            self._adopt_continuation_state(continuation)
 
     async def consume_reasoning_summary(self) -> AsyncGenerator[str, None]:
         """Yield reasoning-summary chunks without conflating them with CoT."""
@@ -679,13 +804,27 @@ class BaseStreamResponse(CoreResponse):
         while True:
             chunk = await queue.get()
             if chunk is None:
-                if self.error is not None:
-                    raise self.error
+                if self._source_error is not None:
+                    raise self._source_error
                 break
             yield chunk
+        await self._await_pending_finalizers()
+        continuation = self._get_continuation()
+        if continuation is not None:
+            child_stream = continuation.consume_reasoning_summary()
+            child_error = None
+            try:
+                async for chunk in child_stream:
+                    yield chunk
+            except BaseException as error:
+                child_error = error
+                self._adopt_continuation_state(continuation)
+                raise
+            finally:
+                await self._close_consumer(child_stream, child_error)
+            self._adopt_continuation_state(continuation)
 
-    async def consume_events(self) -> AsyncGenerator[LMStreamEvent, None]:
-        """Yield language-model events in their original provider order."""
+    async def _consume_own_events(self) -> AsyncGenerator[LMStreamEvent, None]:
         loop = asyncio.get_running_loop()
         queue = asyncio.Queue()
         subscriber = (loop, queue)
@@ -698,22 +837,63 @@ class BaseStreamResponse(CoreResponse):
         try:
             for event in events:
                 yield event
-            if closed:
-                if self.error is not None:
-                    raise self.error
-                return
-            while True:
-                event = await queue.get()
-                if event is None:
-                    if self.error is not None:
-                        raise self.error
-                    return
-                yield event
+            if not closed:
+                while True:
+                    event = await queue.get()
+                    if event is None:
+                        break
+                    yield event
+            if self._source_error is not None:
+                raise self._source_error
         except BaseException as error:
             primary_error = None if isinstance(error, GeneratorExit) else error
             raise
         finally:
-            with self._event_queue_lock:
-                if subscriber in self._event_subscribers:
-                    self._event_subscribers.remove(subscriber)
-            await self._await_pending_finalizers(primary_error)
+            await self._finish_own_event_consumption(subscriber, primary_error)
+
+    async def _finish_own_event_consumption(self, subscriber, primary_error) -> None:
+        with self._event_queue_lock:
+            if subscriber in self._event_subscribers:
+                self._event_subscribers.remove(subscriber)
+        await self._await_pending_finalizers(primary_error)
+        if primary_error is None and (
+            self._get_continuation() is not None or self._is_continuation_member
+        ):
+            self._run_consumer_finalizers()
+
+    async def consume_events(self) -> AsyncGenerator[LMStreamEvent, None]:
+        """Yield language-model events in their original provider order."""
+        continuation = None
+        primary_error = None
+        completed = False
+        own_events = self._consume_own_events()
+        try:
+            async for event in own_events:
+                yield event
+            continuation = self._get_continuation()
+            if continuation is not None:
+                yield LMStreamEvent(
+                    type="message.end",
+                    data={"content": getattr(self, "_settled_output", self.data)},
+                )
+                yield LMStreamEvent(type="message.start", data={"buffered": False})
+                child_events = continuation.consume_events()
+                child_error = None
+                try:
+                    async for event in child_events:
+                        yield event
+                except BaseException as error:
+                    child_error = error
+                    self._adopt_continuation_state(continuation)
+                    raise
+                finally:
+                    await self._close_consumer(child_events, child_error)
+                self._adopt_continuation_state(continuation)
+            completed = True
+        except BaseException as error:
+            primary_error = None if isinstance(error, GeneratorExit) else error
+            raise
+        finally:
+            await self._close_consumer(own_events, primary_error)
+            if not completed:
+                await self._cleanup_unconsumed_continuation(primary_error)

@@ -474,7 +474,12 @@ resumed = await client.resume_checkpoint(thread_id, receipt.run_id)
 ```
 
 Steering returns the published notification as a JSON dictionary and is not a
-follow-up queue. Interruption targets an explicit run and returns a boolean.
+follow-up queue. A message accepted before the run seals its inbox can cause the
+same run to make another model request after the current request completes. Once
+the inbox is sealed for finalization, steering returns HTTP 409 with
+`service_busy`, even while an after-run hook is still running; the service does
+not queue the message for another run. Interruption targets an explicit run and
+returns a boolean.
 An unfinished run already paused or failed in this service can resume through its
 normal recovery checks. The HTTP resume route does not itself approve a tool
 invocation; use the explicit review and decision operations described above.

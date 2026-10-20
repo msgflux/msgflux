@@ -22,6 +22,7 @@ from msgflux.exceptions import (
 )
 from msgflux.logger import logger
 from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.agent_inbox.base import AgentInboxClosedError
 from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
@@ -1151,11 +1152,16 @@ class AgentService:
             if worker is None or worker.scope.abort_signal.aborted:
                 raise ServiceBusyError("The target run is not active in this service")
             inbox = worker.session.agent_inbox or worker.session.agent.agent_inbox
-            return inbox.fork(
-                namespace=worker.session.namespace,
-                thread_id=thread_id,
-                run_id=run_id,
-            ).user_message(content)
+            try:
+                return inbox.fork(
+                    namespace=worker.session.namespace,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                ).user_message(content)
+            except AgentInboxClosedError as error:
+                raise ServiceBusyError(
+                    "The target run no longer accepts steering"
+                ) from error
 
     def _recover_approval_owner(self, session, record):
         """Use local host evidence to adopt only an unexecuted approval batch."""

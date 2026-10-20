@@ -69,6 +69,32 @@ def _note_terminal_hook_failure(primary_error: BaseException, hook_error: Except
     )
 
 
+def _seal_terminal_steering(agent, messages, primary_error: BaseException) -> None:
+    """Close steering admission before settling a run, preserving its failure."""
+    try:
+        agent._seal_steering(messages, force=True)
+    except BaseException as seal_error:
+        note = (
+            "Steering inbox could not be sealed during terminal settlement: "
+            f"{type(seal_error).__name__}: {seal_error}"
+        )
+        if isinstance(
+            primary_error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ),
+        ):
+            primary_error.add_note(note)
+            raise primary_error from seal_error
+        raise BaseExceptionGroup(
+            "Terminal settlement and steering inbox sealing failed",
+            [primary_error, seal_error],
+        ) from None
+
+
 class AgentLifecycleMixin:
     """Agent extension, lifecycle-hook, event-stream, and watch behavior."""
 
@@ -600,6 +626,7 @@ class AgentLifecycleMixin:
         *,
         run_before_hook: bool = True,
     ) -> RunEndContext:
+        _seal_terminal_steering(self, inputs.get("messages"), error)
         run_end = self._run_end_context(
             outcome=outcome,
             messages=inputs.get("messages"),
@@ -649,6 +676,7 @@ class AgentLifecycleMixin:
         *,
         run_before_hook: bool = True,
     ) -> RunEndContext:
+        _seal_terminal_steering(self, inputs.get("messages"), error)
         run_end = self._run_end_context(
             outcome=outcome,
             messages=inputs.get("messages"),

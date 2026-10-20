@@ -1,4 +1,4 @@
-from msgflux.runtime.agent_inbox.base import AgentInboxStore
+from msgflux.runtime.agent_inbox.base import AgentInboxClosedError, AgentInboxStore
 from msgflux.runtime.agent_inbox.dataclasses import (
     AgentControlMessage,
     AgentNotification,
@@ -13,6 +13,7 @@ from msgflux.runtime.agent_inbox.providers import (
 __all__ = [
     "AgentControlMessage",
     "AgentInbox",
+    "AgentInboxClosedError",
     "AgentInboxStore",
     "AgentNotification",
     "InMemoryAgentInboxStore",

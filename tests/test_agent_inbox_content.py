@@ -323,7 +323,9 @@ async def test_tool_image_follows_result_and_survives_checkpoint(inbox, asynchro
     assert inbox.peek() == []
     assert "data:image/png;base64,AA==" in str(state)
     # Simulate the notification surviving an interrupted acknowledgment.
-    inbox.publish(published[0])
+    inbox.store.save_notifications(
+        inbox.namespace, inbox.thread_id, inbox.run_id, [published[0].to_dict()]
+    )
     recovered = ChatMessages(state["messages"]["items"])
     recovered.update_metadata(state["messages"]["metadata"])
     assert (

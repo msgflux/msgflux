@@ -1002,8 +1002,39 @@ rendered = agent_inbox.render(notifications)
 ### Sending Messages While The Agent Is Running
 
 To feed a running agent, write an incoming user message to the same inbox. The
-agent drains the inbox before each provider call and after tool calls, before
-the next provider call.
+agent drains the inbox before each provider call and after tool calls. Before
+normally completing a run, it also checks for accepted user content. If a message
+arrived during the last generation, the Agent preserves that answer, delivers
+the message through the ordinary checkpoint/receipt path, and requests another
+response in the **same run**. It does not cancel the current generation or move
+the message to another run.
+
+Inbox publication and closure are atomic within the store. Once normal
+finalization starts, `user_message()` and `message()` raise
+`AgentInboxClosedError` from `msgflux.runtime.agent_inbox`; the service reports
+that condition as `ServiceBusyError` (HTTP 409). Existing inbox forks and
+independent SQLite connections observe the same gate. Task, control, and model
+configuration notifications remain publishable but do not by themselves start
+another generation.
+
+Explicit pause, interruption, budgets, guards, direct tool results, and handoffs
+retain their stopping behavior. They do not trigger extra generation merely
+because input is pending. A failed final checkpoint preserves accepted input;
+a validated same-run resume reopens the gate before continuing. If a notification
+hook defers the pending input, or another consumer holds its claim, the Agent
+pauses rather than repeatedly calling the model without delivering it.
+
+Streaming consumers receive subsequent generations through the same response.
+Event observers see each assistant message boundary, followed by a single
+terminal `run.end`. When output hooks require buffering or transformation, the
+observer retains the final presentation boundary without exposing unprocessed
+intermediate answers. The final result is the last answer; preceding answers remain
+in the checkpoint history. Run-end hooks execute only for final settlement.
+
+Custom `AgentInboxStore` adapters must implement `open_user_messages()` and
+`close_user_messages()` and coordinate the latter with incoming-content
+publication using the same transaction or lock. The memory and SQLite stores
+provide this guarantee; a separate read followed by a write is insufficient.
 
 ```python
 inbox_store = mf.Store.agent_inbox("sqlite", path=".msgflux/inbox.sqlite3")

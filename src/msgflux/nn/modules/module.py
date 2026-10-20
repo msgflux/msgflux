@@ -1998,26 +1998,11 @@ class Module:
         primary_error = None
         try:
             async for event in event_stream:
-                if event.type == "output.delta":
-                    if emit_content:
-                        delta = event.data
-                        if output_transformer is not None and isinstance(delta, str):
-                            delta = output_transformer.feed(delta)
-                        if delta:
-                            emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
-                elif event.type in {
-                    "tool.start",
-                    "tool.update",
-                    "tool.end",
-                    "tools.updated",
-                }:
-                    emit_event(event.type, event.data)
-                elif event.type in {
-                    "reasoning.delta",
-                    "commentary.delta",
-                    "reasoning_summary.delta",
-                }:
-                    emit_event(event.type, {"delta": event.data})
+                Module._emit_stream_event(
+                    event,
+                    emit_content=emit_content,
+                    output_transformer=output_transformer,
+                )
         except BaseException as error:
             primary_error = error
             raise
@@ -2025,6 +2010,35 @@ class Module:
             await Module._afinalize_event_consumer(
                 response, event_stream, primary_error
             )
+
+    @staticmethod
+    def _emit_stream_event(event, *, emit_content, output_transformer) -> None:
+        if event.type == "output.delta":
+            if emit_content:
+                delta = event.data
+                if output_transformer is not None and isinstance(delta, str):
+                    delta = output_transformer.feed(delta)
+                if delta:
+                    emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
+        elif event.type in {"tool.start", "tool.update", "tool.end", "tools.updated"}:
+            emit_event(event.type, event.data)
+        elif event.type in {
+            "reasoning.delta",
+            "commentary.delta",
+            "reasoning_summary.delta",
+        }:
+            emit_event(event.type, {"delta": event.data})
+        elif (
+            event.type in {"message.end", "message.start"}
+            and emit_content
+            and output_transformer is None
+        ):
+            boundary_type = (
+                EventType.MESSAGE_END
+                if event.type == "message.end"
+                else EventType.MESSAGE_START
+            )
+            emit_event(boundary_type, event.data)
 
     @staticmethod
     async def _afinalize_event_consumer(response, event_stream, primary_error) -> None:

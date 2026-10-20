@@ -79,6 +79,7 @@ from msgflux.nn.modules.agent.inputs import AgentInputMixin
 from msgflux.nn.modules.agent.lifecycle import AgentLifecycleMixin
 from msgflux.nn.modules.agent.model_runtime import AgentModelRuntimeMixin
 from msgflux.nn.modules.agent.resources import AgentResourceMixin, resource_call
+from msgflux.nn.modules.agent.steering import AgentSteeringMixin
 
 
 class Agent(
@@ -86,6 +87,7 @@ class Agent(
     AgentApprovalMixin,
     AgentLifecycleMixin,
     AgentContinuationMixin,
+    AgentSteeringMixin,
     AgentModelRuntimeMixin,
     AgentCompactionMixin,
     AgentInputMixin,
@@ -588,38 +590,8 @@ class Agent(
                 agent_inbox=effective_inbox,
             ),
         ):
-            try:
-                try:
-                    model_response = self._approval_replay() or self._execute_model(
-                        prefilling=self.prefilling,
-                        **inputs,
-                    )
-                except _GuardInterrupt as e:
-                    model_response = self._guard_model_response(e.response)
-                response = self._process_model_response(
-                    message,
-                    model_response,
-                    **inputs,
-                )
-            except (
-                AbortRequestedError,
-                TaskInterruptRequestedError,
-                asyncio.CancelledError,
-            ) as exc:
-                self._settle_terminal_run(inputs, "interrupted", exc)
-                self._raise_interrupted_from_abort(inputs, exc)
-            except ApprovalReconciliationRequiredError:
-                raise
-            except TaskPauseRequestedError as exc:
-                self._settle_terminal_run(inputs, "paused", exc)
-                raise
-            except Exception as exc:
-                settled_error = self._settle_processing_error(inputs, exc)
-                if settled_error is exc:
-                    raise
-                # Unwrap the hook error without chaining it back to its marker.
-                raise settled_error from settled_error.__cause__
-            return response
+            self._open_steering()
+            return self._execute_prepared_run(message, inputs)
 
     @resource_call
     async def aforward(
@@ -674,45 +646,84 @@ class Agent(
                 agent_inbox=effective_inbox,
             ),
         ):
+            self._open_steering()
+            return await self._aexecute_prepared_run(message, inputs)
+
+    def _execute_prepared_run(self, message, inputs, *, continuation=False):
+        try:
             try:
-                try:
-                    model_response = self._approval_replay()
-                    if model_response is None:
-                        model_response = await self._aexecute_model(
-                            prefilling=self.prefilling,
-                            **inputs,
-                        )
-                except _GuardInterrupt as e:
-                    model_response = self._guard_model_response(e.response)
-                response = await self._aprocess_model_response(
-                    message,
-                    model_response,
+                model_response = self._approval_replay() or self._execute_model(
+                    prefilling=None if continuation else self.prefilling,
                     **inputs,
                 )
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                await self._asettle_terminal_run(inputs, "interrupted", exc)
-                self._raise_interrupted_from_abort(inputs, exc)
-            except asyncio.CancelledError as exc:
-                await self._asettle_terminal_run(inputs, "interrupted", exc)
+            except _GuardInterrupt as e:
+                model_response = self._guard_model_response(e.response)
+            response = self._process_model_response(
+                message,
+                model_response,
+                **inputs,
+            )
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            asyncio.CancelledError,
+        ) as exc:
+            self._settle_terminal_run(inputs, "interrupted", exc)
+            self._raise_interrupted_from_abort(inputs, exc)
+        except ApprovalReconciliationRequiredError:
+            raise
+        except TaskPauseRequestedError as exc:
+            self._settle_terminal_run(inputs, "paused", exc)
+            raise
+        except Exception as exc:
+            settled_error = self._settle_processing_error(inputs, exc)
+            if settled_error is exc:
                 raise
-            except ApprovalReconciliationRequiredError:
+            # Unwrap the hook error without chaining it back to its marker.
+            raise settled_error from settled_error.__cause__
+        return response
+
+    async def _aexecute_prepared_run(self, message, inputs, *, continuation=False):
+        try:
+            try:
+                model_response = self._approval_replay()
+                if model_response is None:
+                    model_response = await self._aexecute_model(
+                        prefilling=None if continuation else self.prefilling,
+                        **inputs,
+                    )
+            except _GuardInterrupt as e:
+                model_response = self._guard_model_response(e.response)
+            response = await self._aprocess_model_response(
+                message,
+                model_response,
+                **inputs,
+            )
+        except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+            await self._asettle_terminal_run(inputs, "interrupted", exc)
+            self._raise_interrupted_from_abort(inputs, exc)
+        except asyncio.CancelledError as exc:
+            await self._asettle_terminal_run(inputs, "interrupted", exc)
+            raise
+        except ApprovalReconciliationRequiredError:
+            raise
+        except TaskPauseRequestedError as exc:
+            await self._asettle_terminal_run(inputs, "paused", exc)
+            raise
+        except Exception as exc:
+            settled_error = await self._asettle_processing_error(inputs, exc)
+            if settled_error is exc:
                 raise
-            except TaskPauseRequestedError as exc:
-                await self._asettle_terminal_run(inputs, "paused", exc)
-                raise
-            except Exception as exc:
-                settled_error = await self._asettle_processing_error(inputs, exc)
-                if settled_error is exc:
-                    raise
-                # Unwrap the hook error without chaining it back to its marker.
-                raise settled_error from settled_error.__cause__
-            return response
+            # Unwrap the hook error without chaining it back to its marker.
+            raise settled_error from settled_error.__cause__
+        return response
 
     @staticmethod
     def _guard_model_response(response: str) -> ModelResponse:
         model_response = ModelResponse()
         model_response.set_response_type("text_generation")
         model_response.add(response)
+        model_response._steering_terminal = True
         return model_response
 
     # --- Extensions ---
