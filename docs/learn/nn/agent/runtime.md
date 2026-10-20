@@ -370,6 +370,9 @@ observation = await workspace.aterminate_command(receipt)
 Termination requires current process permissions and verified resource
 ownership. Local termination additionally requires Python/kernel pidfd support;
 without it, the executor reports blocked rather than signaling by PID alone.
+It targets the recorded process leader. Descendants may remain alive, including
+members of its original process group. An `unknown` result with a `missing`
+resource means the leader is absent; it does not prove the command tree stopped.
 Establish quiescence of any other external work before resuming an
 interrupted Agent. Inspection and termination do not themselves append a tool
 result to the saved conversation or make an unknown result safe to replay.

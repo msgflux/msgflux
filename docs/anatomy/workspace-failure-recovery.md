@@ -118,7 +118,7 @@ persistence fails, the container is retained for explicit reconciliation.
 Local records capture boot and PID-start identity where Linux exposes them.
 PID reuse or a different boot prevents adoption or signaling. A restarted host
 cannot recover the old subprocess pipes or an absent exit status. Signaling the
-verified leader does not establish that escaped descendants or other external
+verified leader does not establish that descendants or other external
 work have stopped; the host must establish quiescence before replacement work.
 
 Workspace closure detaches its binding; it does not stop surviving commands.
