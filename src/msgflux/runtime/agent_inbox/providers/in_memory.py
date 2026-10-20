@@ -276,15 +276,22 @@ class InMemoryAgentInboxStore(AgentInboxStore):
             existing_ids = {
                 item.get("notification_id") for item in target["notifications"]
             }
-            target["notifications"].extend(
-                deepcopy(
-                    [
-                        item
-                        for item in movable
-                        if item.get("notification_id") not in existing_ids
-                    ]
-                )
-            )
+            existing_dedupe_keys = {
+                item.get("dedupe_key")
+                for item in target["notifications"]
+                if item.get("dedupe_key")
+            }
+            moved = []
+            for notification in movable:
+                dedupe_key = notification.get("dedupe_key")
+                if notification.get("notification_id") in existing_ids:
+                    continue
+                if dedupe_key and dedupe_key in existing_dedupe_keys:
+                    continue
+                moved.append(notification)
+                if dedupe_key:
+                    existing_dedupe_keys.add(dedupe_key)
+            target["notifications"].extend(deepcopy(moved))
             target["updated_at"] = now
             remaining = [
                 item

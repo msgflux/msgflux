@@ -71,6 +71,11 @@ class AgentInbox:
         thread_id: str | None = None,
         run_id: str | None = None,
     ) -> AgentInbox:
+        """Bind this inbox to a scope and move its pending notifications there.
+
+        If both scopes contain a notification with the same dedupe key, the
+        destination notification is retained.
+        """
         with self._lock:
             previous_key = self._scope_key()
             was_bound = self._scope_bound
