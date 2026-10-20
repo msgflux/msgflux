@@ -114,14 +114,9 @@ class _StreamConsumerState:
     def __init__(self):
         self.active_consumers = 0
         self.cleanup_started = False
-        self.cleanup_complete = False
 
     def acquire(self) -> None:
         with _STREAM_CONSUMER_OWNERSHIP_LOCK:
-            if self.cleanup_started and not self.cleanup_complete:
-                raise RuntimeError(
-                    "Cannot consume a stream after continuation cleanup started."
-                )
             self.active_consumers += 1
 
     def release(self, *, cleanup: bool) -> bool:
@@ -129,14 +124,10 @@ class _StreamConsumerState:
             if self.active_consumers <= 0:
                 raise RuntimeError("Stream consumer ownership count underflow.")
             self.active_consumers -= 1
-            if cleanup and self.active_consumers == 0:
+            if cleanup and self.active_consumers == 0 and not self.cleanup_started:
                 self.cleanup_started = True
                 return True
         return False
-
-    def mark_cleanup_complete(self) -> None:
-        with _STREAM_CONSUMER_OWNERSHIP_LOCK:
-            self.cleanup_complete = True
 
 
 class BaseStreamResponse(CoreResponse):
@@ -473,8 +464,6 @@ class BaseStreamResponse(CoreResponse):
                 )
             except BaseException as error:
                 cleanup_error = error
-            finally:
-                ownership.mark_cleanup_complete()
 
         if finalizer_error is not None:
             raise finalizer_error
