@@ -12,7 +12,11 @@ from typing import Any, Iterable, List, Mapping
 from uuid import uuid4
 
 from msgflux.data.stores.registry import register_store
-from msgflux.runtime.agent_inbox.base import AgentInboxStore
+from msgflux.runtime.agent_inbox.base import (
+    _USER_CONTENT_SOURCES,
+    AgentInboxClosedError,
+    AgentInboxStore,
+)
 
 _CREATE_INBOX_TABLES = """\
 CREATE TABLE IF NOT EXISTS agent_inbox_store_meta (
@@ -49,6 +53,15 @@ CREATE TABLE IF NOT EXISTS agent_inbox_notifications (
 );
 CREATE INDEX IF NOT EXISTS idx_agent_inbox_notifications_claim
     ON agent_inbox_notifications(namespace, thread_id, run_id, status, lease_until);
+
+CREATE TABLE IF NOT EXISTS agent_inbox_run_gates (
+    namespace TEXT NOT NULL,
+    thread_id TEXT NOT NULL,
+    run_id TEXT NOT NULL,
+    accepting_user_messages INTEGER NOT NULL,
+    updated_at REAL NOT NULL,
+    PRIMARY KEY (namespace, thread_id, run_id)
+);
 """
 
 _UPSERT_INBOX = """\
@@ -194,6 +207,16 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         with self._lock:
             now = time.time()
             with self._transaction():
+                if notification.get("source") in _USER_CONTENT_SOURCES:
+                    gate = self._conn.execute(
+                        "SELECT accepting_user_messages FROM agent_inbox_run_gates "
+                        "WHERE namespace=? AND thread_id=? AND run_id=?",
+                        (namespace, thread_id, run_id),
+                    ).fetchone()
+                    if gate is not None and not gate[0]:
+                        raise AgentInboxClosedError(
+                            f"Run `{run_id}` no longer accepts incoming messages."
+                        )
                 dedupe_key = notification.get("dedupe_key")
                 row = None
                 if dedupe_key:
@@ -234,6 +257,58 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                     )
                 self._sync_legacy_row(namespace, thread_id, run_id)
         return dict(notification, notification_id=notification_id)
+
+    def open_user_messages(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+    ) -> None:
+        with self._lock, self._transaction():
+            self._conn.execute(
+                """INSERT INTO agent_inbox_run_gates
+                (namespace, thread_id, run_id, accepting_user_messages, updated_at)
+                VALUES (?, ?, ?, 1, ?)
+                ON CONFLICT(namespace, thread_id, run_id) DO UPDATE SET
+                accepting_user_messages=1, updated_at=excluded.updated_at""",
+                (namespace, thread_id, run_id, time.time()),
+            )
+
+    def close_user_messages(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        *,
+        only_if_empty: bool = True,
+        consumed_ids: Iterable[str] = (),
+    ) -> bool:
+        ignored_ids = set(consumed_ids)
+        with self._lock, self._transaction():
+            if only_if_empty:
+                self._migrate_legacy_locked(namespace, thread_id, run_id)
+                rows = self._conn.execute(
+                    """SELECT notification_id, payload FROM agent_inbox_notifications
+                    WHERE namespace=? AND thread_id=? AND run_id=?""",
+                    (namespace, thread_id, run_id),
+                ).fetchall()
+                pending_user_content = any(
+                    notification_id not in ignored_ids
+                    and self._deserialize("[" + payload + "]")[0].get("source")
+                    in _USER_CONTENT_SOURCES
+                    for notification_id, payload in rows
+                )
+                if pending_user_content:
+                    return False
+            self._conn.execute(
+                """INSERT INTO agent_inbox_run_gates
+                (namespace, thread_id, run_id, accepting_user_messages, updated_at)
+                VALUES (?, ?, ?, 0, ?)
+                ON CONFLICT(namespace, thread_id, run_id) DO UPDATE SET
+                accepting_user_messages=0, updated_at=excluded.updated_at""",
+                (namespace, thread_id, run_id, time.time()),
+            )
+            return True
 
     def claim_notifications(
         self,
@@ -429,39 +504,71 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         *,
         older_than: float | None = None,
     ) -> int:
-        query = "DELETE FROM agent_inboxes WHERE 1=1"
-        params: List[Any] = []
-        if namespace is not None:
-            query += " AND namespace=?"
-            params.append(namespace)
-        if thread_id is not None:
-            query += " AND thread_id=?"
-            params.append(thread_id)
-        if run_id is not None:
-            query += " AND run_id=?"
-            params.append(run_id)
-        if older_than is not None:
-            query += " AND updated_at < ?"
-            params.append(time.time() - older_than)
-
         with self._lock, self._transaction():
-            child_query = "DELETE FROM agent_inbox_notifications WHERE 1=1"
-            child_params: List[Any] = []
-            if namespace is not None:
-                child_query += " AND namespace=?"
-                child_params.append(namespace)
-            if thread_id is not None:
-                child_query += " AND thread_id=?"
-                child_params.append(thread_id)
-            if run_id is not None:
-                child_query += " AND run_id=?"
-                child_params.append(run_id)
-            if older_than is not None:
-                child_query += " AND updated_at < ?"
-                child_params.append(time.time() - older_than)
-            self._conn.execute(child_query, tuple(child_params))
-            deleted = self._conn.execute(query, tuple(params)).rowcount
-        return deleted or 0
+            cutoff = time.time() - older_than if older_than is not None else None
+            self._delete_scoped_rows(
+                "agent_inbox_notifications",
+                namespace,
+                thread_id,
+                run_id,
+                cutoff,
+            )
+            self._delete_scoped_gate_rows(namespace, thread_id, run_id, cutoff)
+            deleted = self._delete_scoped_rows(
+                "agent_inboxes", namespace, thread_id, run_id, cutoff
+            )
+        return deleted
+
+    def _delete_scoped_rows(
+        self,
+        table: str,
+        namespace: str | None,
+        thread_id: str | None,
+        run_id: str | None,
+        cutoff: float | None,
+    ) -> int:
+        query = f"DELETE FROM {table} WHERE 1=1"
+        params: List[Any] = []
+        for column, value in (
+            ("namespace", namespace),
+            ("thread_id", thread_id),
+            ("run_id", run_id),
+        ):
+            if value is not None:
+                query += f" AND {column}=?"
+                params.append(value)
+        if cutoff is not None:
+            query += " AND updated_at < ?"
+            params.append(cutoff)
+        return self._conn.execute(query, tuple(params)).rowcount or 0
+
+    def _delete_scoped_gate_rows(
+        self,
+        namespace: str | None,
+        thread_id: str | None,
+        run_id: str | None,
+        cutoff: float | None,
+    ) -> None:
+        query = "DELETE FROM agent_inbox_run_gates WHERE 1=1"
+        params: List[Any] = []
+        for column, value in (
+            ("namespace", namespace),
+            ("thread_id", thread_id),
+            ("run_id", run_id),
+        ):
+            if value is not None:
+                query += f" AND {column}=?"
+                params.append(value)
+        if cutoff is not None:
+            query += " AND updated_at < ? AND NOT EXISTS ("
+            query += "SELECT 1 FROM agent_inboxes AS inbox WHERE "
+            query += (
+                "inbox.namespace=agent_inbox_run_gates.namespace AND "
+                "inbox.thread_id=agent_inbox_run_gates.thread_id AND "
+                "inbox.run_id=agent_inbox_run_gates.run_id AND inbox.updated_at>=?)"
+            )
+            params.extend((cutoff, cutoff))
+        self._conn.execute(query, tuple(params))
 
     def close(self) -> None:
         with self._lock:

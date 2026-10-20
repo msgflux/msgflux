@@ -55,6 +55,7 @@ from msgflux.nn.modules.agent.context import (
     _require_lifecycle_payload,
 )
 from msgflux.nn.modules.agent.continuation import _TerminalResponse
+from msgflux.nn.modules.agent.steering import _SteeringContinuation
 
 
 class AgentModelRuntimeMixin:
@@ -642,7 +643,7 @@ class AgentModelRuntimeMixin:
             await await_for_event(model_response._response_type_event)
             self._ensure_stream_response_ready(model_response)
 
-    def _process_model_response(
+    def _process_model_response_step(
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
@@ -681,7 +682,13 @@ class AgentModelRuntimeMixin:
             wait_for_event(model_response._response_type_event)
             self._ensure_stream_response_ready(model_response)
             self._checkpoint_save(messages, vars, status="streaming")
-            self._attach_stream_checkpoint_finalizer(model_response, messages, vars)
+            self._attach_stream_checkpoint_finalizer(
+                model_response,
+                messages,
+                vars,
+                model_preference=model_preference,
+                tool_filter=tool_filter,
+            )
             return self._prepare_response(
                 model_response,
                 model_response.response_type,
@@ -723,6 +730,14 @@ class AgentModelRuntimeMixin:
         response = self._prepare_response(
             raw_response, response_type, messages, message, vars, reasoning
         )
+        forced = (
+            not isinstance(model_response, ModelResponse)
+            or isinstance(model_response, _TerminalResponse)
+            or getattr(model_response, "_steering_terminal", False)
+        )
+        if not self._ready_to_complete(messages, vars, force=forced):
+            self._emit_intermediate_answer(response)
+            return _SteeringContinuation(messages)
         try:
             run_end = self._run_run_end_hook(
                 "before_run_end",
@@ -744,7 +759,7 @@ class AgentModelRuntimeMixin:
         run_end = self._run_after_run_end_hook(run_end)
         return run_end.output
 
-    async def _aprocess_model_response(
+    async def _aprocess_model_response_step(
         self,
         message: Union[str, Mapping[str, Any], Message],
         model_response: Union[ModelResponse, ModelStreamResponse],
@@ -789,6 +804,8 @@ class AgentModelRuntimeMixin:
                 messages,
                 vars,
                 async_mode=True,
+                model_preference=model_preference,
+                tool_filter=tool_filter,
             )
             return self._prepare_response(
                 model_response,
@@ -831,6 +848,14 @@ class AgentModelRuntimeMixin:
         response = self._prepare_response(
             raw_response, response_type, messages, message, vars, reasoning
         )
+        forced = (
+            not isinstance(model_response, ModelResponse)
+            or isinstance(model_response, _TerminalResponse)
+            or getattr(model_response, "_steering_terminal", False)
+        )
+        if not await self._aready_to_complete(messages, vars, force=forced):
+            self._emit_intermediate_answer(response)
+            return _SteeringContinuation(messages)
         try:
             run_end = await self._arun_run_end_hook(
                 "before_run_end",

@@ -36,6 +36,7 @@ from msgflux.models.types import reasoning_effort_from_history
 from msgflux.nn.hooks.events import (
     NotificationContext,
 )
+from msgflux.nn.modules.agent.lifecycle import _seal_terminal_steering
 from msgflux.runtime.agent_inbox import (
     AgentInbox,
     AgentNotification,
@@ -1056,6 +1057,8 @@ class AgentConversationMixin:
         vars: Mapping[str, Any],
         *,
         async_mode: bool = False,
+        model_preference: str | None = None,
+        tool_filter=None,
     ) -> None:
         # Producers can finish on a worker thread after Agent.forward has returned.
         # Capture the execution identity while it is still bound.
@@ -1103,7 +1106,13 @@ class AgentConversationMixin:
                     )
                 )
 
+        released = False
+
         def release(settled, committed):
+            nonlocal released
+            if released:
+                return
+            released = True
             if not tracked:
                 if committed:
                     messages[:] = settled
@@ -1126,13 +1135,37 @@ class AgentConversationMixin:
             try:
                 run_end = prepare(final_state)
                 try:
-                    run_end = self._run_run_end_hook("before_run_end", run_end)
+                    complete = self._ready_to_complete(
+                        settled, vars, force=final_state.status != "completed"
+                    )
+                    if complete:
+                        run_end = self._run_run_end_hook("before_run_end", run_end)
                 except (Exception, asyncio.CancelledError) as error:
                     outcome = self._terminal_error_outcome(error)
+                    _seal_terminal_steering(self, settled, error)
                     close_turn(settled, outcome, error)
                     self._checkpoint_save(settled, vars, status=outcome)
                     committed = True
                     raise
+                if not complete:
+                    # Publish the durable intermediate history and release this
+                    # provider stream's claim before a successor can claim it.
+                    release(settled, True)
+                    result = self._execute_prepared_run(
+                        None,
+                        {
+                            "messages": messages,
+                            "vars": vars,
+                            "scope": scope,
+                            "model_preference": model_preference,
+                            "tool_filter": tool_filter,
+                        },
+                        continuation=True,
+                    )
+                    model_response._set_continuation(
+                        self._steering_stream_result(result)
+                    )
+                    return
                 settled = run_end.messages
                 close_turn(settled, final_state.status, final_state.error)
                 self._checkpoint_save(
@@ -1153,13 +1186,39 @@ class AgentConversationMixin:
             try:
                 run_end = prepare(final_state)
                 try:
-                    run_end = await self._arun_run_end_hook("before_run_end", run_end)
+                    complete = await self._aready_to_complete(
+                        settled, vars, force=final_state.status != "completed"
+                    )
+                    if complete:
+                        run_end = await self._arun_run_end_hook(
+                            "before_run_end", run_end
+                        )
                 except (Exception, asyncio.CancelledError) as error:
                     outcome = self._terminal_error_outcome(error)
+                    _seal_terminal_steering(self, settled, error)
                     close_turn(settled, outcome, error)
                     await self._acheckpoint_save(settled, vars, status=outcome)
                     committed = True
                     raise
+                if not complete:
+                    # Publish the durable intermediate history and release this
+                    # provider stream's claim before a successor can claim it.
+                    release(settled, True)
+                    result = await self._aexecute_prepared_run(
+                        None,
+                        {
+                            "messages": messages,
+                            "vars": vars,
+                            "scope": scope,
+                            "model_preference": model_preference,
+                            "tool_filter": tool_filter,
+                        },
+                        continuation=True,
+                    )
+                    model_response._set_continuation(
+                        self._steering_stream_result(result)
+                    )
+                    return
                 settled = run_end.messages
                 close_turn(settled, final_state.status, final_state.error)
                 await self._acheckpoint_save(

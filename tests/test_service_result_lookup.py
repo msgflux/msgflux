@@ -95,8 +95,8 @@ async def test_thread_result_tracks_latest_run_without_waiting_or_hiding_history
             release.set()
             await service.wait(thread.thread_id, "second")
             final = await client.thread_result(thread.thread_id)
-            assert final.run_id == second.run_id and final.output == "answer 2"
-            assert count == 2
+            assert final.run_id == second.run_id and final.output == "answer 3"
+            assert count == 3
         finally:
             release.set()
             await client.aclose()

@@ -2,6 +2,7 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.agent_inbox import (
     AgentControlMessage,
     AgentInbox,
+    AgentInboxClosedError,
     AgentInboxStore,
     AgentNotification,
     InMemoryAgentInboxStore,
@@ -213,6 +214,7 @@ __all__ = [
     "ContextScopeConflictError",
     "ContextScopeController",
     "AgentInbox",
+    "AgentInboxClosedError",
     "AgentInboxStore",
     "AgentNotification",
     "AgentSkill",

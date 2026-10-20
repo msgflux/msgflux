@@ -654,12 +654,16 @@ daemon and accepts `--runtime-dir PATH`.
 
 The response confirms that the message was queued, including `thread_id`,
 `run_id`, and `notification_id`. The agent consumes it at its normal inbox drain
-points, such as after a tool call; confirmation does not mean the model has read
-it yet. Steering does not preempt an in-flight model request or interrupt tools.
+points, such as after a tool call or before the run's final checkpoint;
+confirmation does not mean the model has read it yet. Steering does not preempt
+an in-flight model request or interrupt tools. If a message arrives while the
+final model request is in flight, the same run can continue with another model
+request that includes it.
 
 An empty message, an idle or unknown thread, or an ambiguous active-run selection
-is rejected. If the selected run ends before delivery, the service rejects that
-target; the CLI does not redirect the message to a newer run. Use
+is rejected. Once the run closes its inbox for finalization, steering is rejected
+even if an after-run hook is still executing. The CLI does not redirect the
+message to a newer run. Use
 `msgflux -p "Follow up" --thread THREAD_ID` for a new turn after completion.
 
 ## Validate Configuration Offline
