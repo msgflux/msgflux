@@ -117,6 +117,64 @@ async def test_duplicate_request_returns_same_run_and_conflicting_prompt_fails()
 
 
 @pytest.mark.asyncio
+async def test_concurrent_duplicate_admission_across_sqlite_service_instances(
+    tmp_path,
+):
+    path = tmp_path / "shared-service.sqlite3"
+    stores = (SQLiteServiceStore(path), SQLiteServiceStore(path))
+    services = tuple(
+        _service(lambda _thread_id: AgentSession(_agent()), store=store)
+        for store in stores
+    )
+    started = asyncio.Event()
+    release = asyncio.Event()
+    executions = []
+
+    for service in services:
+
+        async def execute(record, _worker, *, owner=service._owner_id):
+            executions.append((owner, record.receipt.run_id, record.prompt))
+            started.set()
+            await release.wait()
+            return "completed"
+
+        service._execute = execute
+
+    thread = await services[0].open_thread("main", thread_id="shared-dedupe")
+    await services[1].open_thread("main", thread_id=thread.thread_id)
+    try:
+        first, second = await asyncio.gather(
+            services[0].prompt(thread.thread_id, "same input", request_id="same"),
+            services[1].prompt(thread.thread_id, "same input", request_id="same"),
+        )
+        assert first.run_id == second.run_id
+        await asyncio.wait_for(started.wait(), timeout=3)
+        await asyncio.sleep(0)
+        assert len(executions) == 1
+
+        owner_id = stores[0].get(thread.thread_id, "same").owner_id
+        owner = next(service for service in services if service._owner_id == owner_id)
+        release.set()
+        settled = await asyncio.wait_for(
+            owner.wait(thread.thread_id, "same"), timeout=3
+        )
+        assert settled.status == "completed"
+        assert len(executions) == 1
+        assert executions[0][1:] == (first.run_id, "same input")
+
+        with pytest.raises(ServiceConflictError, match="another input"):
+            await services[1].prompt(
+                thread.thread_id, "different input", request_id="same"
+            )
+        assert len(executions) == 1
+    finally:
+        release.set()
+        await asyncio.gather(*(service.aclose() for service in services))
+        for store in stores:
+            store.close()
+
+
+@pytest.mark.asyncio
 async def test_runs_projects_checkpoint_metadata_and_supports_legacy_checkpoints():
     checkpoints = InMemoryCheckpointStore()
     agent = _agent("run-summary")
