@@ -227,18 +227,31 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                 notification_id = notification.get("notification_id") or uuid4().hex
                 payload = self._serialize([dict(notification)])[1:-1]
                 if row is not None:
-                    self._conn.execute(
-                        "UPDATE agent_inbox_notifications SET notification_id=?, payload=?, updated_at=? WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
-                        (
-                            notification_id,
-                            payload,
-                            now,
-                            namespace,
-                            thread_id,
-                            run_id,
-                            dedupe_key,
-                        ),
-                    )
+                    if row[0] == notification_id:
+                        self._conn.execute(
+                            "UPDATE agent_inbox_notifications SET payload=?, updated_at=? WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
+                            (
+                                payload,
+                                now,
+                                namespace,
+                                thread_id,
+                                run_id,
+                                dedupe_key,
+                            ),
+                        )
+                    else:
+                        self._conn.execute(
+                            "UPDATE agent_inbox_notifications SET notification_id=?, payload=?, status='pending', lease_id=NULL, lease_until=NULL, updated_at=? WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key=?",
+                            (
+                                notification_id,
+                                payload,
+                                now,
+                                namespace,
+                                thread_id,
+                                run_id,
+                                dedupe_key,
+                            ),
+                        )
                 else:
                     self._conn.execute(
                         """INSERT INTO agent_inbox_notifications
