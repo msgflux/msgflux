@@ -102,6 +102,37 @@ class TestToolCallAggregatorBasics:
             }
         ]
 
+    @pytest.mark.parametrize(
+        ("result", "expected"),
+        [
+            (None, "null"),
+            (False, "false"),
+            (0, "0"),
+            ("", ""),
+        ],
+    )
+    @pytest.mark.parametrize("api_mode", ["chat_completions", "responses"])
+    def test_completed_falsy_results_are_rendered(self, api_mode, result, expected):
+        agg = ToolCallAggregator(api_mode=api_mode)
+        agg.process(0, "call_123", "get_weather", "{}")
+        intent = agg.get_intents()[0]
+
+        rendered = agg.render_outcomes([ToolOutcome.completed(intent, result)])
+
+        if api_mode == "responses":
+            assert rendered[0]["output"] == expected
+        else:
+            assert rendered[1]["content"] == expected
+
+    def test_unfilled_call_has_no_tool_result_message(self):
+        agg = ToolCallAggregator()
+        agg.process(0, "call_123", "get_weather", "{}")
+
+        messages = agg.get_messages()
+
+        assert len(messages) == 1
+        assert messages[0]["tool_calls"][0]["id"] == "call_123"
+
     def test_requires_one_outcome_per_call(self):
         agg = ToolCallAggregator(api_mode="responses")
         agg.process(0, "call_123", "get_weather", "{}")

@@ -921,6 +921,10 @@ Tools can be implemented as classes with `__call__` or `acall` methods. This is 
 
 Tools can return any data type. Non-string returns are automatically serialized using `msgspec.json.encode` before being passed to the model.
 
+A tool that returns `None`, including a function without a return statement,
+produces a JSON `null` result. The Agent still records a matching response for
+the tool call; a completed result is distinct from a call still awaiting its result.
+
 ???+ note "Tool Return Examples"
 
     === "String Return"
