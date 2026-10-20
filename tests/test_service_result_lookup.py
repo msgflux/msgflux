@@ -2,6 +2,7 @@
 
 import asyncio
 
+import msgflux as mf
 import pytest
 
 pytest.importorskip("litestar")
@@ -10,6 +11,8 @@ pytest.importorskip("uvicorn")
 from msgflux.runtime.service import AgentSession, SQLiteServiceStore
 from msgflux.runtime.service.http import AgentServiceClient, AgentServiceHTTPError
 from msgflux.runtime.service.records import ServiceThread
+from msgflux.models.response import ModelResponse
+from msgflux.models.tool_call_agg import ToolCallAggregator
 from tests.test_agent_service_http_integration import TOKEN, _agent, _response, _server
 
 
@@ -96,4 +99,56 @@ async def test_thread_result_tracks_latest_run_without_waiting_or_hiding_history
             assert count == 2
         finally:
             release.set()
+            await client.aclose()
+
+
+@pytest.mark.asyncio
+async def test_completed_direct_tool_result_has_no_text_without_falling_back():
+    direct_calls = []
+
+    @mf.tool_config(return_direct=True)
+    def direct_lookup() -> str:
+        """Return a tool result directly to the caller."""
+        direct_calls.append("called")
+        return "tool-only result"
+
+    tool_calls = ToolCallAggregator()
+    tool_calls.process(0, "call_direct", "direct_lookup", "{}")
+    tool_response = ModelResponse()
+    tool_response.set_response_type("tool_call")
+    tool_response.add(tool_calls)
+    agent = _agent(
+        [_response("older assistant answer"), tool_response],
+        tools=[direct_lookup],
+    )
+
+    async with _server(lambda _thread: AgentSession(agent)) as (service, url):
+        client = AgentServiceClient(url, token=TOKEN)
+        try:
+            thread = await client.open_thread("main")
+            older = await client.prompt(
+                thread.thread_id, "ordinary answer", request_id="older"
+            )
+            assert (await service.wait(thread.thread_id, older.request_id)).status == (
+                "completed"
+            )
+            assert (
+                await client.run_result(thread.thread_id, older.run_id)
+            ).output == "older assistant answer"
+
+            direct = await client.prompt(
+                thread.thread_id, "use direct tool", request_id="direct"
+            )
+            assert (await service.wait(thread.thread_id, direct.request_id)).status == (
+                "completed"
+            )
+
+            selected = await client.run_result(thread.thread_id, direct.run_id)
+            latest = await client.thread_result(thread.thread_id)
+            assert selected.status == latest.status == "completed"
+            assert selected.run_id == latest.run_id == direct.run_id
+            assert selected.output is latest.output is None
+            assert selected.error is latest.error is None
+            assert direct_calls == ["called"]
+        finally:
             await client.aclose()

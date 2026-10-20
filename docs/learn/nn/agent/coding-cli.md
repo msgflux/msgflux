@@ -281,8 +281,9 @@ if recorded.status == "completed":
 These calls do not wait. Their HTTP equivalents are
 `GET /v1/threads/{thread_id}/result` and
 `GET /v1/threads/{thread_id}/runs/{run_id}/result`.
-Only a completed run exposes final assistant text. Other statuses have no output;
-failed and paused receipts preserve their concrete cause. Missing final
-checkpoints or non-text answers are reported as errors, rather than returning
-text from another run. This requires checkpoint-backed agents; the coding
-factory configures them automatically.
+Only final assistant text is exposed. A completed run without final assistant
+text has `output: null`; tool payloads are not returned. Other statuses also
+have no output, and failed or paused receipts preserve their concrete cause.
+The selected run never falls back to text from another run. This requires
+checkpoint-backed agents; the coding factory configures them automatically.
+A missing final checkpoint is still reported as a recovery error.
