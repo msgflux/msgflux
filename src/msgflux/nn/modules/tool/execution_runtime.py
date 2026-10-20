@@ -1249,6 +1249,15 @@ class ToolLibraryExecutionMixin:
         normalized = tuple(intents)
         if not all(isinstance(intent, ToolIntent) for intent in normalized):
             raise TypeError("`intents` must contain ToolIntent values")
+        seen = set()
+        duplicates = set()
+        for intent in normalized:
+            if intent.id in seen:
+                duplicates.add(intent.id)
+            seen.add(intent.id)
+        if duplicates:
+            formatted = ", ".join(f"`{call_id}`" for call_id in sorted(duplicates))
+            raise ValueError(f"Duplicate tool call IDs: {formatted}")
         return normalized
 
     @staticmethod

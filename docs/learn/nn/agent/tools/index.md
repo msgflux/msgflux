@@ -49,6 +49,10 @@ loading history remains in the conversation.
 
 When the model decides to use a tool, the Agent intercepts the response, executes the function, appends the result to the conversation, and calls the model again. This loop continues until the model produces a final text response.
 
+Call IDs must be unique within each batch. The Agent rejects duplicate IDs
+before adding the calls to history or executing any tool in that batch, so
+distinct results cannot overwrite one another under the same ID.
+
 ```
                         Input
                           │

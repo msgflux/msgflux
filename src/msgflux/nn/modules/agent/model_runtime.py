@@ -1046,6 +1046,9 @@ class AgentModelRuntimeMixin:
                     Executor.get_instance().submit(
                         self._aconsume_tool_response, model_response, messages
                     ).result()
+                tool_intents = self.tool_library._validate_intents(
+                    model_response.get_tool_intents()
+                )
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
@@ -1067,7 +1070,6 @@ class AgentModelRuntimeMixin:
                         repr_str = f"[{self.name}][tool_calls_reasoning] {reasoning}"
                         cprint(repr_str, bc="br2", ls="b")
 
-                tool_intents = model_response.get_tool_intents()
                 self._validate_context_scope_intents(tool_intents)
                 try:
                     tool_outcomes = self._process_approval_intents(
@@ -1137,6 +1139,9 @@ class AgentModelRuntimeMixin:
             if model_response.response_type == "tool_call":
                 if isinstance(model_response, ModelStreamResponse):
                     await self._aconsume_tool_response(model_response, messages)
+                tool_intents = self.tool_library._validate_intents(
+                    model_response.get_tool_intents()
+                )
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
@@ -1158,7 +1163,6 @@ class AgentModelRuntimeMixin:
                         repr_str = f"[{self.name}][tool_calls_reasoning] {reasoning}"
                         cprint(repr_str, bc="br2", ls="b")
 
-                tool_intents = model_response.get_tool_intents()
                 self._validate_context_scope_intents(tool_intents)
                 try:
                     tool_outcomes = await self._aprocess_approval_intents(
