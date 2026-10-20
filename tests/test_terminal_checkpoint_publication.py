@@ -1,12 +1,14 @@
 from __future__ import annotations
 
 import asyncio
+from contextlib import closing
+import sqlite3
 from unittest.mock import AsyncMock, Mock
 
 import pytest
 
 from msgflux.chat_messages import ChatMessages
-from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.data.stores import InMemoryCheckpointStore, SQLiteCheckpointStore
 from msgflux.models.response import ModelResponse
 from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.nn import Agent
@@ -258,3 +260,78 @@ async def test_inbox_ack_oserror_after_commit_does_not_demote_completed(monkeypa
         assert len(inbox.peek()) == 1
     finally:
         await agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_terminal_write_rejection_resumes_after_service_restart(tmp_path):
+    checkpoint_path = tmp_path / "checkpoints.sqlite3"
+    journal_path = tmp_path / "service.sqlite3"
+    checkpoints = SQLiteCheckpointStore(checkpoint_path)
+    with closing(sqlite3.connect(checkpoint_path)) as connection:
+        connection.execute(
+            "CREATE TRIGGER reject_completed BEFORE INSERT ON checkpoints "
+            "WHEN NEW.status = 'completed' BEGIN "
+            "SELECT RAISE(ABORT, 'terminal write rejected'); END"
+        )
+    effects = []
+    model = ScriptedModel()
+    agent = _make_agent(checkpoints, model, effects)
+    journal = SQLiteServiceStore(journal_path)
+    service = AgentService(store=journal)
+    service.register(
+        "main", lambda _thread: AgentSession(agent, on_close=checkpoints.close)
+    )
+    try:
+        thread = await service.open_thread("main", thread_id="restart-thread")
+        accepted = await service.prompt(thread.thread_id, "work", request_id="req")
+        failed = await service.wait(thread.thread_id, "req")
+        assert failed.status == "failed"
+        assert "terminal write rejected" in failed.error
+        saved = checkpoints.load_state("main", thread.thread_id, accepted.run_id)
+        assert saved["status"] == "failed"
+        turns = [
+            item for item in saved["messages"]["items"] if item.get("type") == "turn"
+        ]
+        assert turns[-1]["event"] == "fail"
+        assert effects == ["done"]
+        assert len(model.calls) == 2
+    finally:
+        await service.aclose()
+        journal.close()
+
+    with closing(sqlite3.connect(checkpoint_path)) as connection:
+        connection.execute("DROP TRIGGER reject_completed")
+    reopened = SQLiteCheckpointStore(checkpoint_path)
+    recovered_model = ScriptedModel()
+    recovered_model.responses = [_text("recovered final")]
+    recovered_agent = _make_agent(reopened, recovered_model, effects)
+    reopened_journal = SQLiteServiceStore(journal_path)
+    restarted = AgentService(store=reopened_journal)
+    restarted.register(
+        "main", lambda _thread: AgentSession(recovered_agent, on_close=reopened.close)
+    )
+    try:
+        resumed = await restarted.resume(thread.thread_id, "req", worker_stopped=True)
+        assert resumed.run_id == accepted.run_id
+        completed = await restarted.wait(thread.thread_id, "req")
+        assert completed.status == "completed"
+        result = await restarted.run_result(thread.thread_id, accepted.run_id)
+        assert result.output == "recovered final"
+        assert effects == ["done"]
+        assert len(recovered_model.calls) == 1
+        saved = reopened.load_state("main", thread.thread_id, accepted.run_id)
+        assert saved["status"] == "completed"
+        assert (
+            sum(
+                item.get("type") == "function_call_output"
+                for item in saved["messages"]["items"]
+            )
+            == 1
+        )
+    finally:
+        await restarted.aclose()
+        reopened_journal.close()
+
+    for path in (checkpoint_path, journal_path):
+        with closing(sqlite3.connect(path)) as connection:
+            assert connection.execute("PRAGMA integrity_check").fetchone()[0] == "ok"
