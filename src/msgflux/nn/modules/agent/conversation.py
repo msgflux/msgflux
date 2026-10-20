@@ -479,12 +479,12 @@ class AgentConversationMixin:
                 if self._get_effective_checkpoint_store() is None:
                     self._record_inbox_receipts(messages, [consumed])
                 inbox.mark_delivered([consumed])
-            inbox.release(except_ids=inbox.delivered_ids())
+            self._release_inbox_notifications(error, except_ids=inbox.delivered_ids())
             if self._get_effective_checkpoint_store() is None:
                 inbox.ack(inbox.delivered_ids())
             raise
-        except BaseException:
-            inbox.release()
+        except BaseException as error:
+            self._release_inbox_notifications(error)
             raise
 
     def _finish_inbox_delivery(self, inbox, messages, notifications, *, drain):
@@ -583,9 +583,9 @@ class AgentConversationMixin:
             return self._finish_inbox_delivery(
                 inbox, messages, notifications, drain=drain_notifications
             )
-        except BaseException:
+        except BaseException as error:
             if drain_notifications:
-                inbox.release()
+                self._release_inbox_notifications(error)
             raise
 
     async def _adrain_inbox_into_messages(
@@ -631,9 +631,9 @@ class AgentConversationMixin:
             return self._finish_inbox_delivery(
                 inbox, messages, notifications, drain=drain_notifications
             )
-        except BaseException:
+        except BaseException as error:
             if drain_notifications:
-                inbox.release()
+                self._release_inbox_notifications(error)
             raise
 
     # --- Inbox Delivery ---
@@ -1309,11 +1309,16 @@ class AgentConversationMixin:
                     stacklevel=2,
                 )
 
-    def _release_inbox_notifications(self, primary_error: BaseException) -> None:
+    def _release_inbox_notifications(
+        self, primary_error: BaseException, *, except_ids=()
+    ) -> None:
         inbox = self._get_effective_agent_inbox()
         if inbox is not None:
             try:
-                inbox.release()
+                if except_ids:
+                    inbox.release(except_ids=except_ids)
+                else:
+                    inbox.release()
             except (
                 AbortRequestedError,
                 TaskInterruptRequestedError,
@@ -1322,7 +1327,8 @@ class AgentConversationMixin:
                 raise
             except Exception as cleanup_error:
                 primary_error.add_note(
-                    "Inbox lease cleanup failed after checkpoint failure: "
+                    "Inbox lease cleanup failed while handling "
+                    f"{type(primary_error).__name__}: "
                     f"{type(cleanup_error).__name__}: {cleanup_error}"
                 )
 
