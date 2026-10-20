@@ -474,6 +474,12 @@ transformation made only by `after_run_end` is not guaranteed to survive a
 crash in this window. Reconciliation does not provide exactly-once delivery
 of external effects.
 
+If reconciliation fails after claiming the worker, it releases that claim so
+the host can retry immediately without another model call. A failure after the
+result was committed does not discard the completed result. If releasing the
+claim also fails, the original error is preserved; the host must wait for the
+remaining lease to expire before retrying.
+
 ### Inspecting and coordinating recovery
 
 For an application restart, reconnect the workspace and reconstruct the same

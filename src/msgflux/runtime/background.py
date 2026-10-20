@@ -557,25 +557,30 @@ class BackgroundTaskDispatcher:
                 )
                 self._verify_claimed_checkpoint(task, checkpoint, latest)
                 self._validate_recovery_command_receipts(task, task_store, latest)
+                emit_event(
+                    EventType.TASK_START,
+                    {
+                        "task_id": task.task_id,
+                        "tool_name": tool_name,
+                        "status": "running",
+                        "reconciled": True,
+                    },
+                )
+                task_handle.complete(result["value"])
+                self.publish_task_notification(
+                    task_id=task.task_id,
+                    tool_name=tool_name,
+                    status="completed",
+                    agent_inbox=root_inbox,
+                )
             except BaseException:
-                task_handle.release_worker()
+                try:
+                    task_handle.release_worker()
+                except BaseException:
+                    logger.exception(
+                        "Could not release terminal reconciliation worker lease"
+                    )
                 raise
-            emit_event(
-                EventType.TASK_START,
-                {
-                    "task_id": task.task_id,
-                    "tool_name": tool_name,
-                    "status": "running",
-                    "reconciled": True,
-                },
-            )
-            task_handle.complete(result["value"])
-            self.publish_task_notification(
-                task_id=task.task_id,
-                tool_name=tool_name,
-                status="completed",
-                agent_inbox=root_inbox,
-            )
             return "Completed background agent result reconciled from checkpoint."
         execution_scope = {
             "scope": ExecutionScope(
