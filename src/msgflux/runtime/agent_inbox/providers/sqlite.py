@@ -425,9 +425,10 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         if previous == current:
             return
         with self._lock, self._transaction():
+            now = time.time()
             rows = self._conn.execute(
-                "SELECT notification_id, payload, dedupe_key, created_at FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=?",
-                previous,
+                "SELECT notification_id, payload, dedupe_key, created_at FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND (status='pending' OR lease_until IS NULL OR lease_until<=?)",
+                (*previous, now),
             ).fetchall()
             for item_id, payload, dedupe_key, created_at in rows:
                 self._conn.execute(
@@ -440,13 +441,14 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                         payload,
                         dedupe_key,
                         created_at,
-                        time.time(),
+                        now,
                     ),
                 )
-            self._conn.execute(
-                "DELETE FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=?",
-                previous,
-            )
+            if rows:
+                self._conn.executemany(
+                    "DELETE FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND notification_id=?",
+                    [(*previous, item[0]) for item in rows],
+                )
             self._sync_legacy_row(*previous)
             self._sync_legacy_row(*current)
 

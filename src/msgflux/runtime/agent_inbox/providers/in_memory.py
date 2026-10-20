@@ -245,6 +245,23 @@ class InMemoryAgentInboxStore(AgentInboxStore):
             source = self._get_run(*previous)
             if source is None or not source["notifications"]:
                 return
+            now = time.time()
+            claims = source.setdefault("claims", {})
+            source_ids = {
+                item.get("notification_id") for item in source["notifications"]
+            }
+            active_claimed_ids = {
+                notification_id
+                for notification_id, claim in claims.items()
+                if notification_id in source_ids and claim["expires_at"] > now
+            }
+            movable = [
+                notification
+                for notification in source["notifications"]
+                if notification.get("notification_id") not in active_claimed_ids
+            ]
+            if not movable:
+                return
             ns = self._data.setdefault(current[0], {})
             thread = ns.setdefault(current[1], {})
             target = thread.setdefault(
@@ -263,14 +280,25 @@ class InMemoryAgentInboxStore(AgentInboxStore):
                 deepcopy(
                     [
                         item
-                        for item in source["notifications"]
+                        for item in movable
                         if item.get("notification_id") not in existing_ids
                     ]
                 )
             )
-            target["updated_at"] = time.time()
-            del source["notifications"][:]
-            source["claims"].clear()
+            target["updated_at"] = now
+            remaining = [
+                item
+                for item in source["notifications"]
+                if item.get("notification_id") in active_claimed_ids
+            ]
+            source["notifications"] = remaining
+            remaining_ids = {item.get("notification_id") for item in remaining}
+            source["claims"] = {
+                notification_id: claim
+                for notification_id, claim in claims.items()
+                if notification_id in remaining_ids
+            }
+            source["updated_at"] = now
 
     def clear(
         self,
