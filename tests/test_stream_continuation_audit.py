@@ -67,5 +67,97 @@ async def test_abandoned_reasoning_consumer_does_not_interrupt_linked_child(
     assert child._final_status == "completed"
 
 
+@pytest.mark.asyncio
+async def test_event_observer_close_preserves_multilevel_chain_for_root_observer():
+    source, child, grandchild = _three_stream_chain()
+    observer_a = source.consume_events()
+    observer_b = source.consume_events()
+
+    # B owns the root chain but has not advanced into the first continuation.
+    assert (await anext(observer_a)).data == "root"
+    assert (await anext(observer_b)).data == "root"
+    assert (await anext(observer_a)).type == "message.end"
+    assert (await anext(observer_a)).type == "message.start"
+    assert (await anext(observer_a)).data == "child"
+    assert (await anext(observer_a)).type == "message.end"
+    assert (await anext(observer_a)).type == "message.start"
+    assert (await anext(observer_a)).data == "grandchild"
+
+    try:
+        await observer_a.aclose()
+        assert child._is_finalized()
+        assert not grandchild._is_finalized()
+
+        child.finish()
+        grandchild.finish()
+        remaining = [event async for event in observer_b]
+        assert [event.data for event in remaining if event.type == "output.delta"] == [
+            "child",
+            "grandchild",
+        ]
+        assert child._final_status == grandchild._final_status == "completed"
+    finally:
+        await observer_b.aclose()
+
+
+@pytest.mark.asyncio
+async def test_event_observer_close_preserves_chain_for_content_observer():
+    source, child, grandchild = _three_stream_chain()
+    observer_a = source.consume_events()
+    observer_b = source.consume()
+
+    assert (await anext(observer_a)).data == "root"
+    assert await anext(observer_b) == "root"
+    assert (await anext(observer_a)).type == "message.end"
+    assert (await anext(observer_a)).type == "message.start"
+    assert (await anext(observer_a)).data == "child"
+    assert (await anext(observer_a)).type == "message.end"
+    assert (await anext(observer_a)).type == "message.start"
+    assert (await anext(observer_a)).data == "grandchild"
+
+    try:
+        await observer_a.aclose()
+        assert child._is_finalized()
+        assert not grandchild._is_finalized()
+
+        child.finish()
+        grandchild.finish()
+        assert [chunk async for chunk in observer_b] == ["child", "grandchild"]
+        assert child._final_status == grandchild._final_status == "completed"
+    finally:
+        await observer_b.aclose()
+
+
+@pytest.mark.asyncio
+async def test_continuation_rejects_child_with_active_consumer_without_rebinding_it():
+    source = ModelStreamResponse(mode="async")
+    child = ModelStreamResponse(mode="async")
+    child_consumer = child.consume()
+    pending_chunk = asyncio.create_task(anext(child_consumer))
+    await asyncio.sleep(0)
+
+    with pytest.raises(RuntimeError, match="active or cleaned-up consumers"):
+        source._set_continuation(child)
+
+    child.add("still owned")
+    child.finish()
+    assert await pending_chunk == "still owned"
+    assert [chunk async for chunk in child_consumer] == []
+
+
 async def _collect(stream):
     return [chunk async for chunk in stream]
+
+
+def _three_stream_chain():
+    source = ModelStreamResponse(mode="async")
+    child = ModelStreamResponse(mode="async")
+    grandchild = ModelStreamResponse(mode="async")
+    source.add("root")
+    source.finish()
+    child.add("child")
+    child.finish()
+    grandchild.add("grandchild")
+    source._set_continuation(child)
+    child._set_continuation(grandchild)
+    return source, child, grandchild
