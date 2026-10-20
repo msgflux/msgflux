@@ -738,9 +738,14 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             if isinstance(messages, ChatMessages)
             else set()
         )
+        loaded_deferred = {
+            name
+            for name in loaded & catalog_names
+            if self.registry.get(name).loading.deferred
+        }
         return self.registry.catalog_view(
             thread_id,
-            loaded_tools=loaded & catalog_names,
+            loaded_tools=loaded_deferred,
             choice=choice,
             include_tools=catalog_names,
         )

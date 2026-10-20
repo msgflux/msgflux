@@ -370,6 +370,9 @@ observation = await workspace.aterminate_command(receipt)
 Termination requires current process permissions and verified resource
 ownership. Local termination additionally requires Python/kernel pidfd support;
 without it, the executor reports blocked rather than signaling by PID alone.
+It targets the recorded process leader. Descendants may remain alive, including
+members of its original process group. An `unknown` result with a `missing`
+resource means the leader is absent; it does not prove the command tree stopped.
 Establish quiescence of any other external work before resuming an
 interrupted Agent. Inspection and termination do not themselves append a tool
 result to the saved conversation or make an unknown result safe to replay.
@@ -613,6 +616,14 @@ continues from the checkpointed state. `vars` is deliberately not part of
 dictionary. This is intentional—the retry restores the same execution instead
 of adding another user message. Use the same `thread_id` with a new `run_id`
 when you want to continue the conversation with fresh input.
+
+With checkpointing enabled, the Agent publishes a completed turn to its
+in-memory history after the final checkpoint succeeds. If that write is
+rejected and failure settlement succeeds, the saved turn is `failed` and can
+resume with the same `run_id`. Tool results
+already saved in that snapshot remain available on resume; the Agent does not
+replay those tool calls. A tool effect that happened without a saved result
+still requires reconciliation, as described above.
 
 Checkpoint conversation history is stored as a mapping whose `items` value is
 a list of message-item mappings. Missing or empty history remains valid, but an
@@ -943,6 +954,13 @@ retry. An ordinary failure while releasing those leases is attached as a note
 to the checkpoint error; it does not hide a revision conflict or trigger another
 checkpoint write. A failed release leaves the notification pending under its
 existing lease until release is retried or that lease expires.
+
+With checkpointing enabled, a pause or interrupt receipt and its terminal turn
+event are published to the caller's history only after persistence succeeds.
+If that write fails, retrying with the same `ChatMessages` still observes the
+pending control; an uncommitted receipt cannot silently consume it.
+If a pre-end hook propagates a control signal or cancellation before that write,
+the Agent releases the notification lease so an immediate retry can receive it.
 
 `peek()` reads pending notifications without removing them:
 

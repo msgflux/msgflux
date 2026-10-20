@@ -6,6 +6,7 @@ from typing import (
     Any,
     List,
     Mapping,
+    NoReturn,
     Optional,
     Tuple,
     Union,
@@ -32,6 +33,7 @@ from msgflux.nn.hooks.events import (
     ToolFeedbackContext,
 )
 from msgflux.nn.modules.tool import ToolResponses
+from msgflux.nn.modules.tool.execution_runtime import _ToolBatchControlError
 from msgflux.runtime.abort import await_with_abort
 from msgflux.runtime.context import (
     ExecutionScope,
@@ -734,10 +736,11 @@ class AgentModelRuntimeMixin:
             )
         except (Exception, asyncio.CancelledError) as error:
             raise _BeforeRunEndHookError(error) from error
-        self._finalize_chat_turn(run_end.messages, raw_response)
+        checkpoint_messages = self._finalize_chat_turn(run_end.messages, raw_response)
         self._checkpoint_save(
-            run_end.messages, vars, status="completed", task_result=run_end.output
+            checkpoint_messages, vars, status="completed", task_result=run_end.output
         )
+        self._publish_checkpoint_history(run_end.messages, checkpoint_messages)
         run_end = self._run_after_run_end_hook(run_end)
         return run_end.output
 
@@ -841,10 +844,11 @@ class AgentModelRuntimeMixin:
             )
         except (Exception, asyncio.CancelledError) as error:
             raise _BeforeRunEndHookError(error) from error
-        self._finalize_chat_turn(run_end.messages, raw_response)
+        checkpoint_messages = self._finalize_chat_turn(run_end.messages, raw_response)
         await self._acheckpoint_save(
-            run_end.messages, vars, status="completed", task_result=run_end.output
+            checkpoint_messages, vars, status="completed", task_result=run_end.output
         )
+        self._publish_checkpoint_history(run_end.messages, checkpoint_messages)
         run_end = await self._arun_after_run_end_hook(run_end)
         return run_end.output
 
@@ -890,19 +894,28 @@ class AgentModelRuntimeMixin:
             if flow_result.tool_calls:
                 intents = self._flow_tool_intents(flow_result.tool_calls)
                 self._validate_context_scope_intents(intents)
-                outcomes = self._process_tool_intents(intents, message, messages, vars)
+                control = None
+                try:
+                    outcomes = self._process_tool_intents(
+                        intents, message, messages, vars
+                    )
+                except _ToolBatchControlError as exc:
+                    control = exc
+                    outcomes = exc.outcomes
                 tool_results = ToolResponses.from_outcomes(intents, outcomes)
 
                 # Use interface to inject results
                 raw_response = flow_control.inject_results(raw_response, tool_results)
 
                 # Use interface to build history
+                prior_messages = messages
                 messages = flow_control.build_history(raw_response, messages)
                 attach_response_metadata(
                     messages,
                     getattr(model_response, "metadata", None),
                     after_index=response_item_start,
                 )
+                self._propagate_flow_tool_control(control, prior_messages, messages)
                 self._apply_context_scope_outcomes(messages, outcomes)
                 decision = self._resolve_continuation(
                     "after_tools", messages, vars, intents, outcomes
@@ -970,9 +983,14 @@ class AgentModelRuntimeMixin:
             if flow_result.tool_calls:
                 intents = self._flow_tool_intents(flow_result.tool_calls)
                 self._validate_context_scope_intents(intents)
-                outcomes = await self._aprocess_tool_intents(
-                    intents, message, messages, vars
-                )
+                control = None
+                try:
+                    outcomes = await self._aprocess_tool_intents(
+                        intents, message, messages, vars
+                    )
+                except _ToolBatchControlError as exc:
+                    control = exc
+                    outcomes = exc.outcomes
                 tool_results = ToolResponses.from_outcomes(intents, outcomes)
 
                 # Use interface to inject results (async version)
@@ -981,12 +999,14 @@ class AgentModelRuntimeMixin:
                 )
 
                 # Use interface to build history (async version)
+                prior_messages = messages
                 messages = await flow_control.abuild_history(raw_response, messages)
                 attach_response_metadata(
                     messages,
                     getattr(model_response, "metadata", None),
                     after_index=response_item_start,
                 )
+                self._propagate_flow_tool_control(control, prior_messages, messages)
                 self._apply_context_scope_outcomes(messages, outcomes)
                 decision = await self._aresolve_continuation(
                     "after_tools", messages, vars, intents, outcomes
@@ -1044,6 +1064,9 @@ class AgentModelRuntimeMixin:
                     Executor.get_instance().submit(
                         self._aconsume_tool_response, model_response, messages
                     ).result()
+                tool_intents = self.tool_library._validate_intents(
+                    model_response.get_tool_intents()
+                )
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
@@ -1065,19 +1088,13 @@ class AgentModelRuntimeMixin:
                         repr_str = f"[{self.name}][tool_calls_reasoning] {reasoning}"
                         cprint(repr_str, bc="br2", ls="b")
 
-                tool_intents = model_response.get_tool_intents()
                 self._validate_context_scope_intents(tool_intents)
                 try:
                     tool_outcomes = self._process_approval_intents(
                         model_response, tool_intents, message, messages, vars
                     )
-                except TaskInterruptRequestedError as exc:
-                    self._append_interrupted_tool_response_messages(
-                        messages,
-                        model_response,
-                        reason=str(exc),
-                    )
-                    raise
+                except (_ToolBatchControlError, TaskInterruptRequestedError) as exc:
+                    self._propagate_native_tool_control(exc, messages, model_response)
 
                 tool_responses_message = model_response.render_tool_outcomes(
                     tool_outcomes
@@ -1135,6 +1152,9 @@ class AgentModelRuntimeMixin:
             if model_response.response_type == "tool_call":
                 if isinstance(model_response, ModelStreamResponse):
                     await self._aconsume_tool_response(model_response, messages)
+                tool_intents = self.tool_library._validate_intents(
+                    model_response.get_tool_intents()
+                )
                 response_item_start = (
                     len(messages) if isinstance(messages, ChatMessages) else 0
                 )
@@ -1156,19 +1176,13 @@ class AgentModelRuntimeMixin:
                         repr_str = f"[{self.name}][tool_calls_reasoning] {reasoning}"
                         cprint(repr_str, bc="br2", ls="b")
 
-                tool_intents = model_response.get_tool_intents()
                 self._validate_context_scope_intents(tool_intents)
                 try:
                     tool_outcomes = await self._aprocess_approval_intents(
                         model_response, tool_intents, message, messages, vars
                     )
-                except TaskInterruptRequestedError as exc:
-                    self._append_interrupted_tool_response_messages(
-                        messages,
-                        model_response,
-                        reason=str(exc),
-                    )
-                    raise
+                except (_ToolBatchControlError, TaskInterruptRequestedError) as exc:
+                    self._propagate_native_tool_control(exc, messages, model_response)
 
                 tool_responses_message = model_response.render_tool_outcomes(
                     tool_outcomes
@@ -1210,6 +1224,37 @@ class AgentModelRuntimeMixin:
             for call_id, name, args in calls
         )
 
+    def _propagate_flow_tool_control(
+        self,
+        control: _ToolBatchControlError | None,
+        prior_messages: ChatMessages | List[Mapping[str, Any]],
+        messages: ChatMessages | List[Mapping[str, Any]],
+    ) -> None:
+        if control is None:
+            return
+        # A flow may return a replacement history. Terminal settlement still
+        # checkpoints the original input container when control propagates.
+        self._publish_checkpoint_history(prior_messages, messages)
+        if isinstance(prior_messages, list) and prior_messages is not messages:
+            prior_messages[:] = messages
+        raise control.error from None
+
+    def _propagate_native_tool_control(
+        self,
+        control: _ToolBatchControlError | TaskInterruptRequestedError,
+        messages: ChatMessages | List[Mapping[str, Any]],
+        model_response: ModelResponse | ModelStreamResponse,
+    ) -> NoReturn:
+        if isinstance(control, _ToolBatchControlError):
+            self._extend_tool_response_history(
+                messages, model_response.render_tool_outcomes(control.outcomes)
+            )
+            raise control.error from None
+        self._append_interrupted_tool_response_messages(
+            messages, model_response, reason=str(control)
+        )
+        raise control
+
     def _process_tool_intents(
         self,
         intents: tuple[ToolIntent, ...],
@@ -1220,8 +1265,10 @@ class AgentModelRuntimeMixin:
         self._validate_approval_execution(intents)
         self.tool_library.set_lifecycle_owner(self)
         self._log_tool_intents(intents)
-        outcomes = self.tool_library.execute_intents(
-            intents,
+        # The internal batch boundary also carries settled outcomes on control.
+        # Public ToolLibrary callers continue to receive the original exception.
+        outcomes = self.tool_library._execute_intent_batch(
+            self.tool_library._validate_intents(intents),
             message=message,
             messages=messages,
             vars=vars,
@@ -1239,8 +1286,8 @@ class AgentModelRuntimeMixin:
         self._validate_approval_execution(intents)
         self.tool_library.set_lifecycle_owner(self)
         self._log_tool_intents(intents)
-        outcomes = await self.tool_library.aexecute_intents(
-            intents,
+        outcomes = await self.tool_library._aexecute_intent_batch(
+            self.tool_library._validate_intents(intents),
             message=message,
             messages=messages,
             vars=vars,

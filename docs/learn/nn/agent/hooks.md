@@ -106,6 +106,14 @@ raises or returns an invalid payload, execution fails closed and the tool is not
 called. An `after_tool` handler failure leaves the original outcome unchanged
 and emits a `handler.error` execution event.
 
+Cooperative pause and interruption still propagate. When a tool batch has
+settled, the Agent records its completed sibling results before checkpointing
+the pause or interruption. Calls without a result receive an interrupted output:
+their effects may already have occurred, so they must not be retried
+automatically. This also applies to `ToolFlowControl` result injection and
+history construction. An uncertain approval-protected execution still requires
+host reconciliation; recording an interrupted output does not authorize replay.
+
 `transform_tool_output` is the strict output-processing boundary used by
 `ToolOutputOffloadExtension`. Library handlers run before owning-Agent handlers,
 in registration order. It uses `AfterTool` and supports sync/async hooks. If a

@@ -584,6 +584,14 @@ class AgentLifecycleMixin:
             )
             return context
 
+    def _stage_terminal_checkpoint_history(self, messages):
+        staged = self._stage_checkpoint_history(messages)
+        if staged is not messages:
+            inbox = self._get_effective_agent_inbox()
+            if inbox is not None:
+                self._record_inbox_receipts(staged, inbox.delivered_ids())
+        return staged
+
     def _settle_terminal_run(
         self,
         inputs: Mapping[str, Any],
@@ -606,26 +614,31 @@ class AgentLifecycleMixin:
                 AbortRequestedError,
                 TaskInterruptRequestedError,
                 TaskPauseRequestedError,
-            ):
+                asyncio.CancelledError,
+            ) as hook_error:
+                self._release_inbox_notifications(hook_error)
                 raise
             except Exception as hook_error:
                 _note_terminal_hook_failure(error, hook_error)
-        settled_inputs = {**inputs, "messages": run_end.messages}
+        original_messages = run_end.messages
+        settled_messages = self._stage_terminal_checkpoint_history(original_messages)
+        settled_inputs = {**inputs, "messages": settled_messages}
         if outcome == "interrupted":
             self._checkpoint_interrupted(settled_inputs, error)
         elif outcome == "paused":
             if (
-                isinstance(run_end.messages, ChatMessages)
-                and run_end.messages.get_active_turn() is not None
+                isinstance(settled_messages, ChatMessages)
+                and settled_messages.get_active_turn() is not None
             ):
-                run_end.messages.end_turn(event="pause")
+                settled_messages.end_turn(event="pause")
             self._checkpoint_save(
-                run_end.messages,
+                settled_messages,
                 inputs.get("vars", {}),
                 status="paused",
             )
         else:
             self._checkpoint_save_on_error(settled_inputs)
+        self._publish_checkpoint_history(original_messages, settled_messages)
         return self._run_after_run_end_hook(run_end)
 
     async def _asettle_terminal_run(
@@ -650,26 +663,31 @@ class AgentLifecycleMixin:
                 AbortRequestedError,
                 TaskInterruptRequestedError,
                 TaskPauseRequestedError,
-            ):
+                asyncio.CancelledError,
+            ) as hook_error:
+                self._release_inbox_notifications(hook_error)
                 raise
             except Exception as hook_error:
                 _note_terminal_hook_failure(error, hook_error)
-        settled_inputs = {**inputs, "messages": run_end.messages}
+        original_messages = run_end.messages
+        settled_messages = self._stage_terminal_checkpoint_history(original_messages)
+        settled_inputs = {**inputs, "messages": settled_messages}
         if outcome == "interrupted":
             await self._acheckpoint_interrupted(settled_inputs, error)
         elif outcome == "paused":
             if (
-                isinstance(run_end.messages, ChatMessages)
-                and run_end.messages.get_active_turn() is not None
+                isinstance(settled_messages, ChatMessages)
+                and settled_messages.get_active_turn() is not None
             ):
-                run_end.messages.end_turn(event="pause")
+                settled_messages.end_turn(event="pause")
             await self._acheckpoint_save(
-                run_end.messages,
+                settled_messages,
                 inputs.get("vars", {}),
                 status="paused",
             )
         else:
             await self._acheckpoint_save_on_error(settled_inputs)
+        self._publish_checkpoint_history(original_messages, settled_messages)
         return await self._arun_after_run_end_hook(run_end)
 
     @staticmethod

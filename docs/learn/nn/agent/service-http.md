@@ -422,10 +422,13 @@ processing. `run_result()` selects an explicit run. The embedded `AgentService`
 provides the same methods.
 
 Both queries return immediately with a `RunResult`: `thread_id`, `run_id`,
-`status`, `output`, and `error`. Only completed runs expose final assistant text;
-other statuses have `output=None`. Events and conversation history are excluded.
+`status`, `output`, and `error`. `output` contains final assistant text when the
+checkpoint has it. It is `None` for other statuses and for completed runs with no
+final assistant text; tool payloads and conversation history are excluded.
 An unknown thread or run, or a thread with no admitted execution, returns HTTP
 404. Reading a result never admits, resumes or interrupts work.
+If a completed run has no final checkpoint, the query still raises a recovery
+error; an absent checkpoint is different from a saved answer without text.
 
 The CLI exposes these queries as `threads result THREAD_ID` and
 `runs result THREAD_ID RUN_ID`. Its optional `--wait` fixes the selected run and

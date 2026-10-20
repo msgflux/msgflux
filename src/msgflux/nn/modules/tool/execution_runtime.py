@@ -49,6 +49,15 @@ from msgflux.tools.types import ToolBucket, ToolLibraryOperator
 from msgflux.utils.errors import exception_message
 
 
+class _ToolBatchControlError(Exception):
+    """Carry observed batch results to Agent history before control settlement."""
+
+    def __init__(self, error: BaseException, outcomes: Tuple[ToolOutcome, ...]):
+        self.error = error
+        self.outcomes = outcomes
+        super().__init__(str(error))
+
+
 class _ToolBackgroundScheduler:
     """Adapt the durable task dispatcher to the canonical dispatch contract."""
 
@@ -1218,12 +1227,15 @@ class ToolLibraryExecutionMixin:
     ) -> Tuple[ToolOutcome, ...]:
         """Execute canonical intents without lowering them to legacy responses."""
         normalized = self._validate_intents(intents)
-        return self._execute_intent_batch(
-            normalized,
-            message=message,
-            messages=messages,
-            vars=vars,
-        )
+        try:
+            return self._execute_intent_batch(
+                normalized,
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
+        except _ToolBatchControlError as exc:
+            raise exc.error from None
 
     async def aexecute_intents(
         self,
@@ -1235,12 +1247,15 @@ class ToolLibraryExecutionMixin:
     ) -> Tuple[ToolOutcome, ...]:
         """Async counterpart of execute_intents."""
         normalized = self._validate_intents(intents)
-        return await self._aexecute_intent_batch(
-            normalized,
-            message=message,
-            messages=messages,
-            vars=vars,
-        )
+        try:
+            return await self._aexecute_intent_batch(
+                normalized,
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
+        except _ToolBatchControlError as exc:
+            raise exc.error from None
 
     @staticmethod
     def _validate_intents(
@@ -1249,6 +1264,15 @@ class ToolLibraryExecutionMixin:
         normalized = tuple(intents)
         if not all(isinstance(intent, ToolIntent) for intent in normalized):
             raise TypeError("`intents` must contain ToolIntent values")
+        seen = set()
+        duplicates = set()
+        for intent in normalized:
+            if intent.id in seen:
+                duplicates.add(intent.id)
+            seen.add(intent.id)
+        if duplicates:
+            formatted = ", ".join(f"`{call_id}`" for call_id in sorted(duplicates))
+            raise ValueError(f"Duplicate tool call IDs: {formatted}")
         return normalized
 
     @staticmethod
@@ -1755,18 +1779,7 @@ class ToolLibraryExecutionMixin:
 
         if prepared_calls:
             results = F.scatter_gather(prepared_calls)
-            for (index, intent, plan), result in zip(prepared_metadata, results):
-                if isinstance(result, ToolOutcome):
-                    outcomes[index] = result
-                elif isinstance(result, TaskError):
-                    outcomes[index] = self._failed_task_outcome(intent, plan, result)
-                else:
-                    outcomes[index] = self._completed_intent(
-                        intent,
-                        result,
-                        feedback=self.get_tool_definition(intent.name).feedback,
-                        arguments=plan.visible_arguments,
-                    )
+            return self._collect_intent_results(outcomes, prepared_metadata, results)
         return self._finalize_outcomes(outcomes)
 
     async def _aexecute_intent_batch(
@@ -1815,7 +1828,18 @@ class ToolLibraryExecutionMixin:
 
         if prepared_calls:
             results = await F.ascatter_gather(prepared_calls)
-            for (index, intent, plan), result in zip(prepared_metadata, results):
+            return self._collect_intent_results(outcomes, prepared_metadata, results)
+        return self._finalize_outcomes(outcomes)
+
+    def _collect_intent_results(
+        self,
+        outcomes: List[ToolOutcome | None],
+        prepared_metadata: List[Tuple[int, ToolIntent, ToolExecutionPlan]],
+        results: Tuple[Any, ...],
+    ) -> Tuple[ToolOutcome, ...]:
+        control_error = None
+        for (index, intent, plan), result in zip(prepared_metadata, results):
+            try:
                 if isinstance(result, asyncio.CancelledError):
                     raise result
                 if isinstance(result, ToolOutcome):
@@ -1826,10 +1850,35 @@ class ToolLibraryExecutionMixin:
                     outcomes[index] = self._completed_intent(
                         intent,
                         result,
-                        feedback=self.get_tool_definition(intent.name).feedback,
+                        feedback=plan.definition.feedback,
                         arguments=plan.visible_arguments,
                     )
-        return self._finalize_outcomes(outcomes)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ) as exc:
+                if control_error is None:
+                    control_error = exc
+                outcomes[index] = self._failed_intent(
+                    intent,
+                    status="interrupted",
+                    code="tool_interrupted",
+                    message=(
+                        f"{exception_message(exc)} "
+                        "Tool result unavailable after execution was interrupted. "
+                        "Effects may already have occurred; do not retry automatically."
+                    ),
+                    feedback=plan.definition.feedback,
+                    arguments=plan.visible_arguments,
+                )
+        collected = self._finalize_outcomes(outcomes)
+        if control_error is not None:
+            # All workers have settled. Preserve observed sibling outcomes before
+            # propagating the first control in intent order.
+            raise _ToolBatchControlError(control_error, collected)
+        return collected
 
     @staticmethod
     def _finalize_outcomes(

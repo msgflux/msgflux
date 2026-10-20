@@ -410,6 +410,23 @@ class AgentConversationMixin:
                 self._inbox_receipt_ids(messages).union(ids)
             )
 
+    def _stage_checkpoint_history(self, messages):
+        if (
+            isinstance(messages, ChatMessages)
+            and self._get_effective_checkpoint_store() is not None
+        ):
+            return messages.copy()
+        return messages
+
+    @staticmethod
+    def _publish_checkpoint_history(original, staged) -> None:
+        if (
+            isinstance(original, ChatMessages)
+            and isinstance(staged, ChatMessages)
+            and original is not staged
+        ):
+            original._hydrate_state(staged._to_state())
+
     @staticmethod
     def _emit_notification_drain(notification_ids) -> None:
         ids = sorted(set(notification_ids))
@@ -458,7 +475,8 @@ class AgentConversationMixin:
                 None,
             )
             if consumed is not None:
-                self._record_inbox_receipts(messages, [consumed])
+                if self._get_effective_checkpoint_store() is None:
+                    self._record_inbox_receipts(messages, [consumed])
                 inbox.mark_delivered([consumed])
             inbox.release(except_ids=inbox.delivered_ids())
             if self._get_effective_checkpoint_store() is None:
@@ -1020,13 +1038,16 @@ class AgentConversationMixin:
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
         raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
-    ) -> None:
+    ) -> Union[ChatMessages, List[Mapping[str, Any]]]:
         if not isinstance(messages, ChatMessages):
-            return
+            return messages
 
         if isinstance(raw_response, ModelStreamResponse):
-            return
-        messages.end_turn(event="complete")
+            return messages
+
+        finalized = self._stage_checkpoint_history(messages)
+        finalized.end_turn(event="complete")
+        return finalized
 
     def _attach_stream_checkpoint_finalizer(  # noqa: C901
         self,

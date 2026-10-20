@@ -31,6 +31,11 @@ In msgFlux, a **Tool can be any callable** (function, class with `__call__`/`aca
 - [AgentTool](agent-tool.md): route many agents through one `agent(name, message)` tool and tool bucket.
 - [MCP](mcp.md): connecting external Model Context Protocol servers.
 
+When a checkpoint is reopened, the current tool registration controls whether a
+tool is active or deferred. A tool that was loaded with `tool_search` in an
+earlier run is available directly if it is now registered as active; its saved
+loading history remains in the conversation.
+
 
 !!! info
 
@@ -43,6 +48,10 @@ In msgFlux, a **Tool can be any callable** (function, class with `__call__`/`aca
 ### How Tool Calls Work
 
 When the model decides to use a tool, the Agent intercepts the response, executes the function, appends the result to the conversation, and calls the model again. This loop continues until the model produces a final text response.
+
+Call IDs must be unique within each batch. The Agent rejects duplicate IDs
+before adding the calls to history or executing any tool in that batch, so
+distinct results cannot overwrite one another under the same ID.
 
 ```
                         Input

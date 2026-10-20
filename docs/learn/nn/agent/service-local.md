@@ -937,11 +937,13 @@ Both commands return immediately unless `--wait` is supplied. JSON prints one
 {"thread_id":"thd_example","run_id":"run_example","status":"running","output":null,"error":null}
 ```
 
-Only a completed run exposes its final assistant text in `output`. JSON contains
-no events or full conversation history. Text mode prints only the completed
-answer to stdout; other statuses produce a diagnostic on stderr. Both modes exit
-with code `0` for a completed answer and `1` otherwise. Unknown threads or runs,
-and threads with no admitted execution, are errors.
+`output` contains final assistant text when the selected checkpoint has it. It
+is `null` for other statuses and for completed runs with no final assistant
+text; tool payloads and full conversation history are not returned. Text mode
+prints the answer when present (an empty line when it is absent); other statuses
+produce a diagnostic on stderr. Both modes exit with code `0` for a completed
+run and `1` otherwise. Unknown threads or runs, and threads with no admitted
+execution, are errors.
 
 `--wait` fixes the selected run at the start of the command. A later prompt does
 not change the target. Waiting stops when that execution completes, pauses,
