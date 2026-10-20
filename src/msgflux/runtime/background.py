@@ -420,6 +420,7 @@ class BackgroundTaskDispatcher:
                     require_permissions(required_permissions, required_resources)
                     result = tool(**call_params)
                     result = _await_event_finalized_result(result, task_handle.task_id)
+                    task_handle.complete(result)
             except TaskLeaseLostError:
                 raise
             except (Exception, asyncio.CancelledError) as exc:
@@ -431,7 +432,6 @@ class BackgroundTaskDispatcher:
                 )
                 raise
             else:
-                task_handle.complete(result)
                 self.publish_task_notification(
                     task_id=task_handle.task_id,
                     tool_name=tool_name,

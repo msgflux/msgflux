@@ -230,6 +230,13 @@ the task pauses, it returns the current paused status so the host can resume it
 explicitly. If the timeout is reached while the task is still queued or running,
 it returns a timeout payload with the current task status and progress.
 
+If storing a completed result fails, the runtime attempts to record a failed task
+with the persistence error. The tool is not executed again, and completed external
+effects are not undone. If failure recording also fails, the last stored state
+remains authoritative and the secondary failure is logged. An error emitting an
+event or notification after a successful commit does not change that committed
+result.
+
 ### Streaming Agent Results
 
 A background Agent configured with `config={"stream": True}` stays `running`
