@@ -952,6 +952,13 @@ to the checkpoint error; it does not hide a revision conflict or trigger another
 checkpoint write. A failed release leaves the notification pending under its
 existing lease until release is retried or that lease expires.
 
+With checkpointing enabled, a pause or interrupt receipt and its terminal turn
+event are published to the caller's history only after persistence succeeds.
+If that write fails, retrying with the same `ChatMessages` still observes the
+pending control; an uncommitted receipt cannot silently consume it.
+If a pre-end hook propagates a control signal or cancellation before that write,
+the Agent releases the notification lease so an immediate retry can receive it.
+
 `peek()` reads pending notifications without removing them:
 
 ```python

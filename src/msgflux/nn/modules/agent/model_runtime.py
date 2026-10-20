@@ -738,10 +738,7 @@ class AgentModelRuntimeMixin:
         self._checkpoint_save(
             checkpoint_messages, vars, status="completed", task_result=run_end.output
         )
-        if isinstance(run_end.messages, ChatMessages) and (
-            checkpoint_messages is not run_end.messages
-        ):
-            run_end.messages._hydrate_state(checkpoint_messages._to_state())
+        self._publish_checkpoint_history(run_end.messages, checkpoint_messages)
         run_end = self._run_after_run_end_hook(run_end)
         return run_end.output
 
@@ -849,10 +846,7 @@ class AgentModelRuntimeMixin:
         await self._acheckpoint_save(
             checkpoint_messages, vars, status="completed", task_result=run_end.output
         )
-        if isinstance(run_end.messages, ChatMessages) and (
-            checkpoint_messages is not run_end.messages
-        ):
-            run_end.messages._hydrate_state(checkpoint_messages._to_state())
+        self._publish_checkpoint_history(run_end.messages, checkpoint_messages)
         run_end = await self._arun_after_run_end_hook(run_end)
         return run_end.output
 
