@@ -31,6 +31,11 @@ In msgFlux, a **Tool can be any callable** (function, class with `__call__`/`aca
 - [AgentTool](agent-tool.md): route many agents through one `agent(name, message)` tool and tool bucket.
 - [MCP](mcp.md): connecting external Model Context Protocol servers.
 
+When a checkpoint is reopened, the current tool registration controls whether a
+tool is active or deferred. A tool that was loaded with `tool_search` in an
+earlier run is available directly if it is now registered as active; its saved
+loading history remains in the conversation.
+
 
 !!! info
 
