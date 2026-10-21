@@ -9,6 +9,7 @@ class _BaseImageRouter:
     """Configurations to use ImageRouter models."""
 
     provider: str = "imagerouter"
+    api_key_env: str = "IMAGEROUTER_API_KEY"
 
     def _get_base_url(self):
         default_url = "https://api.imagerouter.io/v1/openai"
