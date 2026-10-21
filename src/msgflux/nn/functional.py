@@ -126,6 +126,18 @@ def _record_fanout_failures(span, results):
         )
 
 
+def _future_result_or_error(future, *, index, done):
+    if future not in done:
+        error = TimeoutError("Task did not finish before the wait timeout")
+    else:
+        try:
+            return future.result()
+        except Exception as exc:
+            error = exc
+    logger.error(str(error))
+    return TaskError(exception=error, index=index)
+
+
 def _trace_fanout(count_argument):
     def decorator(func):
         if inspect.iscoroutinefunction(func):
@@ -224,15 +236,11 @@ def map_gather(
         kwargs = kwargs_list[i] if kwargs_list else {}
         futures.append(executor.submit(to_send, *args, **kwargs))
 
-    concurrent.futures.wait(futures, timeout=timeout)
-    responses: List[Any] = []
-    for i, future in enumerate(futures):
-        try:
-            responses.append(future.result())
-        except Exception as e:
-            logger.error(str(e))
-            responses.append(TaskError(exception=e, index=i))
-    return tuple(responses)
+    done, _ = concurrent.futures.wait(futures, timeout=timeout)
+    return tuple(
+        _future_result_or_error(future, index=i, done=done)
+        for i, future in enumerate(futures)
+    )
 
 
 @_trace_fanout("to_send")
@@ -315,15 +323,11 @@ def scatter_gather(
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
         futures.append(executor.submit(f, *args, **kwargs))
 
-    concurrent.futures.wait(futures, timeout=timeout)
-    responses: List[Any] = []
-    for i, future in enumerate(futures):
-        try:
-            responses.append(future.result())
-        except Exception as e:
-            logger.error(str(e))
-            responses.append(TaskError(exception=e, index=i))
-    return tuple(responses)
+    done, _ = concurrent.futures.wait(futures, timeout=timeout)
+    return tuple(
+        _future_result_or_error(future, index=i, done=done)
+        for i, future in enumerate(futures)
+    )
 
 
 @_trace_fanout("to_send")
@@ -372,15 +376,11 @@ def bcast_gather(
     executor = Executor.get_instance()
     futures = [executor.submit(f, *args, **kwargs) for f in to_send]
 
-    concurrent.futures.wait(futures, timeout=timeout)
-    responses: List[Any] = []
-    for i, future in enumerate(futures):
-        try:
-            responses.append(future.result())
-        except Exception as e:
-            logger.error(str(e))
-            responses.append(TaskError(exception=e, index=i))
-    return tuple(responses)
+    done, _ = concurrent.futures.wait(futures, timeout=timeout)
+    return tuple(
+        _future_result_or_error(future, index=i, done=done)
+        for i, future in enumerate(futures)
+    )
 
 
 def wait_for(
@@ -418,12 +418,8 @@ def wait_for(
 
     executor = Executor.get_instance()
     future = executor.submit(to_send, *args, **kwargs)
-    concurrent.futures.wait([future], timeout=timeout)
-    try:
-        return future.result()
-    except Exception as e:
-        logger.error(str(e))
-        return TaskError(exception=e, index=0)
+    done, _ = concurrent.futures.wait([future], timeout=timeout)
+    return _future_result_or_error(future, index=0, done=done)
 
 
 def wait_for_event(event: Any) -> None:

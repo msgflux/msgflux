@@ -12,6 +12,12 @@ In practice, this means you can take any callable — a plain function, an `nn.A
 - **Gather Patterns**: Map, scatter, and broadcast primitives for different use cases
 - **Error Handling**: Typed `TaskError` results for failed tasks
 
+For the synchronous gather functions and `wait_for`, `timeout` limits waiting
+after calls have been submitted. Unfinished calls return a `TaskError` containing
+a `TimeoutError`; the underlying callable is not canceled and may continue
+running in its worker. Submission itself, including nested synchronous work
+that the executor runs inline, is outside this waiting budget.
+
 ### Pattern Comparison
 
 The three gather patterns cover the most common parallel execution shapes:
@@ -129,7 +135,7 @@ Under the hood, sync calls are dispatched to a thread pool, while async calls us
 
     === "With Timeout"
 
-        Set a global `timeout` (in seconds) to prevent any single task from blocking indefinitely. If a task exceeds the timeout, it returns a `TaskError` instead of raising:
+        Set a global `timeout` (in seconds) to limit how long this call waits. If a task is still running when the timeout expires, its result is a `TaskError` containing `TimeoutError`:
 
         ```python
         import msgflux.nn.functional as F
