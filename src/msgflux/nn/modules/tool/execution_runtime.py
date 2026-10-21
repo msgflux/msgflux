@@ -1391,6 +1391,8 @@ class ToolLibraryExecutionMixin:
             definition,
             context,
         )
+        if isinstance(before_policy, TaskError):
+            raise before_policy.exception
         if isinstance(before_policy, ToolOutcome):
             self._emit_policy_blocked(intent, before_policy, intent.arguments)
             return before_policy
@@ -1445,6 +1447,8 @@ class ToolLibraryExecutionMixin:
             plan,
             context,
         )
+        if isinstance(before_policy_dispatch, TaskError):
+            raise before_policy_dispatch.exception
         if isinstance(before_policy_dispatch, ToolOutcome):
             self._emit_policy_blocked(
                 intent,

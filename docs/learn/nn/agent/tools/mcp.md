@@ -224,3 +224,20 @@ The second example shows the wire response shape for a form elicitation. The
 application should build `answer` from the user's actual response. Agent tool
 proxies raise `MCPInputRequiredError` if a tool needs input, so an intermediate
 result is never treated as a completed tool call.
+
+### Connection failures
+
+`max_retries` and `retry_delay` control connection attempts. A timeout or
+connection failure during protocol discovery follows this retry policy instead
+of triggering a legacy handshake. Each failed attempt
+clears local session state and closes the transport before retrying. If transport
+cleanup also fails, connection attempts stop: `MCPConnectionError.__cause__`
+preserves the connection failure, with the cleanup failure attached as an
+exception note. The client does not retry a transport whose cleanup failed.
+
+Explicit `disconnect()` also clears local session state and caches when transport
+cleanup raises; the cleanup exception still propagates to the caller.
+
+For stdio servers, closing stdout fails pending requests with
+`MCPConnectionError`. Canceling a request removes its local tracking; it does not
+confirm that a remote tool stopped executing.

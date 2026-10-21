@@ -837,7 +837,9 @@ When your agent runs asynchronously with `acall()`, prefer writing async tools a
             return response.text
         ```
 
-You can also implement a class-based async tool using the `acall` method:
+You can also implement a class-based async tool using `async def __call__`.
+The tool wrapper waits for this method in both synchronous and asynchronous
+execution, returning its result and propagating its exceptions:
 
 ???+ example
 
@@ -850,7 +852,7 @@ You can also implement a class-based async tool using the `acall` method:
         def __init__(self, timeout: int = 30):
             self.timeout = timeout
 
-        async def acall(self, url: str) -> str:
+        async def __call__(self, url: str) -> str:
             """Fetch content from URL asynchronously."""
             async with httpx2.AsyncClient(timeout=self.timeout) as client:
                 response = await client.get(url)
@@ -859,7 +861,9 @@ You can also implement a class-based async tool using the `acall` method:
 
 ### Class-based Tools
 
-Tools can be implemented as classes with `__call__` or `acall` methods. This is useful when you need to maintain state or configure the tool at initialization.
+Tools can be implemented as classes with `__call__` methods. A callable may also
+provide `acall` for a separate asynchronous implementation. Classes are useful
+when you need to maintain state or configure the tool at initialization.
 
 ???+ example "Class-based Tool"
 

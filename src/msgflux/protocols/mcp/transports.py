@@ -369,7 +369,7 @@ class HTTPTransport(BaseTransport):
                     break
 
             # Check Content-Type to handle both JSON and SSE responses
-            content_type = response.headers.get("content-type", "")
+            content_type = response.headers.get("content-type", "").lower()
 
             if "text/event-stream" in content_type:
                 # Parse SSE format: data: {...}\n\n
@@ -405,7 +405,8 @@ class HTTPTransport(BaseTransport):
                 if isinstance(error_body, dict) and "error" in error_body:
                     return error_body
             response.raise_for_status()
-            if "text/event-stream" not in response.headers.get("content-type", ""):
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/event-stream" not in content_type:
                 await response.aread()
                 return response.json()
             event_lines: list[str] = []
@@ -504,30 +505,51 @@ class StdioTransport(BaseTransport):
 
     async def disconnect(self):
         """Terminate subprocess and cleanup."""
-        if self._read_task:
-            self._read_task.cancel()
-            try:
-                await self._read_task
-            except asyncio.CancelledError:
-                pass
-            self._read_task = None
+        try:
+            if self._read_task:
+                self._read_task.cancel()
+                try:
+                    await self._read_task
+                except asyncio.CancelledError:
+                    pass
+                finally:
+                    self._read_task = None
 
-        if self._process:
-            try:
-                self._process.terminate()
-                await asyncio.wait_for(self._process.wait(), timeout=5.0)
-            except asyncio.TimeoutError:
-                self._process.kill()
-                await self._process.wait()
-            finally:
-                self._process = None
+            process = self._process
+            if process:
+                try:
+                    try:
+                        process.terminate()
+                    except ProcessLookupError:
+                        pass
+                    try:
+                        await asyncio.wait_for(process.wait(), timeout=5.0)
+                    except asyncio.TimeoutError:
+                        try:
+                            process.kill()
+                        except ProcessLookupError:
+                            pass
+                        await process.wait()
+                finally:
+                    self._process = None
+        finally:
+            for future in self._pending_requests.values():
+                if not future.done():
+                    future.cancel()
+            self._pending_requests.clear()
+            self._notification_callbacks.clear()
 
-        # Cancel pending requests
-        for future in self._pending_requests.values():
-            if not future.done():
-                future.cancel()
-        self._pending_requests.clear()
+    def _fail_pending_requests(self, message: str, *, cause: Exception | None = None):
+        pending = self._pending_requests
+        self._pending_requests = {}
         self._notification_callbacks.clear()
+        for future in pending.values():
+            if future.done():
+                continue
+            error = MCPConnectionError(message)
+            if cause is not None:
+                error.__cause__ = cause
+            future.set_exception(error)
 
     async def _read_responses(self):  # noqa: C901
         """Background task to read JSON-RPC responses from stdout."""
@@ -538,6 +560,7 @@ class StdioTransport(BaseTransport):
             while True:
                 line = await self._process.stdout.readline()
                 if not line:
+                    self._fail_pending_requests("MCP server closed stdout")
                     break
 
                 try:
@@ -568,8 +591,11 @@ class StdioTransport(BaseTransport):
 
         except asyncio.CancelledError:
             pass
-        except Exception:  # noqa: S110
-            pass
+        except Exception as error:
+            logger.debug(f"Error reading MCP server responses: {error}")
+            self._fail_pending_requests(
+                f"Failed to read MCP server responses: {error}", cause=error
+            )
 
     async def send_request(
         self,
@@ -581,6 +607,8 @@ class StdioTransport(BaseTransport):
         """Send JSON-RPC request via stdin and wait for response."""
         if not self._process or not self._process.stdin:
             raise MCPConnectionError("Transport not connected")
+        if self._read_task is not None and self._read_task.done():
+            raise MCPConnectionError("MCP server stdout reader is no longer running")
 
         request_id = self._get_next_request_id()
         request_data = {
@@ -610,12 +638,15 @@ class StdioTransport(BaseTransport):
             return response
 
         except asyncio.TimeoutError:
-            self._pending_requests.pop(request_id, None)
             raise MCPTimeoutError(f"Request to {method} timed out") from None
+        except MCPError:
+            raise
         except Exception as e:
-            self._pending_requests.pop(request_id, None)
             raise MCPError(f"Failed to send request: {e}") from e
         finally:
+            self._pending_requests.pop(request_id, None)
+            if future.done() and not future.cancelled():
+                future.exception()
             if progress_token is not None:
                 self._notification_callbacks.pop(progress_token, None)
 

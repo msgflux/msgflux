@@ -128,7 +128,14 @@ class WorkspaceBinding:
         return self
 
     async def __aexit__(self, exc_type, exc, tb):
-        await self.aclose()
+        if exc is None:
+            await self.aclose()
+            return False
+        try:
+            await self.aclose()
+        except Exception as cleanup_error:
+            exc.add_note(f"Workspace binding cleanup failed: {cleanup_error}")
+        return False
 
 
 class InMemoryWorkspaceBackend(WorkspaceBackend):

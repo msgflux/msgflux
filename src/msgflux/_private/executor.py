@@ -6,6 +6,8 @@ from concurrent.futures import Future, ThreadPoolExecutor
 from functools import partial
 from typing import Any, Callable, Tuple
 
+from msgflux.utils.inspect import get_async_call_target
+
 try:
     import platform
 
@@ -127,8 +129,9 @@ class Executor:
         if hasattr(f, "acall"):
             return ("async", f.acall(*args, **kwargs))
 
-        if asyncio.iscoroutinefunction(f):
-            return ("async", f(*args, **kwargs))
+        async_call = get_async_call_target(f)
+        if async_call is not None:
+            return ("async", async_call(*args, **kwargs))
 
         return ("sync", (f, args, kwargs))
 

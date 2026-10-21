@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, get_type_hints
 
 import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
+from msgflux.exceptions import TaskError
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool.definitions import ContextSpec, ToolDeclaration
 from msgflux.protocols.mcp import (
@@ -27,7 +28,11 @@ from msgflux.tools.types import (
     unwrap_hidden_annotation,
 )
 from msgflux.utils.chat import generate_tool_json_schema
-from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
+from msgflux.utils.inspect import (
+    fn_has_parameters,
+    get_async_call_target,
+    get_fn_param_defaults,
+)
 from msgflux.utils.msgspec import restore_transport_value
 from msgflux.utils.tenacity import apply_retry, default_tool_retry
 
@@ -123,6 +128,8 @@ class MCPTool(Tool):
         )
         # Call MCP tool (wrap async in sync)
         result = F.wait_for(self._mcp_client.call_tool, self._mcp_tool_name, kwargs)
+        if isinstance(result, TaskError):
+            raise result.exception
 
         # Handle errors
         if result.isError:
@@ -237,8 +244,12 @@ class LocalTool(Tool):
             self.tool_config.get("required_resources", ()),
         )
         kwargs = self._prepare_call_kwargs(kwargs)
-        if inspect.iscoroutinefunction(self.impl):
-            return F.wait_for(self.impl, **kwargs)
+        async_call = get_async_call_target(self.impl)
+        if async_call is not None:
+            result = F.wait_for(async_call, **kwargs)
+            if isinstance(result, TaskError):
+                raise result.exception
+            return result
         return self.impl(**kwargs)
 
     @aset_tool_attributes(execution_type="local")
@@ -250,8 +261,9 @@ class LocalTool(Tool):
         kwargs = self._prepare_call_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
-        elif inspect.iscoroutinefunction(self.impl):
-            return await self.impl(*args, **kwargs)
+        async_call = get_async_call_target(self.impl)
+        if async_call is not None:
+            return await async_call(*args, **kwargs)
         # Fall back to sync call in executor to avoid blocking event loop
         loop = asyncio.get_event_loop()
         context = copy_context()

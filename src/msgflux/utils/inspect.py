@@ -1,6 +1,7 @@
 import inspect
 import mimetypes
 import os
+from functools import partial
 from pathlib import Path
 from typing import Any, Callable, Dict
 from urllib.parse import urlparse
@@ -13,6 +14,23 @@ def fn_has_parameters(fn: Callable) -> bool:
         if param.kind not in (param.VAR_POSITIONAL, param.VAR_KEYWORD):
             return True
     return False
+
+
+def get_async_call_target(fn: Callable) -> Callable | None:
+    """Return an async function or bound async ``__call__`` target, if any."""
+    if isinstance(fn, partial):
+        target = get_async_call_target(fn.func)
+        if target is not None:
+            return partial(target, *fn.args, **(fn.keywords or {}))
+        return None
+    if inspect.iscoroutinefunction(fn):
+        return fn
+    if not callable(fn):
+        return None
+    call_method = type(fn).__call__
+    if inspect.iscoroutinefunction(call_method):
+        return fn.__call__
+    return None
 
 
 def get_fn_param_defaults(fn: Callable) -> Dict[str, Any]:
