@@ -324,9 +324,10 @@ class AgentModelRuntimeMixin:
     ):
         """Warm the provider cache for the rendered system prompt and tools.
 
-        This bypasses task messages, chat history, checkpoint stores and response
-        parsing. Warmup should only include stable prompt prefixes; dynamic user
-        content would reduce cache hits for the real request.
+        This bypasses task messages, chat history, checkpoint stores, Agent inbox
+        notifications and response parsing. Warmup should only include stable
+        prompt prefixes; dynamic user content would reduce cache hits for the
+        real request.
         """
         if background:
             detached(
@@ -391,6 +392,7 @@ class AgentModelRuntimeMixin:
             vars=vars or {},
             model_preference=model_preference,
             tool_filter=tool_filter,
+            drain_notifications=False,
             transform_tool_catalog=False,
             transform_system_prompt=False,
         )
@@ -455,6 +457,7 @@ class AgentModelRuntimeMixin:
             vars=vars or {},
             model_preference=model_preference,
             tool_filter=tool_filter,
+            drain_notifications=False,
         )
         return dotdict(
             system_prompt=model_execution_params.system_prompt,
