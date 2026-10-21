@@ -126,6 +126,17 @@ def _record_fanout_failures(span, results):
         )
 
 
+def _submit_or_error(executor, function, *args, **kwargs):
+    try:
+        return executor.submit(function, *args, **kwargs)
+    except (AbortRequestedError, TaskPauseRequestedError, TaskInterruptRequestedError):
+        raise
+    except Exception as error:
+        future = Future()
+        future.set_exception(error)
+        return future
+
+
 def _future_result_or_error(future, *, index, done):
     if future not in done:
         error = TimeoutError("Task did not finish before the wait timeout")
@@ -234,7 +245,7 @@ def map_gather(
     for i in range(len(args_list)):
         args = args_list[i]
         kwargs = kwargs_list[i] if kwargs_list else {}
-        futures.append(executor.submit(to_send, *args, **kwargs))
+        futures.append(_submit_or_error(executor, to_send, *args, **kwargs))
 
     done, _ = concurrent.futures.wait(futures, timeout=timeout)
     return tuple(
@@ -321,7 +332,7 @@ def scatter_gather(
     for i, f in enumerate(to_send):
         args = args_list[i] if args_list and i < len(args_list) else ()
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
-        futures.append(executor.submit(f, *args, **kwargs))
+        futures.append(_submit_or_error(executor, f, *args, **kwargs))
 
     done, _ = concurrent.futures.wait(futures, timeout=timeout)
     return tuple(
@@ -374,7 +385,7 @@ def bcast_gather(
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
     executor = Executor.get_instance()
-    futures = [executor.submit(f, *args, **kwargs) for f in to_send]
+    futures = [_submit_or_error(executor, f, *args, **kwargs) for f in to_send]
 
     done, _ = concurrent.futures.wait(futures, timeout=timeout)
     return tuple(
@@ -417,7 +428,7 @@ def wait_for(
         raise TypeError("`to_send` must be a callable object")
 
     executor = Executor.get_instance()
-    future = executor.submit(to_send, *args, **kwargs)
+    future = _submit_or_error(executor, to_send, *args, **kwargs)
     done, _ = concurrent.futures.wait([future], timeout=timeout)
     return _future_result_or_error(future, index=0, done=done)
 

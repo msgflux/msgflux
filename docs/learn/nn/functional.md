@@ -12,11 +12,14 @@ In practice, this means you can take any callable — a plain function, an `nn.A
 - **Gather Patterns**: Map, scatter, and broadcast primitives for different use cases
 - **Error Handling**: Typed `TaskError` results for failed tasks
 
-For the synchronous gather functions and `wait_for`, `timeout` limits waiting
-after calls have been submitted. Unfinished calls return a `TaskError` containing
-a `TimeoutError`; the underlying callable is not canceled and may continue
-running in its worker. Submission itself, including nested synchronous work
-that the executor runs inline, is outside this waiting budget.
+For the synchronous gather functions and `wait_for`, ordinary exceptions raised
+while an individual call is submitted or run are returned as indexed `TaskError`
+values. Control signals raised during submission still propagate. `timeout`
+limits waiting after calls have been submitted. An unfinished call returns a
+`TaskError` containing `TimeoutError`; already accepted work is not canceled and
+may continue running in its worker. A `TaskError` does not guarantee that an
+accepted call had no side effects. Submission itself, including nested
+synchronous work that the executor runs inline, is outside the timeout budget.
 
 ### Pattern Comparison
 
