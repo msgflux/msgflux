@@ -28,7 +28,11 @@ from msgflux.tools.types import (
     unwrap_hidden_annotation,
 )
 from msgflux.utils.chat import generate_tool_json_schema
-from msgflux.utils.inspect import fn_has_parameters, get_fn_param_defaults
+from msgflux.utils.inspect import (
+    fn_has_parameters,
+    get_async_call_target,
+    get_fn_param_defaults,
+)
 from msgflux.utils.msgspec import restore_transport_value
 from msgflux.utils.tenacity import apply_retry, default_tool_retry
 
@@ -233,15 +237,6 @@ class LocalTool(Tool):
         kwargs = self._restore_transport_params(kwargs)
         return self._strip_none_default_kwargs(kwargs)
 
-    def _async_call_target(self):
-        """Return the callable coroutine target for functions or async objects."""
-        if inspect.iscoroutinefunction(self.impl):
-            return self.impl
-        call_method = type(self.impl).__call__
-        if inspect.iscoroutinefunction(call_method):
-            return self.impl.__call__
-        return None
-
     @set_tool_attributes(execution_type="local")
     def forward(self, **kwargs):
         require_permissions(
@@ -249,7 +244,7 @@ class LocalTool(Tool):
             self.tool_config.get("required_resources", ()),
         )
         kwargs = self._prepare_call_kwargs(kwargs)
-        async_call = self._async_call_target()
+        async_call = get_async_call_target(self.impl)
         if async_call is not None:
             result = F.wait_for(async_call, **kwargs)
             if isinstance(result, TaskError):
@@ -266,7 +261,7 @@ class LocalTool(Tool):
         kwargs = self._prepare_call_kwargs(kwargs)
         if hasattr(self.impl, "acall"):
             return await self.impl.acall(*args, **kwargs)
-        async_call = self._async_call_target()
+        async_call = get_async_call_target(self.impl)
         if async_call is not None:
             return await async_call(*args, **kwargs)
         # Fall back to sync call in executor to avoid blocking event loop

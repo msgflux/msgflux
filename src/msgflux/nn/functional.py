@@ -17,6 +17,7 @@ from msgflux.exceptions import (
 from msgflux.logger import logger
 from msgflux.telemetry import Spans
 from msgflux.telemetry.context import aactive_span, active_span
+from msgflux.utils.inspect import get_async_call_target
 
 
 def _resolve_async_call(f: Callable) -> Callable:
@@ -544,12 +545,13 @@ async def adetached(to_send: Callable, *args: Any, **kwargs: Any) -> None:
         raise TypeError("`to_send` must be a callable object")
 
     call = _resolve_async_call(to_send)
+    async_call = get_async_call_target(call)
 
     async def run_task():
         """Wrapper to run the task and log errors."""
         try:
-            if asyncio.iscoroutinefunction(call):
-                await call(*args, **kwargs)
+            if async_call is not None:
+                await async_call(*args, **kwargs)
             else:
                 # Fall back to running sync function in executor
                 loop = asyncio.get_event_loop()

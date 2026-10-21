@@ -80,6 +80,26 @@ For async code, every gather function has an `a`-prefixed counterpart that retur
     print(results)  # (4, 9, 16)
     ```
 
+The synchronous API also waits for callable objects with an asynchronous
+`__call__`, including when wrapped in `functools.partial`:
+
+???+ example "Async Callable Object"
+
+    ```python
+    import msgflux.nn.functional as F
+
+    class AsyncDouble:
+        async def __call__(self, value: int) -> int:
+            return value * 2
+
+    result = F.wait_for(AsyncDouble(), 3)
+    print(result)  # 6
+    ```
+
+This call returns the completed value. A callable's `acall` method takes
+precedence when it is present. `adetached` also awaits these asynchronous
+callable objects, without returning their result to the caller.
+
 ---
 
 ## 2. **Gather Functions**
