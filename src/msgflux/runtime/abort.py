@@ -72,8 +72,8 @@ async def await_with_abort(
         return await awaitable
     operation = asyncio.ensure_future(awaitable)
     if abort_signal.aborted:
-        await _cancel_and_wait(operation)
-        abort_signal.raise_if_aborted()
+        cleanup_error = await _cancel_and_wait(operation)
+        _raise_if_aborted(abort_signal, cleanup_error)
     abort_waiter = asyncio.create_task(abort_signal.wait())
     try:
         done, _ = await asyncio.wait(
@@ -81,29 +81,66 @@ async def await_with_abort(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if abort_waiter in done:
-            await _cancel_and_wait(operation)
-            abort_signal.raise_if_aborted()
+            cleanup_error = await _cancel_and_wait(operation)
+            _raise_if_aborted(abort_signal, cleanup_error)
         result = await operation
         abort_signal.raise_if_aborted()
         return result
+    except BaseException as error:
+        if not operation.done():
+            cleanup_error = await _cancel_and_wait(operation)
+            _add_cleanup_note(error, cleanup_error)
+        raise
     finally:
-        try:
-            if not operation.done():
-                await _cancel_and_wait(operation)
-        finally:
-            await _cancel_and_wait(abort_waiter)
+        await _cancel_and_wait(abort_waiter)
 
 
-async def _cancel_and_wait(operation: asyncio.Future) -> None:
-    """Cancel once and join through repeated cancellation of the caller."""
+async def _cancel_and_wait(operation: asyncio.Future) -> Exception | None:
+    """Cancel once and join through repeated cancellation of the caller.
+
+    The cancelled operation's outcome is returned as a cleanup diagnostic
+    instead of replacing the control flow (cancellation or abort) that caused
+    the cancellation.
+    """
     if not operation.done():
         operation.cancel()
+    caller_cancelled: asyncio.CancelledError | None = None
     while not operation.done():
         try:
             await asyncio.wait((operation,))
-        except asyncio.CancelledError:
-            continue
+        except asyncio.CancelledError as error:
+            if caller_cancelled is None:
+                caller_cancelled = error
+    cleanup_error: Exception | None = None
     try:
         operation.result()
     except asyncio.CancelledError:
         pass
+    except Exception as error:
+        cleanup_error = error
+    if caller_cancelled is not None:
+        _add_cleanup_note(caller_cancelled, cleanup_error)
+        raise caller_cancelled
+    return cleanup_error
+
+
+def _raise_if_aborted(
+    abort_signal: AbortSignal,
+    cleanup_error: Exception | None = None,
+) -> None:
+    try:
+        abort_signal.raise_if_aborted()
+    except AbortRequestedError as error:
+        _add_cleanup_note(error, cleanup_error)
+        raise
+
+
+def _add_cleanup_note(
+    error: BaseException,
+    cleanup_error: Exception | None,
+) -> None:
+    if cleanup_error is not None:
+        error.add_note(
+            "Cancelled operation cleanup raised "
+            f"{type(cleanup_error).__name__}: {cleanup_error}"
+        )
