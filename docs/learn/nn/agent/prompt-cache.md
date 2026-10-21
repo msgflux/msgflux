@@ -2,7 +2,7 @@
 
 Prompt warmup sends the agent's stable prompt prefix to the model provider before the first real task. Providers with prompt caching can prefill the system prompt and tool schemas, so the next request with the same prefix can start faster or report cached input tokens.
 
-Use warmup when your agent has a large static system prompt, many tools, or loaded skills. It is not a replacement for response caching: no task message is sent, no checkpoint is written, and no conversation history is updated.
+Use warmup when your agent has a large static system prompt, many tools, or loaded skills. It is not a replacement for response caching: no task message is sent, no checkpoint is written, and no conversation history is updated. Pending Agent inbox notifications are left untouched so a later real turn still delivers them.
 
 ## Basic Usage
 
