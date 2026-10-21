@@ -66,6 +66,16 @@ When the tool library runs inside this context, it reads the active
 interrupt requests. If no task store is provided, msgFlux creates an in-memory
 store when background tools are used.
 
+Task controls are scoped to the active execution thread. `task_list` only
+returns tasks recorded for the current thread, and by-id operations return
+`not_found` for a task from another thread before waiting, interrupting,
+messaging, or resuming it. This also applies when threads share a task store,
+such as concurrent runs through one unmanaged Agent. Subagent tasks keep their
+parent's thread ID while using their own checkpoint namespace, so parent and
+child task controls remain visible to each other. Trusted host calls without a
+thread identity keep the previous global store behavior. Managed `agent_dir`
+threads already use separate task stores.
+
 The SQLite store persists `msgspec.Struct` and dataclass results as structured
 JSON, including nested values. After reopening, a Bash result still exposes
 `results`, `returncode`, `stdout`, and `stderr` through `task_output` or `task_wait`.

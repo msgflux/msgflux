@@ -7,6 +7,7 @@ from typing import Any, Dict, Optional
 from uuid import uuid4
 
 from msgflux.core.registry import Registry
+from msgflux.runtime.context import get_execution_scope
 from msgflux.tasks.handle import TaskHandle
 from msgflux.tools.helpers import (
     BACKGROUND_ACTIVITY_TOOL_KIND,
@@ -25,6 +26,31 @@ _TASK_WAIT_SETTLED_STATUSES = frozenset(
 )
 
 
+def _is_task_in_current_thread(task: Any) -> bool:
+    """Keep model-facing task controls inside the active thread.
+
+    Trusted host calls without a thread identity retain the previous global
+    store behavior. Subagent tasks share their parent's thread ID, so no
+    namespace restriction is applied here.
+    """
+    thread_id = get_execution_scope().thread_id
+    if thread_id is None:
+        return True
+    return task.metadata.get("thread_id") == thread_id
+
+
+def _visible_task(
+    task_store: Any,
+    task_id: str,
+    *,
+    include_result: bool = True,
+) -> Any | None:
+    task = task_store.get(task_id, include_result=include_result)
+    if task is None or not _is_task_in_current_thread(task):
+        return None
+    return task
+
+
 @_base_task_tools
 class TaskStatusTool(ToolBackground):
     default_usage_guidance = (
@@ -37,7 +63,7 @@ class TaskStatusTool(ToolBackground):
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
         task_store = handle.get_task_store()
-        task = task_store.get(task_id, include_result=False)
+        task = _visible_task(task_store, task_id, include_result=False)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
         return build_task_status_payload(task)
@@ -62,6 +88,7 @@ class TaskListTool(ToolBackground):
         return [
             build_task_status_payload(task)
             for task in task_store.list(status=status, include_result=False)
+            if _is_task_in_current_thread(task)
         ]
 
 
@@ -76,7 +103,7 @@ class TaskOutputTool(ToolBackground):
     annotations = {"task_id": str, "handle": Hidden, "return": Any}
 
     def __call__(self, task_id: str, handle: Hidden) -> Any:
-        task = handle.get_task_store().get(task_id)
+        task = _visible_task(handle.get_task_store(), task_id)
         return build_task_result(task_id=task_id, task=task)
 
 
@@ -118,7 +145,7 @@ class TaskWaitTool(ToolBackground):
                 raise ValueError("`timeout` must be greater than or equal to 0.")
 
         task_store = handle.get_task_store()
-        task = task_store.get(task_id)
+        task = _visible_task(task_store, task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
         if task.status in _TASK_WAIT_SETTLED_STATUSES:
@@ -129,7 +156,7 @@ class TaskWaitTool(ToolBackground):
             try:
                 future.result(timeout=timeout)
             except FutureTimeoutError:
-                task = task_store.get(task_id)
+                task = _visible_task(task_store, task_id)
                 if task is None or task.status in _TASK_WAIT_SETTLED_STATUSES:
                     return build_task_result(task_id=task_id, task=task)
                 return build_task_timeout_result(
@@ -137,14 +164,14 @@ class TaskWaitTool(ToolBackground):
                     task=task,
                 )
             except Exception:
-                task = task_store.get(task_id)
+                task = _visible_task(task_store, task_id)
                 return build_task_result(task_id=task_id, task=task)
-            task = task_store.get(task_id)
+            task = _visible_task(task_store, task_id)
             return build_task_result(task_id=task_id, task=task)
 
         deadline = None if timeout is None else time.monotonic() + float(timeout)
         while True:
-            task = task_store.get(task_id)
+            task = _visible_task(task_store, task_id)
             if task is None or task.status in _TASK_WAIT_SETTLED_STATUSES:
                 return build_task_result(task_id=task_id, task=task)
             if deadline is not None and time.monotonic() >= deadline:
@@ -170,6 +197,8 @@ class TaskInterruptTool(ToolBackground):
 
     def __call__(self, task_id: str, handle: Hidden) -> Dict[str, Any]:
         task_store = handle.get_task_store()
+        if _visible_task(task_store, task_id, include_result=False) is None:
+            return {"task_id": task_id, "status": "not_found"}
         task = task_store.request_interrupt(task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
@@ -223,7 +252,7 @@ class TaskActivityTool(ToolBackground):
             if limit <= 0:
                 raise ValueError("`limit` must be greater than 0.")
         task_store = handle.get_task_store()
-        task = task_store.get(task_id, include_result=False)
+        task = _visible_task(task_store, task_id, include_result=False)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
         if "activity" not in get_task_background_capabilities(task):
@@ -275,7 +304,7 @@ class TaskMessageTool(ToolBackground):
         handle: Hidden,
     ) -> Dict[str, Any]:
         task_store = handle.get_task_store()
-        task = task_store.get(task_id)
+        task = _visible_task(task_store, task_id)
         if task is None:
             return {"task_id": task_id, "status": "not_found"}
         if not isinstance(message, str) or not message.strip():
