@@ -155,7 +155,13 @@ for i, query in enumerate(queries):
 
 ## 4. **Async Support**
 
-All retrievers expose `.acall()` for async usage:
+All retrievers expose `.acall()` for async usage. Providers with a native async
+implementation use it directly. Otherwise, the inherited fallback runs the
+synchronous call in the shared executor and awaits its result without blocking
+the caller's event loop. The fallback preserves the original exception.
+
+Cancelling a fallback call can prevent queued work from starting. It cannot
+stop synchronous work that has already started.
 
 ```python
 import msgflux as mf
