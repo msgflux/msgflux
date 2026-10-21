@@ -138,8 +138,22 @@ msgflux -p "Review the current changes" --stream --json
 
 `--stream` observes the execution through the service's `watch()` API and prints
 records as they arrive. Plain mode labels each event with its type and source;
-text deltas show their text, while structured data uses JSON. The command still
-prints the recorded final answer at the end. Tools, commentary (when emitted),
+text deltas show their text, while structured data uses indented field names.
+Tool arguments, errors and multiline results remain readable without compact
+JSON objects. For example, a Bash completion can show:
+
+```text
+[tool.end agent:main/tool:bash]
+  tool_name: bash
+  arguments:
+    command: pwd
+  result:
+    stdout: /home/user/project
+    returncode: 0
+  error: null
+```
+
+The command still prints the recorded final answer at the end. Tools, commentary (when emitted),
 reasoning, task updates and subagent events retain their source information.
 Noninteractive coding agents are still instructed to work without progress
 commentary or user questions; streaming does not change the agent's behavior.
