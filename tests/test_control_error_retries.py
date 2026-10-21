@@ -116,8 +116,8 @@ def test_default_tool_retry_does_not_repeat_action_after_interrupt():
         """
     )
     env = os.environ.copy()
-    env["msgflux_TOOL_STOP_AFTER_DELAY"] = "10"
-    env["msgflux_MODEL_STOP_AFTER_DELAY"] = "10"
+    env["MSGFLUX_TOOL_STOP_AFTER_DELAY"] = "10"
+    env["MSGFLUX_MODEL_STOP_AFTER_DELAY"] = "10"
     result = subprocess.run(  # noqa: S603 - fixed interpreter and test script
         [sys.executable, "-c", code],
         cwd=Path(__file__).resolve().parents[1],
