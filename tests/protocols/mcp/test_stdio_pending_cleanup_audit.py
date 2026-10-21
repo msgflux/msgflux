@@ -18,6 +18,13 @@ async def _wait_for_pending(transport):
     raise AssertionError("MCP request was not registered")
 
 
+async def _release_child(transport):
+    process = transport._process
+    assert process is not None
+    process.stdin.write(b"\n")
+    await asyncio.wait_for(process.stdin.drain(), timeout=2)
+
+
 def _transport(tmp_path, source, *, timeout=5.0):
     server = tmp_path / "stdio_server.py"
     server.write_text(source)
@@ -77,11 +84,14 @@ async def test_canceled_stdio_request_removes_pending_future_and_progress_callba
 
 @pytest.mark.asyncio
 async def test_stdout_eof_fails_pending_request_before_request_timeout(tmp_path):
-    transport = _transport(tmp_path, "import sys\nsys.stdin.readline()\n", timeout=5)
+    transport = _transport(
+        tmp_path, "import sys\nsys.stdin.readline()\nsys.stdin.readline()\n", timeout=5
+    )
     await transport.connect()
     request = asyncio.create_task(transport.send_request("tools/call"))
     try:
         await _wait_for_pending(transport)
+        await _release_child(transport)
         with pytest.raises(MCPConnectionError, match="closed stdout"):
             await asyncio.wait_for(request, timeout=2)
         assert transport._pending_requests == {}
@@ -94,13 +104,16 @@ async def test_stdout_eof_fails_pending_request_before_request_timeout(tmp_path)
 
 @pytest.mark.asyncio
 async def test_disconnect_after_natural_exit_cleans_pending_request(tmp_path):
-    transport = _transport(tmp_path, "import sys\nsys.stdin.readline()\n", timeout=5)
+    transport = _transport(
+        tmp_path, "import sys\nsys.stdin.readline()\nsys.stdin.readline()\n", timeout=5
+    )
     await transport.connect()
     request = asyncio.create_task(transport.send_request("tools/call"))
     try:
         await _wait_for_pending(transport)
         process = transport._process
         assert process is not None
+        await _release_child(transport)
         await asyncio.wait_for(process.wait(), timeout=2)
 
         await transport.disconnect()
