@@ -101,6 +101,24 @@ def test_get_rejects_api_key_record_with_wrong_env_name(tmp_path):
         accounts.get("openai")
 
 
+def test_get_rejects_imagerouter_record_with_openai_env_name(tmp_path):
+    accounts = Accounts(tmp_path)
+    path = accounts.credential_path("imagerouter")
+    path.write_text(
+        json.dumps(
+            {
+                "provider": "imagerouter",
+                "kind": "api_key",
+                "env_name": "OPENAI_API_KEY",
+                "value": "sk-fake-openai-key",
+            }
+        ),
+        encoding="utf-8",
+    )
+    with pytest.raises(AccountError, match="Invalid API key record"):
+        accounts.get("imagerouter")
+
+
 def test_symlink_account_is_rejected(tmp_path):
     accounts = Accounts(tmp_path / "accounts")
     accounts.root.mkdir()

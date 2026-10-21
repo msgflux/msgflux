@@ -12,11 +12,27 @@ import msgspec
 
 @pytest.mark.parametrize(
     ("provider", "env_name"),
-    [("openai", "OPENAI_API_KEY"), ("groq", "GROQ_API_KEY")],
+    [
+        ("openai", "OPENAI_API_KEY"),
+        ("groq", "GROQ_API_KEY"),
+        ("imagerouter", "IMAGEROUTER_API_KEY"),
+    ],
 )
 def test_api_key_provider_specs_follow_provider_metadata(provider, env_name):
     assert API_KEY_PROVIDERS[provider].env_name == env_name
     assert get_api_key_env(provider) == env_name
+
+
+def test_imagerouter_reads_its_key_and_not_openai(monkeypatch):
+    from msgflux.models.providers.imagerouter import ImageRouterTextToImage
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-openai-key")
+    monkeypatch.delenv("IMAGEROUTER_API_KEY", raising=False)
+
+    assert ImageRouterTextToImage.api_key_env == "IMAGEROUTER_API_KEY"
+    assert get_provider_auth("imagerouter").env_name == "IMAGEROUTER_API_KEY"
+    with pytest.raises(ValueError, match="IMAGEROUTER_API_KEY"):
+        ImageRouterTextToImage.__new__(ImageRouterTextToImage)._get_api_key()
 
 
 def test_codex_is_explicit_oauth_provider():

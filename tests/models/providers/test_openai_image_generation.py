@@ -183,6 +183,42 @@ def test_image_router_uses_its_own_url_and_credentials(monkeypatch):
     client.close()
 
 
+def test_image_router_account_resolver_sends_stored_key_only_to_image_router(
+    monkeypatch, tmp_path
+):
+    from msgflux.accounts import Accounts
+    from msgflux.accounts.resolver import AccountCredentialResolver
+
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-openai-key")
+    monkeypatch.setenv("IMAGEROUTER_API_KEY", "ir-fake-env-key")
+    accounts = Accounts(tmp_path / "accounts")
+    accounts.set_api_key("imagerouter", "ir-fake-account-key")
+    requests = []
+
+    def handler(request):
+        requests.append(request)
+        return httpx2.Response(200, json=_image_payload(usage=False))
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+
+    import msgflux as mf
+
+    model = mf.Model.text_to_image(
+        "imagerouter/default",
+        http_transport=HTTPTransport(client=client),
+        retry=False,
+        credential_resolver=AccountCredentialResolver(accounts, "imagerouter"),
+    )
+    model("A blue circle")
+
+    assert requests[0].url == (
+        "https://api.imagerouter.io/v1/openai/images/generations"
+    )
+    assert requests[0].headers["authorization"] == "Bearer ir-fake-account-key"
+    assert "sk-fake-openai-key" not in requests[0].headers["authorization"]
+    client.close()
+
+
 def test_openai_image_generation_resolves_credentials_on_request(monkeypatch):
     monkeypatch.delenv("OPENAI_API_KEY", raising=False)
     client = httpx2.Client(
