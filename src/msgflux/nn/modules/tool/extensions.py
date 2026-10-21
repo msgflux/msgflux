@@ -404,9 +404,14 @@ class ToolExtensionRegistry(Module):
         dispatch_name, context_sources = self._install(extension)
         try:
             extension.on_register(self)
-        except Exception:
+        except Exception as registration_error:
             try:
                 extension.on_remove(self)
+            except Exception as cleanup_error:
+                registration_error.add_note(
+                    "Extension cleanup after registration failure also failed: "
+                    f"{cleanup_error}"
+                )
             finally:
                 self._rollback_registration(
                     extension,
@@ -423,9 +428,14 @@ class ToolExtensionRegistry(Module):
         dispatch_name, context_sources = self._install(extension)
         try:
             await extension.aon_register(self)
-        except Exception:
+        except Exception as registration_error:
             try:
                 await extension.aon_remove(self)
+            except Exception as cleanup_error:
+                registration_error.add_note(
+                    "Extension cleanup after registration failure also failed: "
+                    f"{cleanup_error}"
+                )
             finally:
                 self._rollback_registration(
                     extension,

@@ -357,6 +357,11 @@ removal is immediate: tools and hooks can disappear from an execution already
 in progress. Configure extensions before serving concurrent requests and treat
 runtime removal as an explicit administrative operation.
 
+If setup fails during registration, cleanup runs before the extension is
+unregistered. An ordinary cleanup exception is attached as a note to the setup
+exception, which remains the error raised to the caller. A new cancellation
+during cleanup still propagates.
+
 ## Built-In Extensions
 
 `ToolLibrary` uses the same mechanism for optional capabilities:

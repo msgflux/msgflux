@@ -190,7 +190,7 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             self._extension_tool_names[name] = tuple(tool_names)
             self._extension_hook_handles[name] = hook_handles
             extension.on_register(self)
-        except Exception:
+        except Exception as registration_error:
             for handle in reversed(hook_handles):
                 handle.remove()
             for tool_name in reversed(tool_names):
@@ -202,6 +202,11 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             self._extension_hook_handles.pop(name, None)
             try:
                 extension.on_remove(self)
+            except Exception as cleanup_error:
+                registration_error.add_note(
+                    "Extension cleanup after registration failure also failed: "
+                    f"{cleanup_error}"
+                )
             finally:
                 if name in self.extensions:
                     del self.extensions[name]
