@@ -21,8 +21,10 @@ class TaskLeaseHeartbeats:
     @classmethod
     def register(cls, handle: TaskHandle, *, lease_seconds: float) -> None:
         interval = lease_seconds / 3
+        key = id(handle)
         with cls._lock:
-            cls._active[id(handle)] = (
+            previous = cls._active.get(key)
+            cls._active[key] = (
                 handle,
                 lease_seconds,
                 time.monotonic() + interval,
@@ -33,7 +35,15 @@ class TaskLeaseHeartbeats:
                     name="msgflux-task-lease-heartbeat",
                     daemon=True,
                 )
-                cls._thread.start()
+                try:
+                    cls._thread.start()
+                except BaseException:
+                    cls._thread = None
+                    if previous is None:
+                        cls._active.pop(key, None)
+                    else:
+                        cls._active[key] = previous
+                    raise
             cls._wake.set()
 
     @classmethod

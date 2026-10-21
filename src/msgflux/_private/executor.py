@@ -29,7 +29,18 @@ class AsyncWorker:
 
     def submit(self, coro):
         """Submits a coroutine to the worker's event loop."""
-        return asyncio.run_coroutine_threadsafe(coro, self.loop)
+        try:
+            return asyncio.run_coroutine_threadsafe(coro, self.loop)
+        except BaseException as submission_error:
+            if asyncio.iscoroutine(coro):
+                try:
+                    coro.close()
+                except BaseException as close_error:
+                    submission_error.add_note(
+                        "Rejected coroutine cleanup failed: "
+                        f"{type(close_error).__name__}"
+                    )
+            raise
 
     def shutdown(self):
         """Terminates the event loop and worker thread."""

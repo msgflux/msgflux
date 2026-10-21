@@ -430,7 +430,16 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                 "SELECT notification_id, payload, dedupe_key, created_at FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND (status='pending' OR lease_until IS NULL OR lease_until<=?)",
                 (*previous, now),
             ).fetchall()
+            existing_dedupe_keys = {
+                row[0]
+                for row in self._conn.execute(
+                    "SELECT dedupe_key FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND dedupe_key IS NOT NULL",
+                    current,
+                ).fetchall()
+            }
             for item_id, payload, dedupe_key, created_at in rows:
+                if dedupe_key and dedupe_key in existing_dedupe_keys:
+                    continue
                 self._conn.execute(
                     """INSERT OR IGNORE INTO agent_inbox_notifications
                 (namespace,thread_id,run_id,notification_id,payload,dedupe_key,status,lease_id,lease_until,created_at,updated_at)
@@ -444,6 +453,8 @@ class SQLiteAgentInboxStore(AgentInboxStore):
                         now,
                     ),
                 )
+                if dedupe_key:
+                    existing_dedupe_keys.add(dedupe_key)
             if rows:
                 self._conn.executemany(
                     "DELETE FROM agent_inbox_notifications WHERE namespace=? AND thread_id=? AND run_id=? AND notification_id=?",

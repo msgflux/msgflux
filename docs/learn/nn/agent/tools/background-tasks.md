@@ -230,6 +230,13 @@ the task pauses, it returns the current paused status so the host can resume it
 explicitly. If the timeout is reached while the task is still queued or running,
 it returns a timeout payload with the current task status and progress.
 
+If storing a completed result fails, the runtime attempts to record a failed task
+with the persistence error. The tool is not executed again, and completed external
+effects are not undone. If failure recording also fails, the last stored state
+remains authoritative and the secondary failure is logged. An error emitting an
+event or notification after a successful commit does not change that committed
+result.
+
 ### Streaming Agent Results
 
 A background Agent configured with `config={"stream": True}` stays `running`
@@ -445,6 +452,15 @@ that cannot be encoded as JSON still run normally but cannot use the
 pre-checkpoint replay path. Tool calls and other external effects made
 immediately before a crash may still be repeated after recovery; leases are
 not an exactly-once guarantee.
+After an initial worker claim, failures in its start event or heartbeat setup
+use the same failure handling as tool execution. They preserve the original
+error and record the task as failed when the task store is writable; the tool
+is not invoked.
+If a recovery observer or worker-claim setup fails before dispatch, the runtime
+releases its acquired lease and preserves the original error. Once the cause is
+resolved, the host can retry recovery without waiting for that lease to expire.
+If releasing the lease also fails, its remaining expiry still applies.
+
 If the Agent committed a `completed` checkpoint but the process exited before
 recording the task result, call `reconcile_agent_task` instead:
 
@@ -466,6 +482,12 @@ result is the value after `before_run_end` and before `after_run_end`; a
 transformation made only by `after_run_end` is not guaranteed to survive a
 crash in this window. Reconciliation does not provide exactly-once delivery
 of external effects.
+
+If reconciliation fails after claiming the worker, it releases that claim so
+the host can retry immediately without another model call. A failure after the
+result was committed does not discard the completed result. If releasing the
+claim also fails, the original error is preserved; the host must wait for the
+remaining lease to expire before retrying.
 
 ### Inspecting and coordinating recovery
 

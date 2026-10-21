@@ -934,6 +934,12 @@ agent_inbox.bind_scope(scope, namespace="policy_assistant")
 agent("Summarize this policy: Returns are accepted within 30 days.", scope=scope)
 ```
 
+Binding an inbox to another run on the same thread moves its pending notifications
+to that run. Notifications under an active lease stay in their source run.
+Notifications without a dedupe key are carried forward. When both
+scopes contain the same dedupe key, the destination notification is retained, so
+an older queued update cannot replace a value already set for the new run.
+
 Use `fork(...)` to create another handle over the same store with a different
 runtime key. This is useful when a root agent launches child work but you still
 want a shared store:

@@ -406,20 +406,22 @@ class BackgroundTaskDispatcher:
             capture,
             event_source(tool_name, "background"),
         ):
-            if not task_handle.has_worker_lease:
-                task_handle.start_worker(
-                    lease_seconds=self.lease_seconds,
-                    recover_expired=recover_expired,
-                )
-            elif not task_handle.renew_worker(lease_seconds=self.lease_seconds):
-                TaskLeaseHeartbeats.unregister(task_handle)
-                raise TaskLeaseLostError(task_handle.task_id)
-            TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
             try:
+                if not task_handle.has_worker_lease:
+                    task_handle.start_worker(
+                        lease_seconds=self.lease_seconds,
+                        recover_expired=recover_expired,
+                    )
+                elif not task_handle.renew_worker(lease_seconds=self.lease_seconds):
+                    raise TaskLeaseLostError(task_handle.task_id)
+                TaskLeaseHeartbeats.register(
+                    task_handle, lease_seconds=self.lease_seconds
+                )
                 with _task_history_origin_context(task_handle.task_id, metadata):
                     require_permissions(required_permissions, required_resources)
                     result = tool(**call_params)
                     result = _await_event_finalized_result(result, task_handle.task_id)
+                    task_handle.complete(result)
             except TaskLeaseLostError:
                 raise
             except (Exception, asyncio.CancelledError) as exc:
@@ -431,7 +433,6 @@ class BackgroundTaskDispatcher:
                 )
                 raise
             else:
-                task_handle.complete(result)
                 self.publish_task_notification(
                     task_id=task_handle.task_id,
                     tool_name=tool_name,
@@ -547,35 +548,35 @@ class BackgroundTaskDispatcher:
             agent_inbox=root_inbox,
         )
         if reconcile_terminal:
-            task_handle.start_worker(
-                lease_seconds=self.lease_seconds,
-                recover_expired=True,
-            )
             try:
+                task_handle.start_worker(
+                    lease_seconds=self.lease_seconds,
+                    recover_expired=True,
+                )
                 latest = checkpoint_store.load_state(
                     checkpoint_namespace, thread_id, run_id
                 )
                 self._verify_claimed_checkpoint(task, checkpoint, latest)
                 self._validate_recovery_command_receipts(task, task_store, latest)
+                emit_event(
+                    EventType.TASK_START,
+                    {
+                        "task_id": task.task_id,
+                        "tool_name": tool_name,
+                        "status": "running",
+                        "reconciled": True,
+                    },
+                )
+                task_handle.complete(result["value"])
+                self.publish_task_notification(
+                    task_id=task.task_id,
+                    tool_name=tool_name,
+                    status="completed",
+                    agent_inbox=root_inbox,
+                )
             except BaseException:
-                task_handle.release_worker()
+                self._release_worker_after_error(task_handle)
                 raise
-            emit_event(
-                EventType.TASK_START,
-                {
-                    "task_id": task.task_id,
-                    "tool_name": tool_name,
-                    "status": "running",
-                    "reconciled": True,
-                },
-            )
-            task_handle.complete(result["value"])
-            self.publish_task_notification(
-                task_id=task.task_id,
-                tool_name=tool_name,
-                status="completed",
-                agent_inbox=root_inbox,
-            )
             return "Completed background agent result reconciled from checkpoint."
         execution_scope = {
             "scope": ExecutionScope(
@@ -631,11 +632,11 @@ class BackgroundTaskDispatcher:
             )
 
         if recover_expired:
-            task_handle.start_worker(
-                lease_seconds=self.lease_seconds,
-                recover_expired=True,
-            )
             try:
+                task_handle.start_worker(
+                    lease_seconds=self.lease_seconds,
+                    recover_expired=True,
+                )
                 self.validate_task_workspace(
                     task,
                     tool=tool,
@@ -647,19 +648,21 @@ class BackgroundTaskDispatcher:
                     else None
                 )
                 self._verify_claimed_checkpoint(task, checkpoint, latest)
+                emit_event(
+                    EventType.TASK_START,
+                    {
+                        "task_id": task.task_id,
+                        "tool_name": tool_name,
+                        "status": "running",
+                        "recovered": True,
+                    },
+                )
+                TaskLeaseHeartbeats.register(
+                    task_handle, lease_seconds=self.lease_seconds
+                )
             except BaseException:
-                task_handle.release_worker()
+                self._release_worker_after_error(task_handle)
                 raise
-            emit_event(
-                EventType.TASK_START,
-                {
-                    "task_id": task.task_id,
-                    "tool_name": tool_name,
-                    "status": "running",
-                    "recovered": True,
-                },
-            )
-            TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
         try:
             if recover_expired and checkpoint is None:
                 task_store.enqueue_message(task.task_id, uuid4().hex, message)
@@ -688,12 +691,16 @@ class BackgroundTaskDispatcher:
                 )
             )
         except BaseException as exc:
-            self._settle_task_failure(
-                task_handle,
-                tool_name=tool_name,
-                agent_inbox=root_inbox,
-                error=exc,
-            )
+            try:
+                self._settle_task_failure(
+                    task_handle,
+                    tool_name=tool_name,
+                    agent_inbox=root_inbox,
+                    error=exc,
+                )
+            finally:
+                if recover_expired:
+                    self._release_worker_after_error(task_handle)
             raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
@@ -707,6 +714,18 @@ class BackgroundTaskDispatcher:
             if recover_expired
             else "Message scheduled and background agent resumed."
         )
+
+    @staticmethod
+    def _release_worker_after_error(task_handle: TaskHandle) -> None:
+        """Best-effort cleanup that does not replace an active failure."""
+        try:
+            TaskLeaseHeartbeats.unregister(task_handle)
+        except BaseException:
+            logger.exception("Could not unregister recovered task lease heartbeat")
+        try:
+            task_handle.release_worker()
+        except BaseException:
+            logger.exception("Could not release recovered task worker lease")
 
     @staticmethod
     def _cleanup_cancelled_recovery(task_handle: TaskHandle, future: Any) -> None:

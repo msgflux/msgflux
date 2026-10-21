@@ -144,12 +144,30 @@ class AgentInboxStore(ABC, AgentInboxStoreType):
         previous: tuple[str, str, str],
         current: tuple[str, str, str],
     ) -> None:
-        """Move pending notifications between scopes atomically when possible."""
+        """Move pending notifications, retaining destination dedupe values.
+
+        This read/write fallback is not atomic and cannot preserve provider
+        leases. Stores with stronger delivery guarantees should override it.
+        """
         if previous == current:
             return
         notifications = self.load_notifications(*previous)
         if not notifications:
             return
         existing = self.load_notifications(*current)
-        self.save_notifications(*current, [*notifications, *existing])
+        existing_ids = {item.get("notification_id") for item in existing}
+        dedupe_keys = {
+            item.get("dedupe_key") for item in existing if item.get("dedupe_key")
+        }
+        moved = []
+        for notification in notifications:
+            dedupe_key = notification.get("dedupe_key")
+            if notification.get("notification_id") in existing_ids:
+                continue
+            if dedupe_key and dedupe_key in dedupe_keys:
+                continue
+            moved.append(notification)
+            if dedupe_key:
+                dedupe_keys.add(dedupe_key)
+        self.save_notifications(*current, [*existing, *moved])
         self.clear(*previous)

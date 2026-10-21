@@ -249,11 +249,14 @@ class LocalToolResultStore(ToolResultStore):
             available = self.max_store_bytes - self._usage(root).size_bytes
             bounded = self._quota_chunks(chunks, result_id, media_type, available)
             os.mkdir(staging, mode=0o700, dir_fd=root)
-            directory = os.open(
-                staging, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=root
-            )
+            directory = None
             published = False
             try:
+                directory = os.open(
+                    staging,
+                    os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                    dir_fd=root,
+                )
                 ref = self._write(directory, bounded, result_id, media_type)
                 os.fsync(directory)
                 # A published result is a nonempty directory: rename cannot
@@ -264,10 +267,14 @@ class LocalToolResultStore(ToolResultStore):
                 return ref
             except BaseException as error:
                 if not published:
-                    self._discard(root, staging, directory, error)
+                    if directory is None:
+                        self._discard_empty_staging(root, staging, error)
+                    else:
+                        self._discard(root, staging, directory, error)
                 raise
             finally:
-                os.close(directory)
+                if directory is not None:
+                    os.close(directory)
 
     @contextmanager
     def _locked_root(self):
@@ -418,6 +425,17 @@ class LocalToolResultStore(ToolResultStore):
             os.rmdir(staging, dir_fd=root)
         except OSError as cleanup_error:
             error.add_note(f"Unable to remove staging directory: {cleanup_error}")
+
+    @staticmethod
+    def _discard_empty_staging(root, staging, error: BaseException) -> None:
+        try:
+            os.rmdir(staging, dir_fd=root)
+        except FileNotFoundError:
+            pass
+        except OSError as cleanup_error:
+            error.add_note(
+                f"Unable to remove unopened staging directory: {cleanup_error}"
+            )
 
     def _write(self, directory, chunks, result_id, media_type) -> ToolResultRef:
         digest = hashlib.sha256()

@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import time
 from concurrent.futures import TimeoutError as FutureTimeoutError
 from typing import Any, Dict, Optional
@@ -107,6 +108,12 @@ class TaskWaitTool(ToolBackground):
                 raise TypeError(
                     f"`timeout` must be float, int or None, given `{type(timeout)}`"
                 )
+            try:
+                finite_timeout = math.isfinite(timeout)
+            except OverflowError:
+                finite_timeout = False
+            if not finite_timeout:
+                raise ValueError("`timeout` must be finite.")
             if timeout < 0:
                 raise ValueError("`timeout` must be greater than or equal to 0.")
 

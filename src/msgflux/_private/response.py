@@ -14,6 +14,7 @@ from msgflux.exceptions import AbortRequestedError
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
+_STREAM_CONSUMER_OWNERSHIP_LOCK = threading.RLock()
 
 
 @dataclass(frozen=True)
@@ -107,6 +108,28 @@ class BaseResponse(CoreResponse):
         return self.reasoning_summary
 
 
+class _StreamConsumerState:
+    """Track active content/event readers across one linked response chain."""
+
+    def __init__(self):
+        self.active_consumers = 0
+        self.cleanup_started = False
+
+    def acquire(self) -> None:
+        with _STREAM_CONSUMER_OWNERSHIP_LOCK:
+            self.active_consumers += 1
+
+    def release(self, *, cleanup: bool) -> bool:
+        with _STREAM_CONSUMER_OWNERSHIP_LOCK:
+            if self.active_consumers <= 0:
+                raise RuntimeError("Stream consumer ownership count underflow.")
+            self.active_consumers -= 1
+            if cleanup and self.active_consumers == 0 and not self.cleanup_started:
+                self.cleanup_started = True
+                return True
+        return False
+
+
 class BaseStreamResponse(CoreResponse):
     def __init__(self, mode: Literal["sync", "async"] = "sync"):
         if mode not in {"sync", "async"}:
@@ -169,6 +192,7 @@ class BaseStreamResponse(CoreResponse):
         self._continuation: BaseStreamResponse | None = None
         self._is_continuation_member = False
         self._finalizer_lock = threading.Lock()
+        self._consumer_ownership = _StreamConsumerState()
         self.chat_accumulator = ChatStreamAccumulator()
 
     def _finish_queue_with_none(
@@ -370,13 +394,81 @@ class BaseStreamResponse(CoreResponse):
                 continuation.add(result)
             continuation.finish()
 
-        with self._finalizer_lock:
-            if self._continuation is not None:
-                raise RuntimeError("A stream continuation is already attached.")
-            if continuation is self or continuation._is_continuation_member:
-                raise ValueError("A stream continuation cannot be reused or cyclic.")
-            self._continuation = continuation
-            continuation._is_continuation_member = True
+        with _STREAM_CONSUMER_OWNERSHIP_LOCK:
+            with self._finalizer_lock:
+                if self._continuation is not None:
+                    raise RuntimeError("A stream continuation is already attached.")
+                if continuation is self or continuation._is_continuation_member:
+                    raise ValueError(
+                        "A stream continuation cannot be reused or cyclic."
+                    )
+
+                nodes = []
+                pending = [continuation]
+                while pending:
+                    node = pending.pop()
+                    if node is self or node in nodes:
+                        raise ValueError(
+                            "A stream continuation cannot be reused or cyclic."
+                        )
+                    nodes.append(node)
+                    with node._finalizer_lock:
+                        child = node._continuation
+                    if child is not None:
+                        pending.append(child)
+
+                if any(
+                    node._consumer_ownership.active_consumers
+                    or node._consumer_ownership.cleanup_started
+                    for node in nodes
+                ):
+                    raise RuntimeError(
+                        "Cannot attach a continuation with active or cleaned-up "
+                        "consumers."
+                    )
+                parent_state = self._consumer_ownership
+                for node in nodes:
+                    node._consumer_ownership = parent_state
+                self._continuation = continuation
+                continuation._is_continuation_member = True
+
+    def _acquire_content_event_consumer(self) -> _StreamConsumerState:
+        with _STREAM_CONSUMER_OWNERSHIP_LOCK:
+            ownership = self._consumer_ownership
+            ownership.acquire()
+            return ownership
+
+    async def _finish_content_event_consumer(
+        self,
+        ownership: _StreamConsumerState,
+        *,
+        completed: bool,
+        primary_error: BaseException | None,
+        await_finalizers: bool = True,
+    ) -> None:
+        finalizer_error = None
+        if await_finalizers:
+            try:
+                await self._await_pending_finalizers(primary_error)
+            except BaseException as error:
+                finalizer_error = error
+
+        should_cleanup = ownership.release(
+            cleanup=not completed and self._get_continuation() is not None
+        )
+        cleanup_error = None
+        if should_cleanup:
+            try:
+                await self._cleanup_unconsumed_continuation(
+                    primary_error or finalizer_error
+                )
+            except BaseException as error:
+                cleanup_error = error
+
+        if finalizer_error is not None:
+            raise finalizer_error
+        if cleanup_error is not None:
+            raise cleanup_error
 
     def _get_continuation(self) -> BaseStreamResponse | None:
         with self._finalizer_lock:
@@ -736,6 +828,7 @@ class BaseStreamResponse(CoreResponse):
 
     async def consume(self) -> AsyncGenerator[Union[bytes, str], None]:
         """Async generator that yields content chunks until None is received."""
+        ownership = self._acquire_content_event_consumer()
         primary_error = None
         completed = False
         try:
@@ -768,9 +861,9 @@ class BaseStreamResponse(CoreResponse):
             primary_error = None if isinstance(error, GeneratorExit) else error
             raise
         finally:
-            await self._await_pending_finalizers(primary_error)
-            if not completed:
-                await self._cleanup_unconsumed_continuation(primary_error)
+            await self._finish_content_event_consumer(
+                ownership, completed=completed, primary_error=primary_error
+            )
 
     async def consume_reasoning(self) -> AsyncGenerator[str, None]:
         """Async generator that yields reasoning chunks until None is received."""
@@ -863,6 +956,7 @@ class BaseStreamResponse(CoreResponse):
 
     async def consume_events(self) -> AsyncGenerator[LMStreamEvent, None]:
         """Yield language-model events in their original provider order."""
+        ownership = self._acquire_content_event_consumer()
         continuation = None
         primary_error = None
         completed = False
@@ -894,6 +988,16 @@ class BaseStreamResponse(CoreResponse):
             primary_error = None if isinstance(error, GeneratorExit) else error
             raise
         finally:
-            await self._close_consumer(own_events, primary_error)
-            if not completed:
-                await self._cleanup_unconsumed_continuation(primary_error)
+            close_error = None
+            try:
+                await self._close_consumer(own_events, primary_error)
+            except BaseException as error:
+                close_error = error
+            await self._finish_content_event_consumer(
+                ownership,
+                completed=completed,
+                primary_error=primary_error or close_error,
+                await_finalizers=False,
+            )
+            if close_error is not None:
+                raise close_error

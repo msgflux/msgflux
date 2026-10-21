@@ -51,9 +51,7 @@ class BaseClient(ABC, Core):
         """Async interface to __call__."""
         executor = Executor.get_instance()
         future = executor.submit(self.__call__, *args, **kwargs)
-        done, _ = await asyncio.wait([future])
-        response = await done[0]
-        return response
+        return await asyncio.wrap_future(future)
 
     def serialize(self) -> Dict[str, Any]:
         """Serialize the client instance into a dictionary.

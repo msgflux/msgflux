@@ -12,6 +12,15 @@ In practice, this means you can take any callable — a plain function, an `nn.A
 - **Gather Patterns**: Map, scatter, and broadcast primitives for different use cases
 - **Error Handling**: Typed `TaskError` results for failed tasks
 
+For the synchronous gather functions and `wait_for`, ordinary exceptions raised
+while an individual call is submitted or run are returned as indexed `TaskError`
+values. Control signals raised during submission still propagate. `timeout`
+limits waiting after calls have been submitted. An unfinished call returns a
+`TaskError` containing `TimeoutError`; already accepted work is not canceled and
+may continue running in its worker. A `TaskError` does not guarantee that an
+accepted call had no side effects. Submission itself, including nested
+synchronous work that the executor runs inline, is outside the timeout budget.
+
 ### Pattern Comparison
 
 The three gather patterns cover the most common parallel execution shapes:
@@ -129,7 +138,7 @@ Under the hood, sync calls are dispatched to a thread pool, while async calls us
 
     === "With Timeout"
 
-        Set a global `timeout` (in seconds) to prevent any single task from blocking indefinitely. If a task exceeds the timeout, it returns a `TaskError` instead of raising:
+        Set a global `timeout` (in seconds) to limit how long this call waits. If a task is still running when the timeout expires, its result is a `TaskError` containing `TimeoutError`:
 
         ```python
         import msgflux.nn.functional as F
@@ -338,6 +347,8 @@ A common use case with Agents is analyzing one document from multiple perspectiv
     === "Error Handling"
 
         When a task fails, the gather functions **do not raise** — instead, the failed position contains a `TaskError` object with the original exception. This lets the other tasks complete successfully and gives you fine-grained control over error handling:
+
+        Async gathers also capture ordinary exceptions raised synchronously while invoking a callable, and return a `TaskError` if its result cannot be awaited. Abort, pause, interrupt, and cancellation signals raised during preparation propagate; previously prepared native coroutines that have not been submitted are closed. Tasks and futures returned by a callable remain caller-owned. Once gathering begins, async-body results keep the usual behavior, and each result stays at its input position.
 
         ```python
         import msgflux.nn.functional as F

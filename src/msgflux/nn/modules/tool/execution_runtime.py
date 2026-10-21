@@ -1724,7 +1724,16 @@ class ToolLibraryExecutionMixin:
             TaskPauseRequestedError,
         ):
             raise
-        except Exception:
+        except Exception as exc:
+            emit_event(
+                EventType.HANDLER_ERROR,
+                {
+                    "hook": "after_tool",
+                    "error": str(exc),
+                    "tool_name": plan.intent.name,
+                    "tool_call_id": plan.intent.id,
+                },
+            )
             return outcome
         return self._normalize_policy_outcome(
             after_policy.outcome,

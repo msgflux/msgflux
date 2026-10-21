@@ -49,6 +49,19 @@ def _extension_snapshot(agent: Agent, names: frozenset[str]):
         _CURRENT_EXTENSION_SNAPSHOTS.reset(token)
 
 
+@contextmanager
+def _extension_state_context(agent: Agent):
+    """Give a fresh Agent invocation its own ephemeral extension state."""
+    agent_id = id(agent)
+    states = _CURRENT_EXTENSION_STATE.get() or {}
+    isolated = {key: value for key, value in states.items() if key[0] != agent_id}
+    token = _CURRENT_EXTENSION_STATE.set(isolated)
+    try:
+        yield
+    finally:
+        _CURRENT_EXTENSION_STATE.reset(token)
+
+
 def _get_extension_snapshot(agent: Agent) -> frozenset[str] | None:
     return (_CURRENT_EXTENSION_SNAPSHOTS.get() or {}).get(id(agent))
 

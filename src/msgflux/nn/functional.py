@@ -8,7 +8,12 @@ from functools import wraps
 from typing import Any, Callable, Dict, List, Optional, Tuple
 
 from msgflux._private.executor import Executor
-from msgflux.exceptions import TaskError
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.logger import logger
 from msgflux.telemetry import Spans
 from msgflux.telemetry.context import aactive_span, active_span
@@ -17,6 +22,72 @@ from msgflux.telemetry.context import aactive_span, active_span
 def _resolve_async_call(f: Callable) -> Callable:
     """Returns f.acall if available (Module interface), otherwise f itself."""
     return f.acall if hasattr(f, "acall") else f
+
+
+def _prepare_async_invocation(function, args, kwargs):
+    try:
+        awaitable = _resolve_async_call(function)(*args, **kwargs)
+    except (AbortRequestedError, TaskPauseRequestedError, TaskInterruptRequestedError):
+        raise
+    except Exception as error:
+        return None, error
+    return awaitable, None
+
+
+def _close_unsubmitted_coroutines(prepared, primary_error):
+    for awaitable, _ in prepared:
+        if not inspect.iscoroutine(awaitable):
+            continue
+        try:
+            awaitable.close()
+        except BaseException as close_error:
+            primary_error.add_note(
+                "Failed to close an unsubmitted async gather coroutine: "
+                f"{close_error!r}"
+            )
+
+
+def _prepare_async_invocations(invocations):
+    prepared = []
+    try:
+        for function, args, kwargs in invocations:
+            prepared.append(_prepare_async_invocation(function, args, kwargs))
+    except BaseException as error:
+        _close_unsubmitted_coroutines(prepared, error)
+        raise
+    return prepared
+
+
+async def _await_prepared_invocation(awaitable, error):
+    if error is not None:
+        raise error
+    return await awaitable
+
+
+def _async_gather_results(responses):
+    results = []
+    for index, response in enumerate(responses):
+        if isinstance(response, Exception):
+            logger.error(str(response))
+            results.append(TaskError(exception=response, index=index))
+        else:
+            results.append(response)
+    return tuple(results)
+
+
+async def _gather_async_invocations(
+    invocations: List[Tuple[Callable, Tuple[Any, ...], Dict[str, Any]]],
+) -> Tuple[Any, ...]:
+    """Prepare calls eagerly, then gather them with indexed ordinary failures."""
+    prepared = _prepare_async_invocations(invocations)
+    responses = await asyncio.gather(
+        *(
+            _await_prepared_invocation(awaitable, error)
+            for awaitable, error in prepared
+        ),
+        return_exceptions=True,
+    )
+    return _async_gather_results(responses)
 
 
 __all__ = [
@@ -53,6 +124,29 @@ def _record_fanout_failures(span, results):
             "msgflux.functional.failed_tasks",
             sum(isinstance(result, TaskError) for result in results),
         )
+
+
+def _submit_or_error(executor, function, *args, **kwargs):
+    try:
+        return executor.submit(function, *args, **kwargs)
+    except (AbortRequestedError, TaskPauseRequestedError, TaskInterruptRequestedError):
+        raise
+    except Exception as error:
+        future = Future()
+        future.set_exception(error)
+        return future
+
+
+def _future_result_or_error(future, *, index, done):
+    if future not in done:
+        error = TimeoutError("Task did not finish before the wait timeout")
+    else:
+        try:
+            return future.result()
+        except Exception as exc:
+            error = exc
+    logger.error(str(error))
+    return TaskError(exception=error, index=index)
 
 
 def _trace_fanout(count_argument):
@@ -151,17 +245,13 @@ def map_gather(
     for i in range(len(args_list)):
         args = args_list[i]
         kwargs = kwargs_list[i] if kwargs_list else {}
-        futures.append(executor.submit(to_send, *args, **kwargs))
+        futures.append(_submit_or_error(executor, to_send, *args, **kwargs))
 
-    concurrent.futures.wait(futures, timeout=timeout)
-    responses: List[Any] = []
-    for i, future in enumerate(futures):
-        try:
-            responses.append(future.result())
-        except Exception as e:
-            logger.error(str(e))
-            responses.append(TaskError(exception=e, index=i))
-    return tuple(responses)
+    done, _ = concurrent.futures.wait(futures, timeout=timeout)
+    return tuple(
+        _future_result_or_error(future, index=i, done=done)
+        for i, future in enumerate(futures)
+    )
 
 
 @_trace_fanout("to_send")
@@ -242,17 +332,13 @@ def scatter_gather(
     for i, f in enumerate(to_send):
         args = args_list[i] if args_list and i < len(args_list) else ()
         kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
-        futures.append(executor.submit(f, *args, **kwargs))
+        futures.append(_submit_or_error(executor, f, *args, **kwargs))
 
-    concurrent.futures.wait(futures, timeout=timeout)
-    responses: List[Any] = []
-    for i, future in enumerate(futures):
-        try:
-            responses.append(future.result())
-        except Exception as e:
-            logger.error(str(e))
-            responses.append(TaskError(exception=e, index=i))
-    return tuple(responses)
+    done, _ = concurrent.futures.wait(futures, timeout=timeout)
+    return tuple(
+        _future_result_or_error(future, index=i, done=done)
+        for i, future in enumerate(futures)
+    )
 
 
 @_trace_fanout("to_send")
@@ -299,17 +385,13 @@ def bcast_gather(
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
     executor = Executor.get_instance()
-    futures = [executor.submit(f, *args, **kwargs) for f in to_send]
+    futures = [_submit_or_error(executor, f, *args, **kwargs) for f in to_send]
 
-    concurrent.futures.wait(futures, timeout=timeout)
-    responses: List[Any] = []
-    for i, future in enumerate(futures):
-        try:
-            responses.append(future.result())
-        except Exception as e:
-            logger.error(str(e))
-            responses.append(TaskError(exception=e, index=i))
-    return tuple(responses)
+    done, _ = concurrent.futures.wait(futures, timeout=timeout)
+    return tuple(
+        _future_result_or_error(future, index=i, done=done)
+        for i, future in enumerate(futures)
+    )
 
 
 def wait_for(
@@ -346,13 +428,9 @@ def wait_for(
         raise TypeError("`to_send` must be a callable object")
 
     executor = Executor.get_instance()
-    future = executor.submit(to_send, *args, **kwargs)
-    concurrent.futures.wait([future], timeout=timeout)
-    try:
-        return future.result()
-    except Exception as e:
-        logger.error(str(e))
-        return TaskError(exception=e, index=0)
+    future = _submit_or_error(executor, to_send, *args, **kwargs)
+    done, _ = concurrent.futures.wait([future], timeout=timeout)
+    return _future_result_or_error(future, index=0, done=done)
 
 
 def wait_for_event(event: Any) -> None:
@@ -562,24 +640,11 @@ async def amap_gather(
                 "`kwargs_list` must be a list with the same length as `args_list`"
             )
 
-    call = _resolve_async_call(to_send)
-    tasks = []
-    for i in range(len(args_list)):
-        args = args_list[i]
-        kwargs = kwargs_list[i] if kwargs_list else {}
-        tasks.append(call(*args, **kwargs))
-
-    responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-    results = []
-    for i, response in enumerate(responses):
-        if isinstance(response, Exception):
-            logger.error(str(response))
-            results.append(TaskError(exception=response, index=i))
-        else:
-            results.append(response)
-
-    return tuple(results)
+    invocations = [
+        (to_send, args_list[index], kwargs_list[index] if kwargs_list else {})
+        for index in range(len(args_list))
+    ]
+    return await _gather_async_invocations(invocations)
 
 
 @_trace_fanout("to_send")
@@ -613,8 +678,8 @@ async def ascatter_gather(
             individually by an item in `args_list`.
 
     Returns:
-        Tuple containing the responses for each callable. If an error occurs for a
-        specific callable, its corresponding response in the tuple will be `None`.
+        Tuple containing the responses for each callable. If a callable fails,
+        its corresponding response is a `TaskError` with the original exception.
 
     Raises:
         TypeError:
@@ -626,23 +691,15 @@ async def ascatter_gather(
     if not isinstance(to_send, list) or not all(callable(f) for f in to_send):
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
-    tasks = []
-    for i, f in enumerate(to_send):
-        args = args_list[i] if args_list and i < len(args_list) else ()
-        kwargs = kwargs_list[i] if kwargs_list and i < len(kwargs_list) else {}
-        tasks.append(_resolve_async_call(f)(*args, **kwargs))
-
-    responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-    results = []
-    for i, response in enumerate(responses):
-        if isinstance(response, Exception):
-            logger.error(str(response))
-            results.append(TaskError(exception=response, index=i))
-        else:
-            results.append(response)
-
-    return tuple(results)
+    invocations = [
+        (
+            function,
+            args_list[index] if args_list and index < len(args_list) else (),
+            kwargs_list[index] if kwargs_list and index < len(kwargs_list) else {},
+        )
+        for index, function in enumerate(to_send)
+    ]
+    return await _gather_async_invocations(invocations)
 
 
 @_trace_fanout("to_send")
@@ -681,15 +738,5 @@ async def abcast_gather(
     if not isinstance(to_send, list) or not all(callable(f) for f in to_send):
         raise TypeError("`to_send` must be a non-empty list of callable objects")
 
-    tasks = [_resolve_async_call(f)(*args, **kwargs) for f in to_send]
-    responses = await asyncio.gather(*tasks, return_exceptions=True)
-
-    results = []
-    for i, response in enumerate(responses):
-        if isinstance(response, Exception):
-            logger.error(str(response))
-            results.append(TaskError(exception=response, index=i))
-        else:
-            results.append(response)
-
-    return tuple(results)
+    invocations = [(function, args, kwargs) for function in to_send]
+    return await _gather_async_invocations(invocations)

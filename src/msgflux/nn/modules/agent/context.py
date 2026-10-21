@@ -9,6 +9,7 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Union
 
 from msgflux.chat_messages import ChatMessages
+from msgflux.nn.extensions.base import _extension_state_context
 from msgflux.nn.hooks.events import BeforeResume
 from msgflux.runtime.agent_run import AgentRun, agent_run_context
 from msgflux.runtime.context import ExecutionScope
@@ -116,9 +117,10 @@ _CURRENT_AGENT_CONTEXT = contextvars.ContextVar(
 def _agent_context(agent: Agent, *, scope, vars):
     current = _CURRENT_AGENT_CONTEXT.get() or {}
     agent_id = id(agent)
-    if agent_id in current:
-        with agent_run_context(current[agent_id]["run"]):
-            yield current[agent_id]
+    existing = current.get(agent_id)
+    if existing is not None and _same_agent_invocation(existing["scope"], scope):
+        with agent_run_context(existing["run"]):
+            yield existing
         return
     run = AgentRun(
         namespace=agent.get_module_name(),
@@ -137,10 +139,18 @@ def _agent_context(agent: Agent, *, scope, vars):
         else nullcontext()
     )
     try:
-        with agent_run_context(run), receipt_context:
+        with _extension_state_context(agent), agent_run_context(run), receipt_context:
             yield state
     finally:
         _CURRENT_AGENT_CONTEXT.reset(token)
+
+
+def _same_agent_invocation(existing_scope, requested_scope) -> bool:
+    """Return whether nested Agent entry is a wrapper for the same durable run."""
+    return all(
+        getattr(existing_scope, field) == getattr(requested_scope, field)
+        for field in ("namespace", "thread_id", "run_id")
+    )
 
 
 def _persist_command_receipt(state, receipt) -> None:
