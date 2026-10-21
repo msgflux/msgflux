@@ -1,0 +1,659 @@
+"""Focused contracts for the optional AgentService HTTP adapter."""
+
+import pytest
+import httpx2
+
+pytest.importorskip("litestar")
+from litestar.testing import AsyncTestClient
+from unittest.mock import AsyncMock, Mock
+
+from msgflux.models.response import ModelResponse
+from msgflux.core.dotdict import dotdict
+from msgflux.nn import Agent
+from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.runtime.service import (
+    AgentService,
+    AgentSession,
+    ServiceRecoveryRequiredError,
+    SQLiteServiceStore,
+)
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
+from msgflux.runtime.service.http.app import create_service_app
+from msgflux.runtime.service.http import AgentServiceClient, ShutdownResponse
+
+
+@pytest.mark.asyncio
+async def test_sse_response_cleanup_releases_watcher_suspended_after_snapshot():
+    model = Mock(model_type="chat_completion")
+    agent = Agent(name="snapshot-disconnect", model=model)
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("agent", lambda _thread: AgentSession(agent))
+    thread = await service.open_thread("agent")
+    app = create_service_app(service, token="secret")
+    route = next(route for route in app.routes if route.path.endswith("/watch"))
+    handler = route.route_handler_map["GET"][0]
+    response = await handler.fn(dotdict(headers={}), thread.thread_id)
+    try:
+        snapshot = await anext(response.iterator)
+        assert b"event: snapshot" in snapshot
+        assert await service.release_session(thread.thread_id) is True
+
+        # A disconnect while the snapshot chunk is being sent must close the
+        # suspended records generator through the actual response cleanup task.
+        await response.background()
+        assert await service.release_session(thread.thread_id) is False
+    finally:
+        await response.background()
+        await service.aclose()
+        service.store.close()
+
+
+def _service(factory=None):
+    service = AgentService(store=SQLiteServiceStore())
+    calls = []
+
+    def make_session(thread_id):
+        calls.append(thread_id)
+        return factory(thread_id)
+
+    service.register("agent", make_session if factory is not None else lambda _: None)
+    return service, calls
+
+
+@pytest.mark.asyncio
+async def test_auth_runs_before_body_validation_or_agent_factory():
+    service, calls = _service()
+    app = create_service_app(service, token="secret")
+
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        response = await client.post(
+            "/v1/threads",
+            content=b"{ malformed",
+            headers={"content-type": "application/json"},
+        )
+
+    assert response.status_code == 401
+    assert response.json() == {
+        "code": "unauthorized",
+        "message": "Bearer token required",
+    }
+    assert calls == []
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_routes_use_strict_json_and_service_scope_error_mapping():
+    service, _ = _service()
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+
+    async with AsyncTestClient(app=app) as client:
+        assert (await client.get("/v1/agents", headers=headers)).json() == {
+            "agents": ["agent"]
+        }
+
+        malformed = await client.post(
+            "/v1/threads",
+            headers=headers,
+            json={"agent_id": "agent", "extra": True},
+        )
+        assert malformed.status_code == 422
+        assert malformed.json()["code"] == "invalid_request"
+
+        opened = await client.post(
+            "/v1/threads", headers=headers, json={"agent_id": "agent"}
+        )
+        assert opened.status_code == 201
+        thread_id = opened.json()["thread_id"]
+
+        missing = await client.get(
+            f"/v1/threads/{thread_id}/requests/unknown", headers=headers
+        )
+        assert missing.status_code == 404
+        assert missing.json()["code"] == "not_found"
+
+        replay = await client.get(
+            f"/v1/threads/{thread_id}/watch",
+            headers={**headers, "Last-Event-ID": "3"},
+        )
+        assert replay.status_code == 422
+        assert replay.json()["code"] == "invalid_request"
+
+    # The app borrows its service unless ownership is explicitly requested.
+    assert service.agents() == ("agent",)
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_thread_workspace_binding_is_exposed_and_immutable(tmp_path):
+    service, calls = _service()
+    app = create_service_app(service, token="secret")
+    first = tmp_path / "first"
+    second = tmp_path / "second"
+    first.mkdir()
+    second.mkdir()
+    headers = {"Authorization": "Bearer secret"}
+    transport = httpx2.ASGITransport(app=app)
+    try:
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://testserver", headers=headers
+        ) as client:
+            body = {
+                "agent_id": "agent",
+                "thread_id": "project",
+                "cwd": str(first),
+                "interactive": True,
+            }
+            opened = await client.post("/v1/threads", json=body)
+            assert opened.status_code == 201
+            assert opened.json() == body
+            reopened = await client.post(
+                "/v1/threads", json={"agent_id": "agent", "thread_id": "project"}
+            )
+            assert reopened.json() == body
+            listed = await client.get("/v1/threads")
+            assert listed.json() == {"threads": [body]}
+            conflict = await client.post(
+                "/v1/threads", json={**body, "cwd": str(second)}
+            )
+            assert conflict.status_code == 409
+            assert conflict.json()["code"] == "service_conflict"
+            for path in ("relative", str(tmp_path / "missing")):
+                invalid = await client.post(
+                    "/v1/threads",
+                    json={"agent_id": "agent", "thread_id": "invalid", "cwd": path},
+                )
+                assert invalid.status_code == 422
+            assert calls == []
+            assert len(service.threads()) == 1
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_runs_endpoint_only_returns_checkpoint_summaries():
+    checkpoints = InMemoryCheckpointStore()
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="http-runs", model=model)
+    agent.checkpoint_store = checkpoints
+    service, calls = _service(lambda _thread: AgentSession(agent))
+    thread_id = "runs-thread"
+    app = create_service_app(service, token="secret")
+
+    async def prepare_thread():
+        await service.open_thread("agent", thread_id=thread_id)
+        checkpoints.save_state(
+            agent.get_module_name(),
+            thread_id,
+            "legacy-run",
+            {
+                "status": "completed",
+                "config": {"secret": "host-only"},
+                "state": "private",
+            },
+        )
+
+    app.on_startup.append(prepare_thread)
+    app.on_shutdown.append(service.aclose)
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with AsyncTestClient(app=app) as client:
+            denied = await client.get(f"/v1/threads/{thread_id}/runs")
+            assert denied.status_code == 401
+            assert calls == []
+            response = await client.get(
+                f"/v1/threads/{thread_id}/runs", headers=headers
+            )
+            assert response.status_code == 200
+            assert set(response.json()) == {"runs"}
+            assert set(response.json()["runs"][0]) == {"run_id", "status", "updated_at"}
+            assert response.json()["runs"][0]["run_id"] == "legacy-run"
+            assert calls == [service.store.thread(thread_id)]
+            assert "host-only" not in response.text and "private" not in response.text
+            missing = await client.get("/v1/threads/missing/runs", headers=headers)
+            assert missing.status_code == 404
+    finally:
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_resume_body_rejects_network_quiescence_assertion():
+    service, _ = _service()
+    thread = await service.open_thread("agent", thread_id="resume-thread")
+    app = create_service_app(service, token="secret")
+
+    async with AsyncTestClient(app=app) as client:
+        response = await client.post(
+            f"/v1/threads/{thread.thread_id}/runs/run-1/resume",
+            headers={"Authorization": "Bearer secret"},
+            json={"worker_stopped": True},
+        )
+
+    assert response.status_code == 422
+    assert response.json()["code"] == "invalid_request"
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_approval_routes_auth_validate_payload_and_forbid_unconfigured_reviewer():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="http-approval-default", model=model)
+    service, calls = _service(lambda _thread: AgentSession(agent))
+    thread_id = "approval-thread"
+    app = create_service_app(service, token="secret")
+    root = f"/v1/threads/{thread_id}/runs/run-1/approvals"
+
+    async def prepare_thread():
+        await service.open_thread("agent", thread_id=thread_id)
+
+    app.on_startup.append(prepare_thread)
+    app.on_shutdown.append(service.aclose)
+    try:
+        async with AsyncTestClient(app=app) as client:
+            denied = await client.get(root)
+            assert denied.status_code == 401
+            assert calls == []
+            malformed = await client.post(
+                root + "/request/decision",
+                headers={"Authorization": "Bearer secret"},
+                json={"approved": 1, "expected_revision": 0},
+            )
+            assert malformed.status_code == 422
+            assert malformed.json()["code"] == "invalid_request"
+            forbidden = await client.get(
+                root, headers={"Authorization": "Bearer secret"}
+            )
+            assert forbidden.status_code == 403
+            assert forbidden.json()["code"] == "forbidden"
+    finally:
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_prompt_deduplicates_request_and_receipt_tracks_settled_run():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="http-test-agent", model=model)
+    answer = ModelResponse()
+    answer.set_response_type("text_generation")
+    answer.add("ready")
+    answer.reasoning = None
+    agent.generator.aforward = AsyncMock(return_value=answer)
+
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("agent", lambda _thread_id: AgentSession(agent))
+    thread = await service.open_thread("agent", thread_id="prompt-thread")
+    app = create_service_app(service, token="secret")
+
+    transport = httpx2.ASGITransport(app=app)
+    async with httpx2.AsyncClient(
+        transport=transport, base_url="http://testserver"
+    ) as client:
+        headers = {"Authorization": "Bearer secret"}
+        body = {"prompt": "hello", "request_id": "stable-id"}
+        first = await client.post(
+            f"/v1/threads/{thread.thread_id}/prompt", headers=headers, json=body
+        )
+        duplicate = await client.post(
+            f"/v1/threads/{thread.thread_id}/prompt", headers=headers, json=body
+        )
+        assert first.status_code == duplicate.status_code == 202
+        assert first.json()["run_id"] == duplicate.json()["run_id"]
+
+        settled = await service.wait(thread.thread_id, "stable-id")
+        receipt = await client.get(
+            f"/v1/threads/{thread.thread_id}/requests/stable-id", headers=headers
+        )
+
+    assert settled.status == receipt.json()["status"] == "completed"
+    assert agent.generator.aforward.await_count == 1
+    await service.aclose()
+
+
+@pytest.mark.asyncio
+async def test_invalid_prompt_payloads_do_not_instantiate_agent():
+    service, calls = _service()
+    thread = await service.open_thread("agent")
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with AsyncTestClient(app=app) as client:
+            for payload in (
+                {"prompt": "hello", "request_id": 123},
+                {"prompt": ["hello"], "request_id": "one"},
+                {
+                    "prompt": "hello",
+                    "request_id": "one",
+                    "workspace": "other-workspace",
+                },
+                {"prompt": "hello", "request_id": ""},
+            ):
+                response = await client.post(
+                    f"/v1/threads/{thread.thread_id}/prompt",
+                    headers=headers,
+                    json=payload,
+                )
+                assert response.status_code == 422, response.text
+            malformed = await client.post(
+                f"/v1/threads/{thread.thread_id}/prompt",
+                headers={**headers, "Content-Type": "application/json"},
+                content=b"{ broken",
+            )
+            assert malformed.status_code == 422
+        assert calls == []
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_owned_app_shutdown_closes_session_once_and_borrows_journal():
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="owned-app", model=model)
+    close = AsyncMock()
+    journal = SQLiteServiceStore()
+    service = AgentService(store=journal)
+    service.register("agent", lambda _thread: AgentSession(agent, on_close=close))
+    thread = await service.open_thread("agent")
+    app = create_service_app(service, token="secret", close_service=True)
+
+    async def warm_session():
+        # AsyncTestClient runs lifespan in its portal loop. Start the service's
+        # live dependencies there so shutdown uses that same owning event loop.
+        lease = await service.acquire_session(thread.thread_id)
+        await lease.aclose()
+
+    app.on_startup.append(warm_session)
+    try:
+        async with AsyncTestClient(app=app):
+            pass
+        close.assert_awaited_once()
+        with pytest.raises(RuntimeError, match="closed"):
+            service.threads()
+        assert journal.thread(thread.thread_id) == thread
+        await service.aclose()
+        close.assert_awaited_once()
+    finally:
+        journal.close()
+
+
+@pytest.mark.asyncio
+async def test_authenticated_health_identifies_instance_without_creating_agent():
+    service, calls = _service()
+    app = create_service_app(service, token="secret", instance_id="health-instance")
+    try:
+        async with AsyncTestClient(app=app) as client:
+            unauthorized = await client.get("/v1/health")
+            assert unauthorized.status_code == 401
+            response = await client.get(
+                "/v1/health", headers={"Authorization": "Bearer secret"}
+            )
+            assert response.json() == {
+                "instance_id": "health-instance",
+                "version": 1,
+                "default_agent": None,
+            }
+        assert calls == []
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_http_uses_default_agent_for_new_threads_and_keeps_existing_binding():
+    service = AgentService(store=SQLiteServiceStore(), default_agent="agent")
+    service.register("agent", lambda _: None)
+    service.register("other", lambda _: None)
+    app = create_service_app(
+        service, token="secret", instance_id="default-agent-instance"
+    )
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with AsyncTestClient(app=app) as client:
+            health = await client.get("/v1/health", headers=headers)
+            assert health.json() == {
+                "instance_id": "default-agent-instance",
+                "version": 1,
+                "default_agent": "agent",
+            }
+
+            created = await client.post(
+                "/v1/threads",
+                json={"thread_id": "default-thread"},
+                headers=headers,
+            )
+            assert created.status_code == 201
+            assert created.json() == {
+                "thread_id": "default-thread",
+                "agent_id": "agent",
+                "cwd": None,
+                "interactive": True,
+            }
+
+            reopened = await client.post(
+                "/v1/threads",
+                json={"thread_id": "default-thread"},
+                headers=headers,
+            )
+            assert reopened.status_code == 201
+            assert reopened.json()["agent_id"] == "agent"
+
+            conflict = await client.post(
+                "/v1/threads",
+                json={"thread_id": "default-thread", "agent_id": "other"},
+                headers=headers,
+            )
+            assert conflict.status_code == 409
+            assert conflict.json()["code"] == "service_conflict"
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_programmatic_service_does_not_choose_first_registered_agent():
+    service, _ = _service()
+    try:
+        with pytest.raises(ValueError, match="agent_id is required"):
+            await service.open_thread()
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_default_agent_name_is_validated_and_registration_checked_on_creation():
+    with pytest.raises(ValueError, match="default_agent"):
+        AgentService(store=SQLiteServiceStore(), default_agent=" ")
+
+    service = AgentService(store=SQLiteServiceStore(), default_agent="configured")
+    service.register("other", lambda _: None)
+    try:
+        with pytest.raises(KeyError, match="configured"):
+            await service.open_thread()
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_shutdown_route_is_optional_authenticated_and_instance_bound():
+    service, _ = _service()
+    called = []
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        disabled = create_service_app(service, token="secret", instance_id="one")
+        async with AsyncTestClient(app=disabled) as client:
+            response = await client.post(
+                "/v1/shutdown", headers=headers, json={"expected_instance_id": "one"}
+            )
+            assert response.status_code == 404
+
+        app = create_service_app(
+            service,
+            token="secret",
+            instance_id="one",
+            on_shutdown=lambda: called.append(True),
+        )
+        transport = httpx2.ASGITransport(app=app)
+        async with httpx2.AsyncClient(
+            transport=transport, base_url="http://testserver"
+        ) as raw_client:
+            client = AgentServiceClient(
+                "http://testserver", token="secret", client=raw_client
+            )
+            unauthorized = await raw_client.post(
+                "/v1/shutdown", content=b"{broken", headers={}
+            )
+            assert unauthorized.status_code == 401
+            mismatch = await raw_client.post(
+                "/v1/shutdown",
+                headers=headers,
+                json={"expected_instance_id": "stale"},
+            )
+            assert mismatch.status_code == 409
+            assert called == []
+            accepted = await client.shutdown(expected_instance_id="one")
+            assert accepted == ShutdownResponse(instance_id="one", accepted=True)
+            assert called == [True]
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(
+    ("error", "status_code", "error_code", "message"),
+    [
+        (
+            WorkspaceIdentityError("directory_replaced"),
+            409,
+            "recovery_required",
+            "Workspace directory was replaced",
+        ),
+        (
+            PermissionError("fake-private-permission-detail-123"),
+            403,
+            "forbidden",
+            "The operation is not authorized",
+        ),
+    ],
+    ids=["workspace-identity", "generic-permission"],
+)
+async def test_permission_errors_have_safe_http_responses(
+    error, status_code, error_code, message
+):
+    def fail_factory(_thread_id):
+        raise error
+
+    service, _ = _service(fail_factory)
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers=headers,
+        ) as client:
+            opened = await client.post("/v1/threads", json={"agent_id": "agent"})
+            assert opened.status_code == 201
+            response = await client.get(
+                f"/v1/threads/{opened.json()['thread_id']}/workspace-policy"
+            )
+            assert response.status_code == status_code
+            assert response.json()["code"] == error_code
+            if isinstance(error, WorkspaceIdentityError):
+                assert message in response.json()["message"]
+            else:
+                assert response.json()["message"] == message
+            assert "fake-private-permission-detail-123" not in response.text
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_identity_during_scope_setup_closes_and_retries_cleanly():
+    model = Mock(model_type="chat_completion")
+    agent = Agent(name="scope-identity-error", model=model)
+    calls = []
+    close_calls = []
+
+    def fail_scope(_scope):
+        raise WorkspaceIdentityError("configuration_changed")
+
+    def make_session(_thread_id):
+        calls.append(True)
+        if len(calls) == 1:
+            return AgentSession(
+                agent,
+                scope_factory=fail_scope,
+                on_close=lambda: close_calls.append(True),
+            )
+        return AgentSession(agent)
+
+    service, _ = _service(make_session)
+    try:
+        thread = await service.open_thread("agent")
+        with pytest.raises(ServiceRecoveryRequiredError) as caught:
+            await service.workspace_policy(thread.thread_id)
+
+        assert isinstance(caught.value.__cause__, WorkspaceIdentityError)
+        assert str(caught.value.__cause__) == "Workspace backend configuration changed"
+        assert close_calls == [True]
+
+        await service.workspace_policy(thread.thread_id)
+        assert len(calls) == 2
+        assert close_calls == [True]
+    finally:
+        await service.aclose()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_workspace_identity_http_message_hides_chained_permission_detail():
+    secret = "fake-private-permission-detail-456"
+
+    def fail_factory(_thread_id):
+        try:
+            raise PermissionError(secret)
+        except PermissionError as cause:
+            raise WorkspaceIdentityError("directory_replaced") from cause
+
+    service, _ = _service(fail_factory)
+    app = create_service_app(service, token="secret")
+    headers = {"Authorization": "Bearer secret"}
+    try:
+        thread = await service.open_thread("agent")
+        with pytest.raises(ServiceRecoveryRequiredError) as caught:
+            await service.workspace_policy(thread.thread_id)
+
+        identity_error = caught.value.__cause__
+        assert isinstance(identity_error, WorkspaceIdentityError)
+        assert str(identity_error) == "Workspace directory was replaced"
+        assert isinstance(identity_error.__cause__, PermissionError)
+        assert str(identity_error.__cause__) == secret
+        assert secret not in str(caught.value)
+
+        async with httpx2.AsyncClient(
+            transport=httpx2.ASGITransport(app=app),
+            base_url="http://testserver",
+            headers=headers,
+        ) as client:
+            response = await client.get(
+                f"/v1/threads/{thread.thread_id}/workspace-policy"
+            )
+        assert response.status_code == 409
+        assert response.json()["code"] == "recovery_required"
+        assert response.json()["message"].endswith("Workspace directory was replaced")
+        assert secret not in response.text
+    finally:
+        await service.aclose()
+        service.store.close()

@@ -64,7 +64,15 @@ def emit_model_response_events(
         response._add_consumer_finalizer(emit_terminal_response)
         return
 
+    for event in getattr(response, "events", ()):
+        emit_event(event.type, event.data, scope=scope)
     reasoning = getattr(response, "reasoning", None)
+    for commentary in getattr(response, "commentary", ()):
+        emit_event(
+            EventType.COMMENTARY_DELTA,
+            {"delta": commentary},
+            scope=scope,
+        )
     if reasoning:
         emit_event(
             EventType.REASONING_DELTA,

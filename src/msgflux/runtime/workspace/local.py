@@ -1,0 +1,746 @@
+"""POSIX host-directory workspace backend.
+
+This adapter provides path-safe access to a directory supplied by the host.  It
+is deliberately not an OS sandbox: writers outside this backend can race it.
+"""
+
+from __future__ import annotations
+
+import errno
+import hashlib
+import json
+import logging
+import os
+import secrets
+import stat
+from contextlib import contextmanager
+from threading import RLock
+
+from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.permissions import require_permissions
+from msgflux.runtime.workspace.backend import WorkspaceBackend, WorkspaceBinding
+from msgflux.runtime.workspace.contracts import (
+    WorkspaceEntry,
+    WorkspaceIdentity,
+    WorkspacePromptInfo,
+    WorkspaceWriteCapabilities,
+)
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
+from msgflux.runtime.workspace.filesystem import (
+    WorkspaceConflictError,
+    WorkspaceFilesystem,
+    _ReadByteLimitError,
+    workspace_path,
+)
+from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
+
+_UNSET = object()
+_logger = logging.getLogger(__name__)
+
+
+def _log_workspace_cleanup_errors(errors, *, committed):
+    for error in errors:
+        _logger.error(
+            "Workspace cleanup failed%s: %s",
+            " after a committed mutation" if committed else "",
+            error,
+            exc_info=(type(error), error, error.__traceback__),
+        )
+
+
+def _finish_workspace_cleanup(
+    fds, *, primary_error=None, committed=False, cleanup_errors=()
+):
+    errors = list(cleanup_errors)
+    closed = set()
+    for fd in fds:
+        if fd is None or fd in closed:
+            continue
+        closed.add(fd)
+        try:
+            os.close(fd)
+        except OSError as error:
+            errors.append(error)
+    if not errors:
+        return
+    if primary_error is not None:
+        for error in errors:
+            primary_error.add_note(f"Workspace cleanup failed: {error}")
+    elif not committed:
+        first, *secondary = errors
+        for error in secondary:
+            first.add_note(f"Additional workspace cleanup failure: {error}")
+    _log_workspace_cleanup_errors(errors, committed=committed)
+    if primary_error is None and not committed:
+        raise errors[0]
+
+
+def _check_posix() -> None:
+    if (
+        os.name != "posix"
+        or any(
+            not hasattr(os, flag)
+            for flag in ("O_DIRECTORY", "O_NOFOLLOW", "O_NONBLOCK")
+        )
+        or not {os.open, os.stat, os.mkdir, os.rmdir, os.unlink, os.rename}
+        <= os.supports_dir_fd
+        or os.stat not in os.supports_follow_symlinks
+        or os.listdir not in os.supports_fd
+    ):
+        raise NotImplementedError(
+            "LocalWorkspace requires POSIX descriptor-relative filesystem APIs"
+        )
+
+
+@contextmanager
+def _root_directory(parts):
+    fd = os.open("/", os.O_RDONLY | os.O_DIRECTORY)
+    operation_error = None
+    try:
+        for part in parts:
+            child = os.open(
+                part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=fd
+            )
+            previous = fd
+            fd = child
+            _finish_workspace_cleanup((previous,))
+        yield fd
+    except BaseException as error:
+        operation_error = error
+        raise
+    finally:
+        _finish_workspace_cleanup((fd,), primary_error=operation_error)
+
+
+class LocalWorkspace(WorkspaceFilesystem):
+    """A virtual workspace rooted at an existing absolute host directory."""
+
+    prompt_info = WorkspacePromptInfo(
+        storage="host files; changes persist after binding close",
+        guidance=(
+            "Changes affect real files. Parents must exist. Symlinks, hardlinked "
+            "files, special files and cross-device traversal are rejected. "
+            "External writers can race cooperative comparison. "
+            "This backend is not an OS sandbox."
+        ),
+    )
+
+    def __init__(
+        self,
+        workspace_id: str,
+        root: str | os.PathLike[str],
+        *,
+        read_only: bool = False,
+        identity: WorkspaceIdentity | None = None,
+    ):
+        _check_posix()
+        super().__init__(workspace_id, identity=identity)
+        if type(read_only) is not bool:
+            raise TypeError("read_only must be a boolean")
+        self.read_only = read_only
+        root_path = os.fspath(root)
+        if (
+            not isinstance(root_path, str)
+            or not os.path.isabs(root_path)
+            or ".." in root_path.split("/")
+        ):
+            raise ValueError("Local workspace root must be absolute without traversal")
+        self._root_parts = tuple(
+            part for part in root_path.split("/") if part and part != "."
+        )
+        self._lock = RLock()
+        with _root_directory(self._root_parts) as fd:
+            self._root_stat = os.fstat(fd)
+
+    def _authorize(self, operation, path):
+        from msgflux.runtime.workspace.api import require_workspace_authority  # noqa: PLC0415, I001
+
+        canonical = workspace_path(path)
+        require_workspace_authority(filesystem=self)
+        if self.read_only and operation in {"write", "delete", "mkdir"}:
+            raise PermissionError("Workspace is read-only")
+        require_permissions(
+            (), (self.permission(canonical, f"filesystem.{operation}"),)
+        )
+        return canonical
+
+    @property
+    def host_root(self) -> str:
+        """Selected host directory for trusted adapters, not a model path."""
+        return "/" + "/".join(self._root_parts)
+
+    @property
+    def write_capabilities(self) -> WorkspaceWriteCapabilities:
+        return WorkspaceWriteCapabilities(
+            atomic_replace=True, cooperative_compare=True, atomic_compare=False
+        )
+
+    def _open_root(self) -> int:
+        fd = None
+        try:
+            with _root_directory(self._root_parts) as root:
+                fd = os.dup(root)
+            st = os.fstat(fd)
+            if (st.st_dev, st.st_ino) != (
+                self._root_stat.st_dev,
+                self._root_stat.st_ino,
+            ):
+                raise WorkspaceIdentityError("root_replaced")
+            return fd
+        except BaseException as error:
+            _finish_workspace_cleanup((fd,), primary_error=error)
+            raise
+
+    @staticmethod
+    def _parts(path: str) -> tuple[str, ...]:
+        return tuple(part for part in path.split("/") if part)
+
+    def _parent(self, fd: int, path: str) -> tuple[int, str]:
+        parts = self._parts(path)
+        if not parts:
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
+        current = fd
+        nxt = None
+        try:
+            for part in parts[:-1]:
+                nxt = os.open(
+                    part, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=current
+                )
+                if os.fstat(nxt).st_dev != self._root_stat.st_dev:
+                    raise PermissionError("Workspace mount crossing")
+                previous = current
+                current = nxt
+                nxt = None
+                if previous != fd:
+                    _finish_workspace_cleanup((previous,))
+            return current, parts[-1]
+        except BaseException as error:
+            _finish_workspace_cleanup(
+                tuple(
+                    item for item in (nxt, current) if item is not None and item != fd
+                ),
+                primary_error=error,
+            )
+            raise
+
+    def _regular(self, st, path: str) -> None:
+        if stat.S_ISDIR(st.st_mode):
+            raise IsADirectoryError(errno.EISDIR, "Is a directory", path)
+        if not stat.S_ISREG(st.st_mode):
+            raise PermissionError(
+                f"Non-regular workspace files are not supported: {path}"
+            )
+        if st.st_nlink != 1:
+            raise PermissionError("Hard-linked workspace files are not supported")
+        if st.st_dev != self._root_stat.st_dev:
+            raise PermissionError("Workspace mount crossing")
+
+    def _stat_at(self, parent: int, name: str, path: str):
+        st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+        if stat.S_ISLNK(st.st_mode):
+            raise PermissionError("Symlinks are not supported")
+        self._regular(st, path)
+        return st
+
+    def _replace(  # noqa: C901
+        self, path: str, replacement: bytes | None, *, expected=_UNSET
+    ) -> None:
+        root = self._open_root()
+        parent = root
+        temp_name = None
+        temp_fd = None
+        operation_error = None
+        committed = False
+        cleanup_errors = []
+        try:
+            parent, name = self._parent(root, path)
+            try:
+                st = self._stat_at(parent, name, path)
+                current = (
+                    self._read_fd_at(parent, name, len(expected) + 1)
+                    if isinstance(expected, bytes)
+                    else b""
+                )
+            except FileNotFoundError:
+                current = None
+            if expected is not _UNSET:
+                if current != expected:
+                    raise WorkspaceConflictError("File changed since preparation")
+            if replacement is None:
+                if current is None:
+                    raise FileNotFoundError(path)
+                os.unlink(name, dir_fd=parent)
+                committed = True
+                return
+            mode = 0o600 if current is None else st.st_mode & 0o777
+            created = False
+            for _ in range(10):
+                candidate = f".msgflux-{secrets.token_hex(12)}"
+                try:
+                    temp_fd = os.open(
+                        candidate,
+                        os.O_WRONLY | os.O_CREAT | os.O_EXCL | os.O_NOFOLLOW,
+                        0o600,
+                        dir_fd=parent,
+                    )
+                    temp_name = candidate
+                    created = True
+                    break
+                except FileExistsError:
+                    continue
+            if not created:
+                raise FileExistsError("Unable to create temporary workspace file")
+            with os.fdopen(temp_fd, "wb") as stream:
+                temp_fd = None
+                stream.write(replacement)
+                stream.flush()
+                os.fchmod(stream.fileno(), mode)
+            os.replace(temp_name, name, src_dir_fd=parent, dst_dir_fd=parent)
+            temp_name = None
+            committed = True
+        except BaseException as error:
+            operation_error = error
+            raise
+        finally:
+            if temp_name is not None:
+                try:
+                    os.unlink(temp_name, dir_fd=parent)
+                except OSError as error:
+                    cleanup_errors.append(error)
+            _finish_workspace_cleanup(
+                (temp_fd, parent, root) if parent != root else (temp_fd, root),
+                primary_error=operation_error,
+                committed=committed,
+                cleanup_errors=cleanup_errors,
+            )
+
+    def _read_fd_at(self, parent: int, name: str, size: int = -1) -> bytes:
+        fd = os.open(name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent)
+        stream = None
+        operation_error = None
+        cleanup_errors = []
+        try:
+            st = os.fstat(fd)
+            self._regular(st, name)
+            stream = os.fdopen(fd, "rb")
+            fd = None
+            return stream.read(size)
+        except BaseException as error:
+            operation_error = error
+            raise
+        finally:
+            if stream is not None:
+                try:
+                    stream.close()
+                except OSError as cleanup_error:
+                    cleanup_errors.append(cleanup_error)
+            _finish_workspace_cleanup(
+                (fd,), primary_error=operation_error, cleanup_errors=cleanup_errors
+            )
+
+    def _operate(self, operation: str, path: str, data: bytes | None):  # noqa: C901
+        with self._lock:
+            self._authorize(operation, path)
+            if operation == "write":
+                self._replace(path, data)
+                return None
+            root = self._open_root()
+            parent = root
+            directory = None
+            operation_error = None
+            committed = False
+            try:
+                if operation == "list":
+                    if path == "/":
+                        fd = root
+                    else:
+                        parent, name = self._parent(root, path)
+                        st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                        if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                            raise NotADirectoryError(
+                                errno.ENOTDIR, "Not a directory", path
+                            )
+                        directory = os.open(
+                            name,
+                            os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                            dir_fd=parent,
+                        )
+                        fd = directory
+                    if os.fstat(fd).st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                    return tuple(sorted(os.listdir(fd)))
+                parent, name = self._parent(root, path)
+                if operation == "mkdir":
+                    os.mkdir(name, dir_fd=parent)
+                    committed = True
+                    return None
+                self._stat_at(parent, name, path)
+                if operation == "read":
+                    return self._read_fd_at(parent, name)
+                if operation == "delete":
+                    os.unlink(name, dir_fd=parent)
+                    committed = True
+                    return None
+                raise ValueError("Unsupported workspace operation")
+            except BaseException as error:
+                operation_error = error
+                raise
+            finally:
+                if operation in {"mkdir", "delete"}:
+                    _finish_workspace_cleanup(
+                        (parent, root) if parent != root else (root,),
+                        primary_error=operation_error,
+                        committed=committed,
+                    )
+                else:
+                    _finish_workspace_cleanup(
+                        (directory, parent, root), primary_error=operation_error
+                    )
+
+    def _read_lines(self, path, offset, limit, max_bytes):
+        with self._lock:
+            self._authorize("read", path)
+            root = self._open_root()
+            parent = root
+            fd = None
+            stream = None
+            operation_error = None
+            cleanup_errors = []
+            try:
+                parent, name = self._parent(root, path)
+                self._stat_at(parent, name, path)
+                fd = os.open(
+                    name, os.O_RDONLY | os.O_NOFOLLOW | os.O_NONBLOCK, dir_fd=parent
+                )
+                opened_stat = os.fstat(fd)
+                self._regular(opened_stat, path)
+                stream = os.fdopen(fd, "rb")
+                fd = None
+                return self._select_lines(stream, offset, limit, max_bytes)
+            except BaseException as error:
+                operation_error = error
+                raise
+            finally:
+                if stream is not None:
+                    try:
+                        stream.close()
+                    except OSError as cleanup_error:
+                        cleanup_errors.append(cleanup_error)
+                _finish_workspace_cleanup(
+                    (fd, parent, root),
+                    primary_error=operation_error,
+                    cleanup_errors=cleanup_errors,
+                )
+
+    def _read_prefix(self, path, max_bytes):
+        with self._lock:
+            self._authorize("read", path)
+            root = self._open_root()
+            parent = root
+            operation_error = None
+            try:
+                parent, name = self._parent(root, path)
+                self._stat_at(parent, name, path)
+                return self._read_fd_at(parent, name, max_bytes)
+            except BaseException as error:
+                operation_error = error
+                raise
+            finally:
+                _finish_workspace_cleanup(
+                    (parent, root) if parent != root else (root,),
+                    primary_error=operation_error,
+                )
+
+    def _directory_deletion(self, path, expected=None):
+        with self._lock:
+            self._authorize("delete", path)
+            root = self._open_root()
+            parent = root
+            directory = None
+            operation_error = None
+            committed = False
+            try:
+                parent, name = self._parent(root, path)
+                st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISREG(st.st_mode):
+                    self._regular(st, path)
+                    if expected is not None:
+                        raise WorkspaceConflictError("Directory replaced by a file")
+                    return None
+                self._authorize("list", path)
+                if not stat.S_ISDIR(st.st_mode):
+                    raise PermissionError("Deletion target is not a safe directory")
+                directory = os.open(
+                    name, os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW, dir_fd=parent
+                )
+                opened = os.fstat(directory)
+                if opened.st_dev != self._root_stat.st_dev:
+                    raise PermissionError("Workspace mount crossing")
+                token = f"{opened.st_dev}:{opened.st_ino}:{opened.st_ctime_ns}"
+                with os.scandir(directory) as entries:
+                    if next(entries, None) is not None:
+                        raise OSError(errno.ENOTEMPTY, "Directory is not empty", path)
+                if expected is not None:
+                    current = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    current_token = (
+                        f"{current.st_dev}:{current.st_ino}:{current.st_ctime_ns}"
+                    )
+                    if token != expected or current_token != expected:
+                        raise WorkspaceConflictError(
+                            "Directory changed since preparation"
+                        )
+                    # POSIX rmdir refuses newly added contents. As with file
+                    # writes, unrelated external writers can race comparison.
+                    os.rmdir(name, dir_fd=parent)
+                    committed = True
+                return token
+            except BaseException as error:
+                operation_error = error
+                raise
+            finally:
+                _finish_workspace_cleanup(
+                    (directory, parent, root) if parent != root else (directory, root),
+                    primary_error=operation_error,
+                    committed=committed,
+                )
+
+    def _deletion_directory_token(self, path):
+        return self._directory_deletion(path)
+
+    def _checked_rmdir(self, path, expected):
+        self._directory_deletion(path, expected)
+
+    def _scandir(self, path, max_entries):
+        self._authorize("list", path)
+        return self._scandir_trusted(path, max_entries)
+
+    def _scandir_trusted(self, path, max_entries):  # noqa: C901
+        with self._lock:
+            self._authorize("list", path)
+            root = self._open_root()
+            parent = root
+            directory = None
+            operation_error = None
+            try:
+                if path != "/":
+                    parent, name = self._parent(root, path)
+                    st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                    if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                        raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+                    if st.st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                    directory = os.open(
+                        name,
+                        os.O_RDONLY | os.O_DIRECTORY | os.O_NOFOLLOW,
+                        dir_fd=parent,
+                    )
+                    if os.fstat(directory).st_dev != self._root_stat.st_dev:
+                        raise PermissionError("Workspace mount crossing")
+                scan_fd = root if directory is None else directory
+                entries = []
+                with os.scandir(scan_fd) as iterator:
+                    for item in iterator:
+                        st = item.stat(follow_symlinks=False)
+                        if stat.S_ISLNK(st.st_mode):
+                            kind = "other"
+                        elif stat.S_ISDIR(st.st_mode):
+                            kind = (
+                                "directory"
+                                if st.st_dev == self._root_stat.st_dev
+                                else "other"
+                            )
+                        elif (
+                            stat.S_ISREG(st.st_mode)
+                            and st.st_nlink == 1
+                            and st.st_dev == self._root_stat.st_dev
+                        ):
+                            kind = "file"
+                        else:
+                            kind = "other"
+                        entries.append(WorkspaceEntry(name=item.name, kind=kind))
+                        if len(entries) > max_entries:
+                            raise ValueError("Workspace directory exceeds max_entries")
+                return tuple(sorted(entries, key=lambda entry: entry.name))
+            except BaseException as error:
+                operation_error = error
+                raise
+            finally:
+                _finish_workspace_cleanup(
+                    (directory, parent, root), primary_error=operation_error
+                )
+
+    def _trusted_is_directory(self, path):
+        with self._lock:
+            root = self._open_root()
+            parent = root
+            operation_error = None
+            try:
+                if path == "/":
+                    return True
+                parent, name = self._parent(root, path)
+                st = os.stat(name, dir_fd=parent, follow_symlinks=False)
+                if stat.S_ISLNK(st.st_mode) or not stat.S_ISDIR(st.st_mode):
+                    raise NotADirectoryError(errno.ENOTDIR, "Not a directory", path)
+                if st.st_dev != self._root_stat.st_dev:
+                    raise PermissionError("Workspace mount crossing")
+                return True
+            except BaseException as error:
+                operation_error = error
+                raise
+            finally:
+                _finish_workspace_cleanup(
+                    (parent, root) if parent != root else (root,),
+                    primary_error=operation_error,
+                )
+
+    @staticmethod
+    def _select_lines(stream, offset, limit, max_bytes):
+        for _ in range(offset - 1):
+            while True:
+                chunk = stream.readline(65536)
+                if not chunk:
+                    raise ValueError("offset exceeds the number of lines")
+                if chunk.endswith(b"\n"):
+                    break
+        result = bytearray()
+        for _ in range(limit):
+            line = stream.readline(max_bytes + 1)
+            if not line:
+                if not result and offset != 1:
+                    raise ValueError("offset exceeds the number of lines")
+                break
+            if len(line) > max_bytes:
+                raise _ReadByteLimitError(single_line=True)
+            if len(result) + len(line) > max_bytes:
+                raise _ReadByteLimitError(single_line=False)
+            result.extend(line)
+        return bytes(result)
+
+    def _checked_replace(self, path, expected, replacement):
+        with self._lock:
+            self._authorize("read", path)
+            self._authorize("delete" if replacement is None else "write", path)
+            self._replace(path, replacement, expected=expected)
+
+
+class LocalWorkspaceBackend(WorkspaceBackend):
+    """One selected directory, with identities retained during this backend's life.
+
+    Repeated opens for one id share files/identity but not grants or lifecycle.
+    Different ids still address this same directory, not isolated copies.
+    """
+
+    def __init__(
+        self,
+        root: str | os.PathLike[str],
+        *,
+        registry: SQLiteWorkspaceRegistry | None = None,
+        allow_processes: bool = False,
+    ):
+        _check_posix()
+        if type(allow_processes) is not bool:
+            raise TypeError("allow_processes must be a boolean")
+        self._root = os.fspath(root)
+        self.allow_processes = allow_processes
+        if registry is not None and not isinstance(registry, SQLiteWorkspaceRegistry):
+            raise TypeError("registry must be a SQLiteWorkspaceRegistry")
+        self._persistent_registry = registry
+        self._resources: dict[str, LocalWorkspace] = {}
+        self._registry_lock = RLock()
+        self._filesystem_lock = RLock()
+
+    def _registry_arguments(self, workspace_id, filesystem):
+        # Pin and revalidate this very filesystem object; never fingerprint one
+        # root and then construct a different object from the path afterward.
+        os.close(filesystem._open_root())
+        st = filesystem._root_stat
+        config = self._configuration_revision()
+        return {
+            "backend": self._backend_kind(),
+            "resource_id": workspace_id,
+            "config_revision": config,
+            "root": filesystem.host_root,
+            "root_device": st.st_dev,
+            "root_inode": st.st_ino,
+        }
+
+    def _backend_kind(self):
+        return "local-posix"
+
+    def _configuration_revision(self):
+        config = {
+            "schema": 1,
+            "read_only": False,
+            "allow_processes": self.allow_processes,
+        }
+        return hashlib.sha256(
+            json.dumps(config, sort_keys=True, separators=(",", ":")).encode()
+        ).hexdigest()
+
+    async def open(self, workspace_id: str, *, abort_signal: AbortSignal | None = None):
+        if abort_signal is not None:
+            abort_signal.raise_if_aborted()
+        with self._registry_lock:
+            filesystem = self._resources.get(workspace_id)
+            created = filesystem is None
+            if filesystem is None:
+                filesystem = LocalWorkspace(workspace_id, self._root)
+            if self._persistent_registry is not None:
+                args = self._registry_arguments(workspace_id, filesystem)
+                identity = self._persistent_registry.register_or_verify(
+                    workspace_id, **args
+                )
+                if created:
+                    filesystem._identity = identity
+                elif filesystem.identity != identity:
+                    raise WorkspaceIdentityError("registry_identity_changed")
+            # Catch replacement between initial pin/registration and binding.
+            os.close(filesystem._open_root())
+            if created:
+                filesystem._lock = self._filesystem_lock
+                self._resources[workspace_id] = filesystem
+            return self._bind(filesystem)
+
+    async def reconnect(self, workspace_id, identity, *, abort_signal=None):
+        if abort_signal is not None:
+            abort_signal.raise_if_aborted()
+        if not isinstance(identity, WorkspaceIdentity):
+            raise TypeError("identity must be a WorkspaceIdentity")
+        with self._registry_lock:
+            filesystem = self._resources.get(workspace_id)
+            created = filesystem is None
+            if created and self._persistent_registry is not None:
+                filesystem = LocalWorkspace(workspace_id, self._root, identity=identity)
+            if self._persistent_registry is not None:
+                args = self._registry_arguments(workspace_id, filesystem)
+                persisted = self._persistent_registry.verify(workspace_id, **args)
+                if persisted != identity:
+                    raise FileNotFoundError(
+                        "Workspace resource is unavailable or identity changed"
+                    )
+                if created:
+                    filesystem._identity = persisted
+            if filesystem is None or filesystem.identity != identity:
+                raise FileNotFoundError(
+                    "Workspace resource is unavailable or identity changed"
+                )
+            # Check the pinned root again just before exposing this binding.
+            os.close(filesystem._open_root())
+            if created:
+                filesystem._lock = self._filesystem_lock
+                self._resources[workspace_id] = filesystem
+            return self._bind(filesystem)
+
+    def _bind(self, filesystem):
+        executor = None
+        if self.allow_processes:
+            from msgflux.runtime.workspace.local_executor import (  # noqa: PLC0415
+                LocalProcessExecutor,
+            )
+
+            executor = LocalProcessExecutor(filesystem)
+        return WorkspaceBinding(self, filesystem, executor, ownership="borrowed")
+
+    async def _release(self, binding):
+        if binding.backend is not self:
+            raise ValueError("Binding belongs to another backend")

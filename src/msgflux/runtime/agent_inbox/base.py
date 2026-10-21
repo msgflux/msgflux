@@ -6,6 +6,12 @@ from typing import Iterable, List, Mapping
 from msgflux._private.store_routing import process_routing_id
 from msgflux.data.stores.types import AgentInboxStoreType
 
+_USER_CONTENT_SOURCES = frozenset({"incoming_user_message", "incoming_message"})
+
+
+class AgentInboxClosedError(RuntimeError):
+    """Raised when a run no longer accepts incoming conversation messages."""
+
 
 class AgentInboxStore(ABC, AgentInboxStoreType):
     """Persistent storage boundary for pending agent inbox notifications."""
@@ -62,6 +68,29 @@ class AgentInboxStore(ABC, AgentInboxStoreType):
                     return notification
         self.save_notifications(namespace, thread_id, run_id, [*existing, notification])
         return notification
+
+    @abstractmethod
+    def open_user_messages(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+    ) -> None:
+        """Allow new incoming conversation messages for one run."""
+        raise NotImplementedError
+
+    @abstractmethod
+    def close_user_messages(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        *,
+        only_if_empty: bool = True,
+        consumed_ids: Iterable[str] = (),
+    ) -> bool:
+        """Atomically close the run's incoming-message gate when eligible."""
+        raise NotImplementedError
 
     def claim_notifications(
         self,

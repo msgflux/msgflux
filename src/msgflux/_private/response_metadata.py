@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from typing import Any, Mapping
 
+from msgflux._private.model_metadata import minimal_model_metadata
 from msgflux.chat_messages import ChatMessages
 
 
@@ -29,24 +30,6 @@ def minimal_usage_metadata(
         cached_tokens = input_details.get("cached_tokens")
         if isinstance(cached_tokens, int) and not isinstance(cached_tokens, bool):
             persisted["cached_input_tokens"] = cached_tokens
-    return persisted or None
-
-
-def minimal_model_metadata(
-    metadata: Mapping[str, Any] | None,
-) -> dict[str, str] | None:
-    """Select model audit fields that belong in durable chat history."""
-    if not isinstance(metadata, Mapping):
-        return None
-    model = metadata.get("model")
-    if not isinstance(model, Mapping):
-        return None
-
-    persisted: dict[str, str] = {}
-    for key in ("provider", "model_id", "api_mode", "reasoning_effort"):
-        value = model.get(key)
-        if isinstance(value, str) and value:
-            persisted[key] = value
     return persisted or None
 
 

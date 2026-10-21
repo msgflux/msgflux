@@ -4,6 +4,8 @@ from msgflux.tools.builtin.agent_skills import SkillSearchTool, SkillTool
 from msgflux.tools.builtin.agent_tool import AgentTool
 from msgflux.tools.builtin.apply_patch import ApplyPatchTool
 from msgflux.tools.builtin.context_scope import close_context_scope, open_context_scope
+from msgflux.tools.builtin.send_user_message import SendUserMessageTool
+from msgflux.tools.builtin.task_bucket import TaskTool
 from msgflux.tools.builtin.task_tool import (
     BACKGROUND_CAPABILITY_TOOLS,
     BASE_TASK_TOOLS,
@@ -25,14 +27,14 @@ from msgflux.tools.builtin.tool_search import ToolSearchTool
 from msgflux.tools.builtin.weather import WeatherTool
 from msgflux.tools.builtin.web_fetch import WebFetchTool
 from msgflux.tools.builtin.web_search import WebSearchTool
-from msgflux.tools.builtin.workspace import (
+from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
+from msgflux.tools.builtin.workspace_tools import (
     BashTool,
     DeleteTool,
     EditTool,
     ReadFileTool,
     WriteTool,
 )
-from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
 
 __all__ = [
     "ApplyPatchTool",
@@ -47,6 +49,7 @@ __all__ = [
     "AgentTool",
     "close_context_scope",
     "open_context_scope",
+    "SendUserMessageTool",
     "BACKGROUND_CAPABILITY_TOOLS",
     "BASE_TASK_TOOLS",
     "SkillSearchTool",
@@ -58,6 +61,7 @@ __all__ = [
     "TaskOutputTool",
     "TaskStatusTool",
     "TaskWaitTool",
+    "TaskTool",
     "ToolSearchTool",
     "WeatherTool",
     "WebFetchTool",

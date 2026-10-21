@@ -3,6 +3,17 @@ import inspect
 import re
 from typing import Any, Tuple, Type, Union
 
+_ACCOUNT_NAME_RE = re.compile(r"[A-Za-z0-9][A-Za-z0-9_.-]{0,63}")
+
+
+def is_valid_account_name(value: Any) -> bool:
+    """Return whether a value is a safe, portable managed account name."""
+    return (
+        isinstance(value, str)
+        and _ACCOUNT_NAME_RE.fullmatch(value) is not None
+        and value not in {".", ".."}
+    )
+
 
 def is_subclass_of(obj: Any, cls: Union[Type[Any], Tuple[Type[Any], ...]]) -> bool:
     if not inspect.isclass(obj):

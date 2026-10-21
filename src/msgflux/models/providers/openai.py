@@ -95,14 +95,9 @@ class OpenAIChatCompletion(_OpenAICompatibleChatCompletion):
                 reasoning_codec=OpenAIResponsesReasoningCodec(),
                 reasoning_summary=True,
                 encrypted_reasoning=True,
+                assistant_commentary=True,
                 request_reasoning_effort=True,
                 context_adapter=OpenAIResponsesContextAdapter(),
-                hosted_tool_search_model_families=(
-                    "gpt-5.6",
-                    "gpt-5.6-sol",
-                    "gpt-5.6-terra",
-                    "gpt-5.6-luna",
-                ),
             ),
             ChatAPIModeCapabilities(
                 name="chat_completions",

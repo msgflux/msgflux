@@ -48,7 +48,14 @@ class TestRegisterModel:
 
     def setup_method(self):
         """Clear registry before each test."""
+        self._original_registry = {
+            key: dict(value) for key, value in model_registry.items()
+        }
         model_registry.clear()
+
+    def teardown_method(self):
+        model_registry.clear()
+        model_registry.update(self._original_registry)
 
     def test_register_valid_model(self):
         """Test registering a valid model."""

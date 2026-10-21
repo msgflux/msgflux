@@ -1,11 +1,13 @@
 # ruff: noqa: A002
 
 import asyncio
+import contextvars
+import logging
 import warnings
 from contextlib import contextmanager, nullcontext
+from contextvars import ContextVar
 from threading import RLock
 from typing import (
-    TYPE_CHECKING,
     Any,
     Dict,
     List,
@@ -18,6 +20,11 @@ from typing import (
 from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores.base import CheckpointConflictError
 from msgflux.data.stores.observation import observe_checkpoints
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.models.response import ModelStreamResponse
 from msgflux.nn.extensions.base import (
     AgentExtension,
@@ -33,17 +40,6 @@ from msgflux.nn.hooks.events import (
     OutputContext,
     RunEndContext,
 )
-from msgflux.nn.modules.container import ModuleDict
-from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.context import (
-    ExecutionScope,
-    execution_context,
-    get_execution_context,
-)
-from msgflux.runtime.event_hub import ThreadWatcher, get_event_hub
-
-if TYPE_CHECKING:
-    pass
 from msgflux.nn.modules.agent.context import (
     _CURRENT_AGENT_CONTEXT,
     _UNSET,
@@ -51,6 +47,52 @@ from msgflux.nn.modules.agent.context import (
     _BeforeRunEndHookError,
     _require_lifecycle_payload,
 )
+from msgflux.nn.modules.container import ModuleDict
+from msgflux.runtime.abort import AbortSignal
+from msgflux.runtime.context import (
+    ExecutionScope,
+    _get_execution_scope_ceiling,
+    execution_context,
+    get_execution_context,
+)
+from msgflux.runtime.event_hub import ThreadWatcher, get_event_hub
+from msgflux.runtime.permissions import intersect_permissions
+
+_AGENT_EVENT_STREAM_ROOT = ContextVar("msgflux_agent_event_stream_root", default=None)
+logger = logging.getLogger(__name__)
+
+
+def _note_terminal_hook_failure(primary_error: BaseException, hook_error: Exception):
+    primary_error.add_note(
+        "before_run_end hook failed during terminal settlement: "
+        f"{type(hook_error).__name__}: {hook_error}"
+    )
+
+
+def _seal_terminal_steering(agent, messages, primary_error: BaseException) -> None:
+    """Close steering admission before settling a run, preserving its failure."""
+    try:
+        agent._seal_steering(messages, force=True)
+    except BaseException as seal_error:
+        note = (
+            "Steering inbox could not be sealed during terminal settlement: "
+            f"{type(seal_error).__name__}: {seal_error}"
+        )
+        if isinstance(
+            primary_error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ),
+        ):
+            primary_error.add_note(note)
+            raise primary_error from seal_error
+        raise BaseExceptionGroup(
+            "Terminal settlement and steering inbox sealing failed",
+            [primary_error, seal_error],
+        ) from None
 
 
 class AgentLifecycleMixin:
@@ -66,7 +108,7 @@ class AgentLifecycleMixin:
         poll_interval: float = 0.1,
     ):
         """Observe persisted commits with reconnect cursors, unlike live watch()."""
-        store = self._get_effective_checkpoint_store()
+        store = self._get_effective_checkpoint_store(thread_id)
         if store is None:
             raise ValueError("watch_commits requires a checkpoint store")
         return observe_checkpoints(
@@ -88,6 +130,7 @@ class AgentLifecycleMixin:
         self._extension_refcounts: dict[str, int] = {}
         self._pending_extensions: dict[str, AgentExtension] = {}
         self._extension_async_cleanup_waiters: dict[str, Any] = {}
+        self._extension_async_cleanup_tasks: dict[str, asyncio.Task] = {}
 
     def _set_extensions(
         self,
@@ -237,35 +280,81 @@ class AgentLifecycleMixin:
 
     async def aremove_extension(self, name: str) -> None:
         """Async removal, using async cleanup when no active run retains it."""
-        loop = asyncio.get_running_loop()
-        ready = asyncio.Event()
         with self._extension_lock:
-            if name not in self.extensions:
-                return
-            extension = self.extensions[name]
-            del self.extensions[name]
-            self._pending_extensions[name] = extension
-            self._extension_async_cleanup_waiters[name] = (loop, ready)
-            cleanup_now = self._extension_refcounts.get(name, 0) == 0
-        if cleanup_now:
-            ready.set()
-        try:
-            await ready.wait()
-        except asyncio.CancelledError:
-            with self._extension_lock:
-                self._extension_async_cleanup_waiters.pop(name, None)
-                cleanup_now = self._extension_refcounts.get(name, 0) == 0
-            if cleanup_now:
-                self._cleanup_extension(name)
-            raise
+            task = self._extension_async_cleanup_tasks.get(name)
+            if task is None:
+                if name not in self.extensions:
+                    return
+                extension = self.extensions[name]
+                del self.extensions[name]
+                self._pending_extensions[name] = extension
+                loop = asyncio.get_running_loop()
+                ready = asyncio.Event()
+                self._extension_async_cleanup_waiters[name] = (loop, ready)
+                if self._extension_refcounts.get(name, 0) == 0:
+                    ready.set()
+                cleanup = self._finish_async_extension_removal(name, extension, ready)
+                try:
+                    task = asyncio.create_task(
+                        cleanup,
+                        context=contextvars.Context(),
+                    )
+                except BaseException:
+                    cleanup.close()
+                    self._extension_async_cleanup_waiters.pop(name, None)
+                    self._pending_extensions.pop(name, None)
+                    self.extensions[name] = extension
+                    raise
+                self._extension_async_cleanup_tasks[name] = task
+                task.add_done_callback(
+                    lambda done, extension_name=name: self._observe_extension_cleanup(
+                        extension_name, done
+                    )
+                )
+        # Shield only the owned cleanup task. Cancellation of this caller does
+        # not cancel cleanup or the waiter used by the last active run.
+        await asyncio.shield(task)
+
+    async def _finish_async_extension_removal(
+        self, name: str, extension: AgentExtension, ready: asyncio.Event
+    ) -> None:
+        await ready.wait()
         self._cleanup_extension_contributions(name)
-        self._pending_extensions.pop(name, None)
-        self._extension_refcounts.pop(name, None)
         try:
             await extension.aon_remove(self)
         finally:
             extension._unbind_agent()
+
+    def _observe_extension_cleanup(self, name: str, task: asyncio.Task) -> None:
+        if task.cancelled():
+            return
+        error = task.exception()
+        if error is not None:
+            logger.error(
+                "Agent extension %r async cleanup failed",
+                name,
+                exc_info=(type(error), error, error.__traceback__),
+            )
+            return
+        with self._extension_lock:
+            if self._extension_async_cleanup_tasks.get(name) is not task:
+                return
+            extension = self._pending_extensions.pop(name, None)
+            self._extension_async_cleanup_tasks.pop(name, None)
+            if extension is not None:
+                self._extension_refcounts.pop(name, None)
             self._extension_async_cleanup_waiters.pop(name, None)
+
+    async def _wait_for_extension_cleanup_tasks(self) -> None:
+        """Join cancelled-caller removals before owned stores are closed."""
+        with self._extension_lock:
+            tasks = tuple(self._extension_async_cleanup_tasks.values())
+        if not tasks:
+            return
+        results = await asyncio.gather(*tasks, return_exceptions=True)
+        errors = [result for result in results if isinstance(result, BaseException)]
+        if errors:
+            raise BaseExceptionGroup("Agent extension cleanup failed", errors)
 
     def _cleanup_extension_contributions(self, name: str) -> None:
         for handle in self._extension_hook_handles.pop(name, ()):
@@ -311,26 +400,61 @@ class AgentLifecycleMixin:
             with snapshot_context:
                 yield names
         finally:
-            wakeups = []
-            cleanups = []
-            with self._extension_lock:
-                for name in names:
-                    count = self._extension_refcounts.get(name, 1) - 1
-                    self._extension_refcounts[name] = count
-                    if count != 0 or name not in self._pending_extensions:
-                        continue
-                    waiter = self._extension_async_cleanup_waiters.get(name)
-                    if waiter is not None:
-                        wakeups.append(waiter)
-                    else:
-                        cleanups.append(name)
-            for loop, waiter in wakeups:
-                loop.call_soon_threadsafe(waiter.set)
-            for name in cleanups:
-                self._cleanup_extension(name)
+            self._release_extension_snapshot(names)
+
+    def _retain_detached_event_context(self):
+        """Keep resources and extensions alive through detached event finalizing."""
+        release_resources = self._retain_detached_resources()
+        names = _get_extension_snapshot(self)
+        names = names if names is not None else frozenset()
+        self._retain_extension_snapshot(names)
+        released = False
+        release_lock = RLock()
+
+        def release() -> None:
+            nonlocal released
+            with release_lock:
+                if released:
+                    return
+                released = True
+            try:
+                self._release_extension_snapshot(names)
+            finally:
+                release_resources()
+
+        return release
+
+    def _retain_extension_snapshot(self, names: frozenset[str]) -> None:
+        with self._extension_lock:
+            for name in names:
+                self._extension_refcounts[name] = (
+                    self._extension_refcounts.get(name, 0) + 1
+                )
+
+    def _release_extension_snapshot(self, names: frozenset[str]) -> None:
+        wakeups = []
+        cleanups = []
+        with self._extension_lock:
+            for name in names:
+                count = self._extension_refcounts.get(name, 1) - 1
+                self._extension_refcounts[name] = count
+                if count != 0 or name not in self._pending_extensions:
+                    continue
+                waiter = self._extension_async_cleanup_waiters.get(name)
+                if waiter is not None:
+                    wakeups.append(waiter)
+                else:
+                    cleanups.append(name)
+        for loop, waiter in wakeups:
+            loop.call_soon_threadsafe(waiter.set)
+        for name in cleanups:
+            self._cleanup_extension(name)
 
     def _call_impl_with_hooks(self, *args, **kwargs):
-        with self._extension_run_snapshot():
+        scope = self._workspace_scope(kwargs.get("scope"))
+        if scope is not None:
+            kwargs["scope"] = scope
+        with self._resource_context(kwargs), self._extension_run_snapshot():
             with (
                 execution_context(scope=kwargs.get("scope")),
                 _agent_context(
@@ -339,10 +463,15 @@ class AgentLifecycleMixin:
                     vars=kwargs.get("vars") or {},
                 ),
             ):
-                return super()._call_impl_with_hooks(*args, **kwargs)
+                result = super()._call_impl_with_hooks(*args, **kwargs)
+                self._attach_detached_event_context(result)
+                return result
 
     async def _acall_impl_with_hooks(self, *args, **kwargs):
-        with self._extension_run_snapshot():
+        scope = self._workspace_scope(kwargs.get("scope"))
+        if scope is not None:
+            kwargs["scope"] = scope
+        with self._resource_context(kwargs), self._extension_run_snapshot():
             with (
                 execution_context(scope=kwargs.get("scope")),
                 _agent_context(
@@ -351,11 +480,25 @@ class AgentLifecycleMixin:
                     vars=kwargs.get("vars") or {},
                 ),
             ):
-                return await super()._acall_impl_with_hooks(*args, **kwargs)
+                result = await super()._acall_impl_with_hooks(*args, **kwargs)
+                self._attach_detached_event_context(result)
+                return result
+
+    def _attach_detached_event_context(self, result: Any) -> None:
+        """Transfer active resource/extension pins to a returned stream."""
+        stream = self._stream_response_from_result(result)
+        if stream is None or _AGENT_EVENT_STREAM_ROOT.get() is self:
+            return
+        release = self._retain_detached_event_context()
+        stream._msgflux_detached_event_context = (
+            release,
+            contextvars.copy_context(),
+        )
 
     @contextmanager
     def _event_stream_execution_context(self, kwargs: Dict[str, Any]):
         with (
+            self._resource_context(kwargs),
             self._extension_run_snapshot(),
             _agent_context(
                 self,
@@ -363,7 +506,11 @@ class AgentLifecycleMixin:
                 vars=kwargs.get("vars") or {},
             ),
         ):
-            yield
+            token = _AGENT_EVENT_STREAM_ROOT.set(self)
+            try:
+                yield
+            finally:
+                _AGENT_EVENT_STREAM_ROOT.reset(token)
 
     def _update_agent_context(self, inputs: Mapping[str, Any]) -> None:
         state = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self))
@@ -379,6 +526,7 @@ class AgentLifecycleMixin:
             run.root_run_id = state["scope"].root_run_id
             messages = inputs.get("messages")
             if isinstance(messages, ChatMessages):
+                state["messages"] = messages
                 branch = (
                     messages.metadata.get("runtime", {})
                     .get("context_scopes", {})
@@ -438,7 +586,7 @@ class AgentLifecycleMixin:
     def _run_after_run_end_hook(self, context: RunEndContext) -> RunEndContext:
         try:
             return self._run_run_end_hook("after_run_end", context)
-        except Exception as hook_error:
+        except (Exception, asyncio.CancelledError) as hook_error:
             warnings.warn(
                 f"after_run_end hook failed after {context.outcome} run commit: "
                 f"{hook_error}",
@@ -453,7 +601,7 @@ class AgentLifecycleMixin:
     ) -> RunEndContext:
         try:
             return await self._arun_run_end_hook("after_run_end", context)
-        except Exception as hook_error:
+        except (Exception, asyncio.CancelledError) as hook_error:
             warnings.warn(
                 f"after_run_end hook failed after {context.outcome} run commit: "
                 f"{hook_error}",
@@ -461,6 +609,14 @@ class AgentLifecycleMixin:
                 stacklevel=2,
             )
             return context
+
+    def _stage_terminal_checkpoint_history(self, messages):
+        staged = self._stage_checkpoint_history(messages)
+        if staged is not messages:
+            inbox = self._get_effective_agent_inbox()
+            if inbox is not None:
+                self._record_inbox_receipts(staged, inbox.delivered_ids())
+        return staged
 
     def _settle_terminal_run(
         self,
@@ -470,6 +626,7 @@ class AgentLifecycleMixin:
         *,
         run_before_hook: bool = True,
     ) -> RunEndContext:
+        _seal_terminal_steering(self, inputs.get("messages"), error)
         run_end = self._run_end_context(
             outcome=outcome,
             messages=inputs.get("messages"),
@@ -478,23 +635,37 @@ class AgentLifecycleMixin:
             error=error,
         )
         if run_before_hook:
-            run_end = self._run_run_end_hook("before_run_end", run_end)
-        settled_inputs = {**inputs, "messages": run_end.messages}
+            try:
+                run_end = self._run_run_end_hook("before_run_end", run_end)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ) as hook_error:
+                self._release_inbox_notifications(hook_error)
+                raise
+            except Exception as hook_error:
+                _note_terminal_hook_failure(error, hook_error)
+        original_messages = run_end.messages
+        settled_messages = self._stage_terminal_checkpoint_history(original_messages)
+        settled_inputs = {**inputs, "messages": settled_messages}
         if outcome == "interrupted":
             self._checkpoint_interrupted(settled_inputs, error)
         elif outcome == "paused":
             if (
-                isinstance(run_end.messages, ChatMessages)
-                and run_end.messages.get_active_turn() is not None
+                isinstance(settled_messages, ChatMessages)
+                and settled_messages.get_active_turn() is not None
             ):
-                run_end.messages.end_turn(event="pause")
+                settled_messages.end_turn(event="pause")
             self._checkpoint_save(
-                run_end.messages,
+                settled_messages,
                 inputs.get("vars", {}),
                 status="paused",
             )
         else:
             self._checkpoint_save_on_error(settled_inputs)
+        self._publish_checkpoint_history(original_messages, settled_messages)
         return self._run_after_run_end_hook(run_end)
 
     async def _asettle_terminal_run(
@@ -505,6 +676,7 @@ class AgentLifecycleMixin:
         *,
         run_before_hook: bool = True,
     ) -> RunEndContext:
+        _seal_terminal_steering(self, inputs.get("messages"), error)
         run_end = self._run_end_context(
             outcome=outcome,
             messages=inputs.get("messages"),
@@ -513,30 +685,57 @@ class AgentLifecycleMixin:
             error=error,
         )
         if run_before_hook:
-            run_end = await self._arun_run_end_hook("before_run_end", run_end)
-        settled_inputs = {**inputs, "messages": run_end.messages}
+            try:
+                run_end = await self._arun_run_end_hook("before_run_end", run_end)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ) as hook_error:
+                self._release_inbox_notifications(hook_error)
+                raise
+            except Exception as hook_error:
+                _note_terminal_hook_failure(error, hook_error)
+        original_messages = run_end.messages
+        settled_messages = self._stage_terminal_checkpoint_history(original_messages)
+        settled_inputs = {**inputs, "messages": settled_messages}
         if outcome == "interrupted":
             await self._acheckpoint_interrupted(settled_inputs, error)
         elif outcome == "paused":
             if (
-                isinstance(run_end.messages, ChatMessages)
-                and run_end.messages.get_active_turn() is not None
+                isinstance(settled_messages, ChatMessages)
+                and settled_messages.get_active_turn() is not None
             ):
-                run_end.messages.end_turn(event="pause")
+                settled_messages.end_turn(event="pause")
             await self._acheckpoint_save(
-                run_end.messages,
+                settled_messages,
                 inputs.get("vars", {}),
                 status="paused",
             )
         else:
             await self._acheckpoint_save_on_error(settled_inputs)
+        self._publish_checkpoint_history(original_messages, settled_messages)
         return await self._arun_after_run_end_hook(run_end)
+
+    @staticmethod
+    def _terminal_error_outcome(
+        error: BaseException,
+    ) -> Literal["failed", "interrupted", "paused"]:
+        if isinstance(error, TaskPauseRequestedError):
+            return "paused"
+        if isinstance(
+            error,
+            (AbortRequestedError, TaskInterruptRequestedError, asyncio.CancelledError),
+        ):
+            return "interrupted"
+        return "failed"
 
     def _settle_processing_error(
         self,
         inputs: Mapping[str, Any],
         error: Exception,
-    ) -> Exception:
+    ) -> BaseException:
         if isinstance(error, CheckpointConflictError):
             return error
         if not isinstance(error, _BeforeRunEndHookError):
@@ -544,17 +743,19 @@ class AgentLifecycleMixin:
             return error
         self._settle_terminal_run(
             inputs,
-            "failed",
+            self._terminal_error_outcome(error.error),
             error.error,
             run_before_hook=False,
         )
+        if isinstance(error.error, AbortRequestedError):
+            self._raise_interrupted_from_abort(inputs, error.error)
         return error.error
 
     async def _asettle_processing_error(
         self,
         inputs: Mapping[str, Any],
         error: Exception,
-    ) -> Exception:
+    ) -> BaseException:
         if isinstance(error, CheckpointConflictError):
             return error
         if not isinstance(error, _BeforeRunEndHookError):
@@ -562,10 +763,12 @@ class AgentLifecycleMixin:
             return error
         await self._asettle_terminal_run(
             inputs,
-            "failed",
+            self._terminal_error_outcome(error.error),
             error.error,
             run_before_hook=False,
         )
+        if isinstance(error.error, AbortRequestedError):
+            self._raise_interrupted_from_abort(inputs, error.error)
         return error.error
 
     async def _atransform_module_output(self, output: Any) -> Any:
@@ -591,12 +794,34 @@ class AgentLifecycleMixin:
         self, kwargs: Mapping[str, Any]
     ) -> Optional[ExecutionScope]:
         scope = kwargs.get("scope")
-        if scope is None:
-            return None
-        if not isinstance(scope, ExecutionScope):
+        if scope is not None and not isinstance(scope, ExecutionScope):
             raise TypeError(
                 f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
             )
+        return self._workspace_scope(scope)
+
+    def _workspace_scope(self, scope):
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("scope must be ExecutionScope or None")
+        current = _get_execution_scope_ceiling()
+        base = scope or current
+        if (
+            self.workspace is not None
+            and base.workspace is not None
+            and self.workspace is not base.workspace
+            and self.workspace.shares_environment(base.workspace)
+        ):
+            return base.with_overrides(
+                permissions=intersect_permissions(
+                    base.permissions or base.workspace.permissions,
+                    self.workspace.permissions,
+                    workspace_id=self.workspace.workspace_id,
+                ),
+            )
+        if base.workspace is None:
+            workspace = current.workspace or self.workspace
+            if workspace is not None:
+                return base.with_overrides(workspace=workspace)
         return scope
 
     def watch(
@@ -606,7 +831,7 @@ class AgentLifecycleMixin:
         policy = self._get_effective_approvals(approvals)
 
         def load_messages() -> ChatMessages | None:
-            checkpoint_store = self._get_effective_checkpoint_store()
+            checkpoint_store = self._get_effective_checkpoint_store(thread_id)
             if checkpoint_store is None:
                 return None
             state = checkpoint_store.load_latest_run(
@@ -635,7 +860,10 @@ class AgentLifecycleMixin:
     def _prepare_event_stream_kwargs(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
         """Give an event stream a cancellable, fully identified Agent scope."""
         prepared = dict(kwargs)
-        scope = prepared.get("scope") or get_execution_context()["scope"]
+        scope = (
+            self._workspace_scope(prepared.get("scope"))
+            or get_execution_context()["scope"]
+        )
         abort_signal = scope.abort_signal or AbortSignal()
         messages = prepared.get("messages")
         thread_id = self._resolve_thread_id(

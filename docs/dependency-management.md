@@ -8,7 +8,7 @@ hide:
 
 ## Workspace tools
 
-Install `msgflux[workspace-tools]` to use `GlobTool` and `GrepTool`.
+Install `msgflux[coding]` to use `GlobTool` and `GrepTool`.
 `pathspec` implements nested `.gitignore` matching and `regex` supplies timed
 regular-expression searches. These optional packages are loaded only by the
 query tools. `LsTool`, `ReadFileTool`, `WriteTool`, `EditTool` and `DeleteTool`

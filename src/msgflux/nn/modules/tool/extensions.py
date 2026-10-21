@@ -223,8 +223,7 @@ class RuntimeContextProvider(ToolContextProvider):
         "message",
         "messages",
         "vars",
-        "filesystem",
-        "environment",
+        "workspace",
     )
 
     def __init__(self, sources: Collection[str] = DEFAULT_SOURCES) -> None:

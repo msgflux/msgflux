@@ -4,6 +4,12 @@ An `AgentExtension` packages hooks and tools behind one removable capability.
 Use a plain `Hook` for one interception point; use an extension when a feature
 owns several pieces that should be installed and removed together.
 
+To distribute an extension as an installed Python package and select it by
+name in `config.toml`, see [Installed Agent Extension Packages](extension-packages.md).
+That guide includes two small implementations, packaging metadata, discovery
+commands, and constructor options. Ordinary Python usage through
+`Agent(extensions=[...])` does not require package entry points.
+
 ## Define An Extension
 
 ### Durable run state
@@ -23,7 +29,7 @@ class RequestCounter(AgentExtension):
         super().__init__("request_counter")
 
     def hooks(self):
-        return (Hook(event="before_model_request", handler=self.count),)
+        return (Hook(event="before_request", handler=self.count),)
 
     def count(self, context):
         state = self.durable_state()
@@ -133,6 +139,12 @@ Use async removal only when the extension itself owns asynchronous cleanup:
 ```python
 await handle.aremove()
 ```
+
+If the caller is cancelled while `aremove()` waits for active runs, the Agent
+keeps the removal and runs `aon_remove()` after those runs release their
+snapshots. Stop active Agent calls before invoking `Agent.aclose()`. It waits
+for detached stream finalizers and pending async extension cleanup before closing
+Agent-owned stores. Cleanup failures are reported by `aremove()` or `aclose()`.
 
 Registration and removal are intentionally not context managers. Keep the
 handle when ownership is temporary, or remove by name with

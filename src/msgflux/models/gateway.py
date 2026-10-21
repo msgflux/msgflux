@@ -2,7 +2,12 @@ import warnings
 from datetime import datetime, time, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
 
-from msgflux.exceptions import ModelRouterError
+from msgflux.exceptions import (
+    AbortRequestedError,
+    ModelRouterError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.logger import logger
 from msgflux.models.base import BaseModel
 from msgflux.models.chat_extensions import validate_chat_speed
@@ -10,6 +15,12 @@ from msgflux.models.model import Model
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.types import validate_reasoning_effort
 from msgflux.utils.time import utc_now
+
+_CONTROL_EXCEPTIONS = (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 
 if TYPE_CHECKING:
     from msgflux.tools.catalog import ToolCatalogView
@@ -355,6 +366,8 @@ class ModelGateway:
             try:
                 response = model(**kwargs)
                 return response
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
@@ -390,6 +403,8 @@ class ModelGateway:
             try:
                 response = await model.acall(**kwargs)
                 return response
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
@@ -451,6 +466,30 @@ class ModelGateway:
             raise ValueError(
                 f"Unknown model `{model_name}`. Available models: {available}."
             )
+
+    def find_model_name(
+        self, *, provider: str, model_id: str, api_mode: str | None = None
+    ) -> str | None:
+        """Find a unique deployment alias matching a recorded model identity."""
+        for field, value in (("provider", provider), ("model_id", model_id)):
+            if not isinstance(value, str) or not value:
+                raise TypeError(f"`{field}` must be a non-empty string")
+        if api_mode is not None and (not isinstance(api_mode, str) or not api_mode):
+            raise TypeError("`api_mode` must be a non-empty string or None")
+
+        matches = [
+            name
+            for name, model in zip(self.model_names, self.models)
+            if model.provider == provider
+            and model.model_id == model_id
+            and (api_mode is None or getattr(model, "api_mode", None) == api_mode)
+        ]
+        if len(matches) > 1:
+            raise ValueError(
+                "Multiple deployments match the recorded model identity: "
+                + ", ".join(matches)
+            )
+        return matches[0] if matches else None
 
     def get_model_description(self, model_name: str) -> Optional[str]:
         """Return the configured capability description for one deployment."""
@@ -620,6 +659,8 @@ class ModelGateway:
         for name, model in available:
             try:
                 return getattr(model, method_name)(**kwargs)
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})
@@ -653,6 +694,8 @@ class ModelGateway:
         for name, model in available:
             try:
                 return await getattr(model, method_name)(**kwargs)
+            except _CONTROL_EXCEPTIONS:
+                raise
             except Exception as e:
                 logger.debug(
                     f"""Model `{name}` ({model.provider})

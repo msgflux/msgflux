@@ -5,6 +5,7 @@ from typing import Any, Dict
 import pytest
 
 from msgflux.data.stores import Store
+from msgflux.tasks import InMemoryTaskStore, SQLiteTaskStore
 
 
 @pytest.fixture(params=["in_memory", "sqlite"])
@@ -29,6 +30,18 @@ def approval_journal(request, tmp_path):
     store = Store.approval(request.param, clock=lambda: clock[0], **options)
     yield store, clock
     store.close()
+
+
+@pytest.fixture(params=["memory", "sqlite"])
+def task_store(request, tmp_path):
+    if request.param == "memory":
+        yield InMemoryTaskStore()
+        return
+    store = SQLiteTaskStore(str(tmp_path / "tasks.sqlite"))
+    try:
+        yield store
+    finally:
+        store.close()
 
 
 @pytest.fixture

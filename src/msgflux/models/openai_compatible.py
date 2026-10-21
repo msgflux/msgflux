@@ -1,5 +1,6 @@
 """Shared runtime for OpenAI-compatible language-model APIs."""
 
+import asyncio
 import base64
 import warnings
 from copy import copy, deepcopy
@@ -23,8 +24,10 @@ from msgflux.models.chat_api import (
 )
 from msgflux.models.chat_capabilities import (
     ChatAPIModeCapabilities,
+    ChatModelCapabilities,
     ChatProviderCapabilities,
 )
+from msgflux.models.chat_context import normalize_responses_input_roles
 from msgflux.models.chat_extensions import (
     ChatModelExtension,
     ChatRequestContext,
@@ -34,6 +37,7 @@ from msgflux.models.chat_extensions import (
 from msgflux.models.chat_transport import HTTPChatTransport
 from msgflux.models.compaction import ContextTokenEstimate, ModelCompaction
 from msgflux.models.http_transport import HTTPTransport
+from msgflux.models.model_capabilities import built_in_model_capabilities
 from msgflux.models.model_credentials import (
     BearerTokenCredentialResolver,
     ModelCredentialResolver,
@@ -47,8 +51,13 @@ from msgflux.models.reasoning import (
 from msgflux.models.response import ModelResponse, ModelStreamResponse
 from msgflux.models.timing import ModelRequestTimer
 from msgflux.models.tool_call_agg import ToolCallAggregator
+from msgflux.models.tool_search_events import ToolSearchEvents
 from msgflux.models.tool_transport import native_item_types
-from msgflux.models.types import ChatCompletionModel, validate_reasoning_effort
+from msgflux.models.types import (
+    ChatCompletionModel,
+    reasoning_effort_from_history,
+    validate_reasoning_effort,
+)
 from msgflux.models.usage import UsageCodec, default_usage_codec
 from msgflux.runtime.context import get_execution_context
 from msgflux.tools.catalog import ToolCatalogEntry, ToolCatalogView
@@ -285,18 +294,52 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def supports_native_tool_search(self) -> bool:
         """Return whether this model/API pair supports hosted tool search."""
-        families = self.api_mode_capabilities.hosted_tool_search_model_families
-        if not families:
+        if self.api_mode != "responses":
             return False
-        model_id = self.model_id.rsplit("/", maxsplit=1)[-1]
-        return any(
-            model_id == family or model_id.startswith(f"{family}-20")
-            for family in families
-        )
+        override = self.model_capabilities.hosted_tool_search
+        if override is not None:
+            return override
+        return built_in_model_capabilities(self.model_id).hosted_tool_search is True
 
     def supports_reasoning_effort(self) -> bool:
         """Return whether the active API mode accepts request-level effort."""
         return self.api_mode_capabilities.request_reasoning_effort
+
+    def supports_reasoning_update(self) -> bool:
+        """Return whether conversation items can change effort and keep the prefix."""
+        if self.api_mode != "responses":
+            return False
+        override = self.model_capabilities.reasoning_updates
+        if override is not None:
+            return override
+        return built_in_model_capabilities(self.model_id).reasoning_updates is True
+
+    def supports_unphased_tool_commentary(self) -> bool:
+        """Whether a message before a tool call is user-facing."""
+        if self.api_mode != "responses":
+            return False
+        override = self.model_capabilities.unphased_tool_commentary
+        if override is not None:
+            return override
+        return True
+
+    @staticmethod
+    def _initial_reasoning_effort(messages) -> str | None:
+        """Return the last update before the conversation's first model response."""
+        if isinstance(messages, (str, bytes)):
+            return None
+        initial = None
+        for item in messages:
+            if not isinstance(item, Mapping):
+                continue
+            if item.get("role") == "assistant" or item.get("type") in {
+                "function_call",
+                "reasoning",
+            }:
+                break
+            if item.get("type") == "model_configuration":
+                initial = item.get("reasoning_effort")
+        return initial
 
     def set_reasoning_effort(
         self, reasoning_effort: str | None
@@ -462,7 +505,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         tool_catalog: ToolCatalogView | None = None,
     ) -> ContextTokenEstimate:
         adapter = self.api_mode_capabilities.context_adapter
-        if adapter is None:
+        if adapter is None or not adapter.supports_token_count:
             return super().count_context_tokens(
                 messages,
                 system_prompt=system_prompt,
@@ -486,7 +529,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         tool_catalog: ToolCatalogView | None = None,
     ) -> ContextTokenEstimate:
         adapter = self.api_mode_capabilities.context_adapter
-        if adapter is None:
+        if adapter is None or not adapter.supports_token_count:
             return await super().acount_context_tokens(
                 messages,
                 system_prompt=system_prompt,
@@ -523,7 +566,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
         request = self._apply_chat_extensions(request, operation="compact")
         payload = self.chat_transport.create(self, request)
-        return adapter.decode_compaction(self, payload)
+        return adapter.decode_compaction(self, payload, messages=messages)
 
     async def acompact_context(
         self,
@@ -546,7 +589,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
         request = self._apply_chat_extensions(request, operation="compact")
         payload = await self.chat_transport.acreate(self, request)
-        return adapter.decode_compaction(self, payload)
+        return adapter.decode_compaction(self, payload, messages=messages)
 
     @property
     def supported_api_modes(self) -> tuple[str, ...]:
@@ -617,6 +660,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         chat_extensions: Optional[Sequence[ChatModelExtension]] = None,
         credential_resolver: Optional[ModelCredentialResolver] = None,
         api_key_env: Optional[str] = None,
+        model_capabilities: Optional[ChatModelCapabilities] = None,
         **extra_body_kwargs: Any,
     ):
         """Args:
@@ -735,12 +779,21 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             Environment variable holding the provider API key. Takes
             precedence over the provider default; only the variable name
             is stored, never the secret itself.
+        model_capabilities:
+            Model-specific overrides for reasoning updates and hosted tool search.
         """
         super().__init__()
         if not isinstance(self.capabilities, ChatProviderCapabilities):
             raise TypeError(
                 "`capabilities` must be a ChatProviderCapabilities instance"
             )
+        if model_capabilities is not None and not isinstance(
+            model_capabilities, ChatModelCapabilities
+        ):
+            raise TypeError(
+                "`model_capabilities` must be ChatModelCapabilities or None"
+            )
+        self.model_capabilities = model_capabilities or ChatModelCapabilities()
         selected_transport = chat_transport or self.chat_transport
         self.chat_transport = (
             selected_transport()
@@ -860,7 +913,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self.retry = retry
         self.warmup_max_tokens = warmup_max_tokens or 1
         self._initialize()
-        self._get_api_key()
+        if credential_resolver is None:
+            self._get_api_key()
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         params.pop("provider_tools", None)
@@ -1058,20 +1112,84 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
     def _stream_add_reasoning_chunk(stream_response, chunk):
         stream_response.add_reasoning(chunk)
 
+    @classmethod
+    def _finish_chat_completion_content(
+        cls, stream_response, pending_content: list[str], aggregator
+    ) -> None:
+        if not pending_content:
+            return
+        if aggregator.tool_calls:
+            commentary = "".join(pending_content)
+            stream_response.chat_accumulator.add_tool_commentary(commentary)
+            stream_response.add_commentary(commentary)
+        else:
+            for chunk in pending_content:
+                cls._stream_add_chunk(stream_response, chunk, "text_generation")
+        pending_content.clear()
+
+    @staticmethod
+    def _capture_reasoning_metadata(request, metadata):
+        """Record reasoning from the final wire request, including overrides."""
+        body = request.json
+        if request.api == "responses":
+            reasoning = body.get("reasoning")
+            effort = reasoning.get("effort") if isinstance(reasoning, Mapping) else None
+            updates = (
+                item.get("reasoning", {}).get("effort")
+                for item in body.get("input") or ()
+                if isinstance(item, Mapping)
+                and item.get("type") == "configuration_update"
+                and isinstance(item.get("reasoning"), Mapping)
+            )
+            conversation_effort = next(
+                (value for value in reversed(list(updates)) if isinstance(value, str)),
+                None,
+            )
+        else:
+            effort = body.get("reasoning_effort")
+            reasoning = body.get("reasoning")
+            if effort is None and isinstance(reasoning, Mapping):
+                effort = reasoning.get("effort")
+            conversation_effort = None
+        request_effort = effort if isinstance(effort, str) else None
+        metadata["request_reasoning_effort"] = request_effort
+        metadata["conversation_reasoning_effort"] = conversation_effort
+        effective_effort = conversation_effort or request_effort
+        if effective_effort is not None:
+            metadata["reasoning_effort"] = effective_effort
+        else:
+            metadata.pop("reasoning_effort", None)
+
+    def _execute_with_metadata(self, metadata, **kwargs):
+        if self.api_mode in {"chat_completions", "responses"}:
+            kwargs["_request_model_metadata"] = metadata
+        return self._execute_model(**kwargs)
+
+    async def _aexecute_with_metadata(self, metadata, **kwargs):
+        if self.api_mode in {"chat_completions", "responses"}:
+            kwargs["_request_model_metadata"] = metadata
+        return await self._aexecute_model(**kwargs)
+
     def _execute_model(self, **kwargs):
+        request_metadata = kwargs.pop("_request_model_metadata", None)
         self._raise_if_aborted()
         params = {**self.sampling_run_params, **kwargs}
         request = self.api_adapter.prepare_request(self, params)
         request = self._apply_chat_extensions(request, operation="generate")
+        if request_metadata is not None:
+            self._capture_reasoning_metadata(request, request_metadata)
         model_output = self.chat_transport.create(self, request)
         self._raise_if_aborted()
         return model_output
 
     async def _aexecute_model(self, **kwargs):
+        request_metadata = kwargs.pop("_request_model_metadata", None)
         self._raise_if_aborted()
         params = {**self.sampling_run_params, **kwargs}
         request = self.api_adapter.prepare_request(self, params)
         request = self._apply_chat_extensions(request, operation="generate")
+        if request_metadata is not None:
+            self._capture_reasoning_metadata(request, request_metadata)
         model_output = await self.chat_transport.acreate(
             self,
             request,
@@ -1179,6 +1297,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         if choice.message.tool_calls:
             aggregator = ToolCallAggregator(reasoning_tool_call)
             response.set_response_type("tool_call")
+            if choice.message.content and generation_schema is None:
+                response.commentary.append(choice.message.content)
             for call_index, tool_call in enumerate(choice.message.tool_calls):
                 tool_id = tool_call.id
                 name = tool_call.function.name
@@ -1252,6 +1372,25 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     ),
                 }
             )
+        for commentary in response.commentary:
+            response.history_items.append(
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": commentary,
+                    "visibility": "commentary",
+                }
+            )
+        if response.commentary and choice.message.tool_calls:
+            for tool_call in choice.message.tool_calls:
+                response.history_items.append(
+                    {
+                        "type": "function_call",
+                        "call_id": tool_call.id,
+                        "name": tool_call.function.name,
+                        "arguments": tool_call.function.arguments,
+                    }
+                )
         response.add(response_content)
         response.set_metadata(metadata)
         return response
@@ -1298,6 +1437,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         reasoning_chunks: list[str] = []
         reasoning_summary_chunks: list[str] = []
         history_items: list[dict[str, Any]] = []
+        commentary: list[str] = []
+        unphased_tool_messages: list[tuple[dict[str, Any], str]] = []
+        seen_tool_call = False
+        search_events = ToolSearchEvents(self.provider, self.api_mode)
+        events = []
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
 
         for output_index, item in enumerate(output_items):
@@ -1308,7 +1452,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     item,
                     serialize=self._serialize_openai_value,
                 )
-                is_summary = self.reasoning_codec.canonical_text_field == "summary"
+                text_field = self.reasoning_codec.canonical_text_field_for_item(item)
+                is_summary = text_field == "summary"
                 if reasoning_text:
                     target = (
                         reasoning_summary_chunks if is_summary else reasoning_chunks
@@ -1319,15 +1464,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                         {
                             "type": "reasoning",
                             "role": "assistant",
-                            **(
-                                {
-                                    self.reasoning_codec.canonical_text_field: (
-                                        reasoning_text
-                                    )
-                                }
-                                if reasoning_text
-                                else {}
-                            ),
+                            **({text_field: reasoning_text} if reasoning_text else {}),
                             **(
                                 {
                                     "provider_state": {
@@ -1346,6 +1483,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 continue
 
             if item_type in self._native_item_types():
+                seen_tool_call = True
                 serialized = self._serialize_openai_value(item)
                 self._process_native_call(
                     aggregator, output_index, serialized, tool_routes
@@ -1354,6 +1492,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 continue
 
             if item_type == "function_call":
+                seen_tool_call = True
                 call_id = self._response_value(item, "call_id")
                 name = self._response_value(item, "name")
                 arguments = self._response_value(item, "arguments", "{}")
@@ -1379,6 +1518,13 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 continue
 
             if item_type in {"tool_search_call", "tool_search_output"}:
+                events.extend(
+                    search_events.observe(
+                        self._serialize_openai_value(item),
+                        index=output_index,
+                        done=True,
+                    )
+                )
                 history_items.append(self._responses_native_history_item(item))
                 continue
 
@@ -1387,14 +1533,17 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 continue
 
             phase = self._response_value(item, "phase")
-            history_items.append(self._responses_message_history_item(item))
+            history_item = self._responses_message_history_item(item)
+            history_items.append(history_item)
             phase_text_chunks = text_chunks_by_phase.setdefault(phase, [])
+            message_text_chunks: list[str] = []
             for part in self._response_value(item, "content", []) or []:
                 part_type = self._response_value(part, "type")
                 if part_type == "output_text":
                     text = self._response_value(part, "text")
                     if isinstance(text, str):
                         phase_text_chunks.append(text)
+                        message_text_chunks.append(text)
                     part_logprobs = self._response_value(part, "logprobs")
                     if isinstance(part_logprobs, list):
                         logprobs.extend(self._serialize_openai_value(part_logprobs))
@@ -1407,6 +1556,25 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     refusal = self._response_value(part, "refusal")
                     if isinstance(refusal, str):
                         phase_text_chunks.append(refusal)
+                        message_text_chunks.append(refusal)
+
+            if (
+                phase == "commentary"
+                and self.api_mode_capabilities.assistant_commentary
+                and not is_subclass_of(generation_schema, ToolFlowControl)
+            ):
+                message_text = "".join(message_text_chunks)
+                if message_text:
+                    commentary.append(message_text)
+            elif (
+                phase in (None, "commentary")
+                and not seen_tool_call
+                and message_text_chunks
+                and not is_subclass_of(generation_schema, ToolFlowControl)
+            ):
+                unphased_tool_messages.append(
+                    (history_item, "".join(message_text_chunks))
+                )
 
         if is_subclass_of(
             generation_schema, ToolFlowControl
@@ -1417,7 +1585,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         else:
             selected_text_chunks = [
                 chunk
-                for phase_chunks in text_chunks_by_phase.values()
+                for phase, phase_chunks in text_chunks_by_phase.items()
+                if phase != "commentary"
                 for chunk in phase_chunks
             ]
         response_text = "".join(selected_text_chunks)
@@ -1446,6 +1615,10 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
 
         if aggregator.tool_calls:
+            if self.supports_unphased_tool_commentary():
+                for history_item, message_text in unphased_tool_messages:
+                    history_item["visibility"] = "commentary"
+                    commentary.append(message_text)
             response = ModelResponse()
             response.set_response_type("tool_call")
             if reasoning_chunks and self.reasoning_in_tool_call:
@@ -1483,7 +1656,10 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             if reasoning_summary_chunks and self.return_reasoning
             else None
         )
+        events.extend(search_events.close("Tool search ended without an output"))
+        response.events = events
         response.history_items = history_items
+        response.commentary = commentary
         return response
 
     def _responses_message_history_item(self, item: Any) -> dict[str, Any]:
@@ -1526,10 +1702,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def _check_cache(self, **kwargs):
         if self.enable_cache and self._response_cache:
+            scope = get_execution_context().get("scope")
             cache_key = generate_cache_key(
                 **kwargs,
                 _sampling_run_params=self.sampling_run_params,
                 _chat_settings=self.chat_settings,
+                _account_name=getattr(scope, "account_name", None),
             )
             hit, cached_response = self._response_cache.get(cache_key)
             if hit:
@@ -1538,10 +1716,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def _store_cache(self, response, **kwargs):
         if self.enable_cache and self._response_cache:
+            scope = get_execution_context().get("scope")
             cache_key = generate_cache_key(
                 **kwargs,
                 _sampling_run_params=self.sampling_run_params,
                 _chat_settings=self.chat_settings,
+                _account_name=getattr(scope, "account_name", None),
             )
             self._response_cache.set(cache_key, response)
 
@@ -1604,6 +1784,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         return kwargs
 
     def _generate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         tool_routes = self._request_native_tool_routes(
             kwargs, kwargs.get("tool_catalog")
         )
@@ -1621,13 +1802,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
 
         request_timer = ModelRequestTimer()
-        model_output = self._execute_model(**kwargs)
+        request_metadata = {}
+        model_output = self._execute_with_metadata(request_metadata, **kwargs)
         response = self._process_model_output(
             model_output,
             generation_schema,
             transport_generation_schema,
             tool_routes=tool_routes,
         )
+        if effective_effort is not None:
+            response.metadata.model.reasoning_effort = effective_effort
+        if request_metadata:
+            response.metadata.model.pop("reasoning_effort", None)
+            response.metadata.model.update(request_metadata)
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
@@ -1637,6 +1824,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         return response
 
     async def _agenerate(self, **kwargs: Mapping[str, Any]) -> ModelResponse:
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         tool_routes = self._request_native_tool_routes(
             kwargs, kwargs.get("tool_catalog")
         )
@@ -1654,13 +1842,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         )
 
         request_timer = ModelRequestTimer()
-        model_output = await self._aexecute_model(**kwargs)
+        request_metadata = {}
+        model_output = await self._aexecute_with_metadata(request_metadata, **kwargs)
         response = self._process_model_output(
             model_output,
             generation_schema,
             transport_generation_schema,
             tool_routes=tool_routes,
         )
+        if effective_effort is not None:
+            response.metadata.model.reasoning_effort = effective_effort
+        if request_metadata:
+            response.metadata.model.pop("reasoning_effort", None)
+            response.metadata.model.update(request_metadata)
         response.metadata.timing = request_timer.finish()
 
         self._store_cache(
@@ -1676,16 +1870,21 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         metadata = self._build_response_metadata(None)
+        if effective_effort is not None:
+            metadata.model.reasoning_effort = effective_effort
         reasoning_tool_call = ""
         reasoning_accumulated = ""
         reasoning_stream_started = False
+        pending_content: list[str] = []
+        has_tools = bool(kwargs.get("tools"))
         final_status = "completed"
 
         try:
             aggregator = ToolCallAggregator()
-            model_output = self._execute_model(**kwargs)
+            model_output = self._execute_with_metadata(metadata.model, **kwargs)
             finish_reason = None
 
             self._raise_if_aborted()
@@ -1745,11 +1944,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                         if reasoning_stream_started:
                             stream_response.finish_reasoning()
                             reasoning_stream_started = False
-                        self._stream_add_chunk(
-                            stream_response,
-                            delta.content,
-                            "text_generation",
-                        )
+                        if has_tools:
+                            pending_content.append(delta.content)
+                        else:
+                            self._stream_add_chunk(
+                                stream_response, delta.content, "text_generation"
+                            )
 
                     if getattr(delta, "tool_calls", None):
                         if self._has_stream_tool_call_output(delta):
@@ -1763,6 +1963,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             aggregator,
                         )
 
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
             if aggregator.tool_calls:
                 if reasoning_tool_call:
                     aggregator.reasoning = reasoning_tool_call
@@ -1778,6 +1981,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(e)
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
@@ -1796,17 +2002,24 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         metadata = self._build_response_metadata(None)
+        if effective_effort is not None:
+            metadata.model.reasoning_effort = effective_effort
         reasoning_tool_call = ""
         reasoning_accumulated = ""
         reasoning_stream_started = False
+        pending_content: list[str] = []
+        has_tools = bool(kwargs.get("tools"))
         final_status = "completed"
         model_output = None
+        aggregator = ToolCallAggregator()
+        cancellation_error = None
+        cleanup_cancellation = None
 
         try:
-            aggregator = ToolCallAggregator()
-            model_output = await self._aexecute_model(**kwargs)
+            model_output = await self._aexecute_with_metadata(metadata.model, **kwargs)
             finish_reason = None
 
             self._raise_if_aborted()
@@ -1866,11 +2079,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                         if reasoning_stream_started:
                             stream_response.finish_reasoning()
                             reasoning_stream_started = False
-                        self._stream_add_chunk(
-                            stream_response,
-                            delta.content,
-                            "text_generation",
-                        )
+                        if has_tools:
+                            pending_content.append(delta.content)
+                        else:
+                            self._stream_add_chunk(
+                                stream_response, delta.content, "text_generation"
+                            )
 
                     if getattr(delta, "tool_calls", None):
                         if self._has_stream_tool_call_output(delta):
@@ -1884,6 +2098,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                             aggregator,
                         )
 
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
             if aggregator.tool_calls:
                 if reasoning_tool_call:
                     aggregator.reasoning = reasoning_tool_call
@@ -1891,6 +2108,14 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 stream_response.first_chunk_event.set()
             stream_response.reasoning = reasoning_accumulated or None
             self._set_stop_metadata(metadata, finish_reason=finish_reason)
+        except asyncio.CancelledError as error:
+            cancellation_error = error
+            final_status = "interrupted"
+            stream_response.set_error(error)
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
+            raise
         except Exception as e:
             final_status = (
                 "interrupted"
@@ -1899,9 +2124,22 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(e)
+            self._finish_chat_completion_content(
+                stream_response, pending_content, aggregator
+            )
         finally:
-            if not await self._aclose_model_stream(model_output, stream_response):
-                final_status = "failed"
+            try:
+                if (
+                    not await self._aclose_model_stream(model_output, stream_response)
+                    and final_status != "interrupted"
+                ):
+                    final_status = "failed"
+            except asyncio.CancelledError as error:
+                final_status = "interrupted"
+                if stream_response.error is None:
+                    stream_response.set_error(error)
+                if cancellation_error is None:
+                    cleanup_cancellation = error
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
@@ -1909,6 +2147,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             metadata.timing = request_timer.finish()
             stream_response.set_metadata(metadata)
             stream_response.finish(status=final_status)
+        if cleanup_cancellation is not None:
+            raise cleanup_cancellation
 
     @staticmethod
     async def _aclose_model_stream(model_output, stream_response):
@@ -1923,6 +2163,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     stream_response.error.add_note(f"Stream cleanup failed: {error}")
                 return False
         return True
+
+    @staticmethod
+    def _record_responses_tool_index(state: dict[str, Any], index: int) -> None:
+        first = state["first_tool_index"]
+        state["first_tool_index"] = index if first is None else min(first, index)
 
     def _handle_responses_stream_event(  # noqa: C901
         self,
@@ -1942,6 +2187,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         if event_type == "response.output_text.delta":
             delta = self._response_value(event, "delta")
             output_index = self._response_value(event, "output_index", 0)
+            phase = state["message_phases"].get(output_index)
             event_logprobs = self._response_value(event, "logprobs")
             if isinstance(event_logprobs, list) and event_logprobs:
                 logprobs = state["metadata"].setdefault("logprobs", {"content": []})
@@ -1955,6 +2201,17 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     stream_response.finish_reasoning_summary()
                     state["reasoning_summary_stream_started"] = False
                 stream_response.chat_accumulator.add_response_text(output_index, delta)
+                if (
+                    phase == "commentary"
+                    and self.api_mode_capabilities.assistant_commentary
+                ):
+                    stream_response.add_commentary(delta)
+                    return
+                if phase in (None, "commentary") and state["has_tools"]:
+                    state["pending_unphased_text"].append((output_index, delta))
+                    return
+                if phase == "commentary":
+                    return
                 self._stream_add_chunk(
                     stream_response,
                     delta,
@@ -2005,11 +2262,25 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     )
             return
 
+        if event_type in {"response.output_item.added", "response.output_item.done"}:
+            item = self._response_value(event, "item")
+            if self._response_value(item, "type") in {
+                "tool_search_call",
+                "tool_search_output",
+            }:
+                for search_event in state["tool_search_events"].observe(
+                    self._serialize_openai_value(item),
+                    index=self._response_value(event, "output_index", 0),
+                    done=event_type == "response.output_item.done",
+                ):
+                    stream_response._add_event(search_event)
+
         if event_type == "response.output_item.added":
             item = self._response_value(event, "item")
             item_type = self._response_value(item, "type")
             index = self._response_value(event, "output_index", 0)
             if item_type == "message":
+                state["message_phases"][index] = self._response_value(item, "phase")
                 serialized = self._serialize_openai_value(item)
                 stream_response.chat_accumulator.begin_response_message(
                     index,
@@ -2026,6 +2297,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 return
             if item_type != "function_call":
                 return
+            self._record_responses_tool_index(state, index)
             call_id = self._response_value(item, "call_id")
             name = self._response_value(item, "name")
             arguments = self._response_value(item, "arguments", "") or ""
@@ -2070,6 +2342,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             item = self._response_value(event, "item")
             item_type = self._response_value(item, "type")
             if item_type in self._native_item_types():
+                index = self._response_value(event, "output_index", 0)
+                self._record_responses_tool_index(state, index)
                 serialized = self._serialize_openai_value(item)
                 if serialized.get("call_id") not in aggregator.native_calls:
                     self._process_native_call(
@@ -2097,6 +2371,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     )
             elif item_type == "function_call":
                 index = self._response_value(event, "output_index", 0)
+                self._record_responses_tool_index(state, index)
                 if any(
                     (
                         self._response_value(item, "call_id"),
@@ -2129,6 +2404,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     )
             elif item_type == "message":
                 index = self._response_value(event, "output_index", 0)
+                state["message_phases"][index] = self._response_value(item, "phase")
                 serialized = self._serialize_openai_value(item)
                 stream_response.chat_accumulator.finish_response_message(
                     index,
@@ -2181,6 +2457,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
     ) -> dict[str, Any]:
         return {
             "metadata": self._build_response_metadata(None),
+            "tool_search_events": ToolSearchEvents(self.provider, self.api_mode),
             "request_timer": request_timer,
             "reasoning": "",
             "reasoning_summary": "",
@@ -2188,9 +2465,46 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             "reasoning_stream_started": False,
             "reasoning_summary_stream_started": False,
             "tool_arguments_seen": set(),
+            "message_phases": {},
+            "has_tools": False,
+            "pending_unphased_text": [],
+            "first_tool_index": None,
             "finish_reason": None,
             "terminal_status": "completed",
         }
+
+    def _flush_responses_content(
+        self,
+        stream_response: ModelStreamResponse,
+        aggregator: ToolCallAggregator,
+        state: dict[str, Any],
+    ) -> None:
+        if aggregator.tool_calls:
+            if self.supports_unphased_tool_commentary():
+                grouped: dict[int, list[str]] = {}
+                for index, delta in state["pending_unphased_text"]:
+                    first_tool_index = state["first_tool_index"]
+                    if first_tool_index is None or index < first_tool_index:
+                        grouped.setdefault(index, []).append(delta)
+                for index, chunks in grouped.items():
+                    stream_response.chat_accumulator.mark_response_message_visibility(
+                        index, "commentary"
+                    )
+                    stream_response.add_commentary("".join(chunks))
+        else:
+            for index, delta in state["pending_unphased_text"]:
+                if (
+                    state["message_phases"].get(index) == "commentary"
+                    and not self.api_mode_capabilities.assistant_commentary
+                ):
+                    continue
+                self._stream_add_chunk(
+                    stream_response,
+                    delta,
+                    "text_generation",
+                    accumulate_history=False,
+                )
+        state["pending_unphased_text"].clear()
 
     def _finish_responses_stream(
         self,
@@ -2198,6 +2512,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         aggregator: ToolCallAggregator,
         state: dict[str, Any],
     ) -> None:
+        self._flush_responses_content(stream_response, aggregator, state)
         if aggregator.tool_calls:
             if state["tool_reasoning"]:
                 aggregator.reasoning = state["tool_reasoning"]
@@ -2221,13 +2536,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
         state = self._new_responses_stream_state(request_timer)
+        state["has_tools"] = bool(kwargs.get("tools"))
+        if effective_effort is not None:
+            state["metadata"].model.reasoning_effort = effective_effort
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         try:
-            model_output = self._execute_model(**kwargs)
+            model_output = self._execute_with_metadata(
+                state["metadata"].model, **kwargs
+            )
             self._raise_if_aborted()
             for event in model_output:
                 self._handle_responses_stream_event(
@@ -2246,28 +2567,41 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(error)
+            self._flush_responses_content(stream_response, aggregator, state)
         finally:
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
                 stream_response._response_type_event.set()
+            for search_event in state["tool_search_events"].close(
+                str(stream_response.error or "Tool search ended without an output")
+            ):
+                stream_response._add_event(search_event)
             state["metadata"].timing = request_timer.finish()
             stream_response.set_metadata(state["metadata"])
             stream_response.finish(status=final_status)
         return stream_response
 
-    async def _astream_responses_generate(
+    async def _astream_responses_generate(  # noqa: C901
         self, **kwargs: Mapping[str, Any]
     ) -> ModelStreamResponse:
         stream_response = kwargs.pop("stream_response")
+        effective_effort = kwargs.pop("_effective_reasoning_effort", None)
         request_timer = kwargs.pop("_request_timer", None) or ModelRequestTimer()
         aggregator = ToolCallAggregator(api_mode=self.api_mode)
         state = self._new_responses_stream_state(request_timer)
+        state["has_tools"] = bool(kwargs.get("tools"))
+        if effective_effort is not None:
+            state["metadata"].model.reasoning_effort = effective_effort
         state["tool_routes"] = kwargs.pop("_tool_routes", {})
         final_status = "completed"
         model_output = None
+        cancellation_error = None
+        cleanup_cancellation = None
         try:
-            model_output = await self._aexecute_model(**kwargs)
+            model_output = await self._aexecute_with_metadata(
+                state["metadata"].model, **kwargs
+            )
             self._raise_if_aborted()
             async for event in model_output:
                 self._handle_responses_stream_event(
@@ -2278,6 +2612,12 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 )
             self._finish_responses_stream(stream_response, aggregator, state)
             final_status = state["terminal_status"]
+        except asyncio.CancelledError as error:
+            cancellation_error = error
+            final_status = "interrupted"
+            stream_response.set_error(error)
+            self._flush_responses_content(stream_response, aggregator, state)
+            raise
         except Exception as error:
             final_status = (
                 "interrupted"
@@ -2286,16 +2626,33 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 else "failed"
             )
             stream_response.set_error(error)
+            self._flush_responses_content(stream_response, aggregator, state)
         finally:
-            if not await self._aclose_model_stream(model_output, stream_response):
-                final_status = "failed"
+            try:
+                if (
+                    not await self._aclose_model_stream(model_output, stream_response)
+                    and final_status != "interrupted"
+                ):
+                    final_status = "failed"
+            except asyncio.CancelledError as error:
+                final_status = "interrupted"
+                if stream_response.error is None:
+                    stream_response.set_error(error)
+                if cancellation_error is None:
+                    cleanup_cancellation = error
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
             if not stream_response._response_type_event.is_set():
                 stream_response._response_type_event.set()
+            for search_event in state["tool_search_events"].close(
+                str(stream_response.error or "Tool search ended without an output")
+            ):
+                stream_response._add_event(search_event)
             state["metadata"].timing = request_timer.finish()
             stream_response.set_metadata(state["metadata"])
             stream_response.finish(status=final_status)
+        if cleanup_cancellation is not None:
+            raise cleanup_cancellation
         return stream_response
 
     def _build_generation_params(
@@ -2310,7 +2667,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
         extra_body: Optional[Dict[str, Any]] = None,
         extra_body_kwargs: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
-        return self.api_adapter.build_generation_params(
+        updated_effort = reasoning_effort_from_history(messages)
+        params = self.api_adapter.build_generation_params(
             self,
             messages,
             system_prompt,
@@ -2321,6 +2679,19 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             extra_body=extra_body,
             extra_body_kwargs=extra_body_kwargs,
         )
+        if updated_effort is not None and self.supports_reasoning_effort():
+            params["_effective_reasoning_effort"] = updated_effort
+            has_update = any(
+                item.get("type") == "configuration_update"
+                for item in params.get("input", ())
+            )
+            if self.supports_reasoning_update():
+                initial_effort = self._initial_reasoning_effort(messages)
+                if initial_effort is not None:
+                    params["reasoning_effort"] = initial_effort
+            if not self.supports_reasoning_update() or not has_update:
+                params["reasoning_effort"] = updated_effort
+        return params
 
     def _build_chat_completions_generation_params(
         self,
@@ -2399,6 +2770,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 api_mode=self.api_mode,
                 reasoning_codec=self.reasoning_codec,
                 native_tools=self.native_tools,
+                reasoning_updates=self.supports_reasoning_update(),
             )
         elif isinstance(messages, str):
             response_input = [{"role": "user", "content": messages}]
@@ -2408,6 +2780,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 api_mode=self.api_mode,
                 reasoning_codec=self.reasoning_codec,
                 native_tools=self.native_tools,
+                reasoning_updates=self.supports_reasoning_update(),
             )
 
         if isinstance(system_prompt, str):
@@ -2661,6 +3034,11 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
         if params.get("tool_choice") is None:
             params.pop("tool_choice", None)
+
+        if "input" in params:
+            params["input"] = normalize_responses_input_roles(
+                params["input"], provider=self.provider, model_id=self.model_id
+            )
 
         return params
 

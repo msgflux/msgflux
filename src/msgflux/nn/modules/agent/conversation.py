@@ -1,5 +1,6 @@
 # ruff: noqa: A001, A002
 
+import asyncio
 import contextvars
 import warnings
 from copy import deepcopy
@@ -15,6 +16,11 @@ from typing import (
 
 import msgspec
 
+from msgflux._private.model_metadata import (
+    last_model_configuration,
+    last_model_metadata,
+    model_configuration_from_history,
+)
 from msgflux._private.response_metadata import attach_response_metadata
 from msgflux.chat_messages import ChatMessages
 from msgflux.exceptions import (
@@ -22,10 +28,15 @@ from msgflux.exceptions import (
     TaskInterruptRequestedError,
     TaskPauseRequestedError,
 )
+from msgflux.models.configuration import ModelConfiguration
+from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.tool_transport import native_item_types
+from msgflux.models.types import reasoning_effort_from_history
 from msgflux.nn.hooks.events import (
     NotificationContext,
 )
+from msgflux.nn.modules.agent.lifecycle import _seal_terminal_steering
 from msgflux.runtime.agent_inbox import (
     AgentInbox,
     AgentNotification,
@@ -33,6 +44,8 @@ from msgflux.runtime.agent_inbox import (
 from msgflux.runtime.agent_run import AgentRun, get_agent_run
 from msgflux.runtime.context import (
     ExecutionScope,
+    _get_history_origin,
+    _HistoryOrigin,
     get_execution_context,
     new_run_id,
     new_thread_id,
@@ -54,8 +67,225 @@ from msgflux.nn.modules.agent.context import (
 _TASK_RESULT_UNSET = object()
 
 
+def _checkpoint_selection(
+    *,
+    namespace: str,
+    thread_id: str,
+    run_id: str | None,
+    current_exists: bool,
+    origin: _HistoryOrigin | None,
+    allow_latest: bool = True,
+) -> tuple[str, str | None]:
+    if current_exists and run_id is not None:
+        return "current", run_id
+    if (
+        origin is not None
+        and origin.namespace == namespace
+        and origin.thread_id == thread_id
+    ):
+        if origin.run_id != run_id:
+            return "fresh", None
+        if origin.source_run_id is None:
+            return "fresh", None
+        return "source", origin.source_run_id
+    return ("latest", None) if allow_latest else ("fresh", None)
+
+
+def _select_checkpoint_state(
+    store: Any,
+    namespace: str,
+    thread_id: str,
+    run_id: str | None,
+    origin: _HistoryOrigin | None,
+    *,
+    allow_latest: bool = True,
+) -> Mapping[str, Any] | None:
+    current = (
+        store.load_state(namespace, thread_id, run_id) if run_id is not None else None
+    )
+    selection, selected_run_id = _checkpoint_selection(
+        namespace=namespace,
+        thread_id=thread_id,
+        run_id=run_id,
+        current_exists=current is not None,
+        origin=origin,
+        allow_latest=allow_latest,
+    )
+    if selection == "current":
+        return current
+    if selection == "fresh":
+        return None
+    if selection == "source":
+        state = store.load_state(namespace, thread_id, selected_run_id)
+        if state is None:
+            raise _missing_origin_checkpoint(namespace, thread_id, selected_run_id)
+        return state
+    return store.load_latest_run(namespace, thread_id)
+
+
+async def _aselect_checkpoint_state(
+    store: Any,
+    namespace: str,
+    thread_id: str,
+    run_id: str | None,
+    origin: _HistoryOrigin | None,
+    *,
+    allow_latest: bool = True,
+) -> Mapping[str, Any] | None:
+    current = None
+    if run_id is not None:
+        current = (
+            await store.aload_state(namespace, thread_id, run_id)
+            if hasattr(store, "aload_state")
+            else store.load_state(namespace, thread_id, run_id)
+        )
+    selection, selected_run_id = _checkpoint_selection(
+        namespace=namespace,
+        thread_id=thread_id,
+        run_id=run_id,
+        current_exists=current is not None,
+        origin=origin,
+        allow_latest=allow_latest,
+    )
+    if selection == "current":
+        return current
+    if selection == "fresh":
+        return None
+    if selection == "source":
+        state = (
+            await store.aload_state(namespace, thread_id, selected_run_id)
+            if hasattr(store, "aload_state")
+            else store.load_state(namespace, thread_id, selected_run_id)
+        )
+        if state is None:
+            raise _missing_origin_checkpoint(namespace, thread_id, selected_run_id)
+        return state
+    return (
+        await store.aload_latest_run(namespace, thread_id)
+        if hasattr(store, "aload_latest_run")
+        else store.load_latest_run(namespace, thread_id)
+    )
+
+
+def _missing_origin_checkpoint(
+    namespace: str, thread_id: str, run_id: str
+) -> RuntimeError:
+    return RuntimeError(
+        f"Expected checkpoint run `{run_id}` for agent `{namespace}` in thread "
+        f"`{thread_id}`, but it was not found."
+    )
+
+
 class AgentConversationMixin:
     """Conversation state, inbox, checkpoint, and durable-resume behavior."""
+
+    @staticmethod
+    def _validated_checkpoint_messages(state: Mapping[str, Any]) -> Mapping[str, Any]:
+        """Validate and normalize stored conversation before resuming a run."""
+        if not isinstance(state, Mapping):
+            raise ValueError("Checkpoint state must be a mapping.")
+        messages = state.get("messages", {})
+        if not isinstance(messages, Mapping):
+            raise ValueError("Checkpoint messages must be a mapping.")
+        items = messages.get("items", [])
+        if not isinstance(items, list):
+            raise ValueError("Checkpoint messages `items` must be a list.")
+        if any(not isinstance(item, Mapping) for item in items):
+            raise ValueError("Checkpoint message items must be mappings.")
+        normalized = dict(messages)
+        normalized["items"] = [dict(item) for item in items]
+        return normalized
+
+    def get_model_configuration(
+        self, *, scope: ExecutionScope | None = None
+    ) -> ModelConfiguration | None:
+        """Recover the last audited request and conversation reasoning settings.
+
+        This reads checkpoint state without constructing or modifying a model.
+        It does not represent an unexecuted selection or a pending inbox update.
+        """
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("`scope` must be ExecutionScope or None")
+        return last_model_configuration(self._reasoning_checkpoint_state(scope))
+
+    def get_last_model_metadata(
+        self, *, scope: ExecutionScope | None = None
+    ) -> dict[str, str] | None:
+        """Return the identity of the last model recorded for a checkpointed thread."""
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("`scope` must be ExecutionScope or None")
+        return last_model_metadata(self._reasoning_checkpoint_state(scope))
+
+    def get_reasoning_effort(
+        self,
+        messages: ChatMessages | List[Mapping[str, Any]] | None = None,
+        *,
+        scope: ExecutionScope | None = None,
+        model_preference: str | None = None,
+    ) -> str | None:
+        """Return the effort active for a conversation or checkpointed thread.
+
+        A persisted conversation update takes precedence over the model's
+        constructor setting. Pending inbox updates take effect when drained.
+        """
+        if messages is not None and not isinstance(messages, (ChatMessages, list)):
+            raise TypeError("`messages` must be ChatMessages, a list, or None")
+        if scope is not None and not isinstance(scope, ExecutionScope):
+            raise TypeError("`scope` must be ExecutionScope or None")
+
+        if messages is None:
+            state = self._reasoning_checkpoint_state(scope)
+            if state is not None:
+                messages = state.get("messages", {}).get("items", [])
+                if model_preference is None:
+                    saved_preference = state.get("model_preference")
+                    if isinstance(saved_preference, str):
+                        model_preference = saved_preference
+
+        model = self._reasoning_model(model_preference)
+        supports = getattr(model, "supports_reasoning_effort", None)
+        if callable(supports) and not supports():
+            return None
+
+        updated = reasoning_effort_from_history(messages)
+        if updated is not None:
+            return updated
+        params = getattr(model, "sampling_run_params", None)
+        return params.get("reasoning_effort") if isinstance(params, Mapping) else None
+
+    def _reasoning_model(self, model_preference: str | None):
+        model = self.model
+        if not isinstance(model, ModelGateway):
+            return model
+        if model_preference is None:
+            return model.models[0]
+        model.validate_model_name(model_preference)
+        return model.models[model._model_name_to_index[model_preference]]
+
+    def _reasoning_checkpoint_state(
+        self, scope: ExecutionScope | None
+    ) -> Mapping[str, Any] | None:
+        context = get_execution_context()
+        inbox = getattr(self, "agent_inbox", None)
+        thread_id = (
+            scope.thread_id
+            if scope is not None
+            else context.get("thread_id")
+            or (inbox.thread_id if inbox is not None and inbox._scope_bound else None)
+        )
+        store = self._get_effective_checkpoint_store(thread_id)
+        if store is None or thread_id is None:
+            return None
+        namespace = self.get_module_name()
+        run_id = scope.run_id if scope is not None else context.get("run_id")
+        return _select_checkpoint_state(
+            store,
+            namespace,
+            thread_id,
+            run_id if isinstance(run_id, str) else None,
+            _get_history_origin(),
+            allow_latest=scope is None or scope.run_id is None,
+        )
 
     def _coerce_chat_messages(
         self,
@@ -74,11 +304,20 @@ class AgentConversationMixin:
 
     # --- Execution Context Resolution ---
 
-    def _get_effective_checkpoint_store(self):
+    def _get_effective_checkpoint_store(self, thread_id=None):
         checkpoint_store = getattr(self, "checkpoint_store", None)
         if checkpoint_store is not None:
             return checkpoint_store
-        return get_execution_context().get("checkpoint_store")
+        context = get_execution_context()
+        inherited = context.get("checkpoint_store")
+        if inherited is not None:
+            return inherited
+        thread_id = thread_id or context.get("thread_id")
+        if self.agent_dir is not None and thread_id is not None:
+            path = self.agent_dir / "threads" / thread_id / "checkpoints.sqlite3"
+            if path.exists():
+                return self._bind_resources(thread_id).checkpoint_store
+        return None
 
     def _get_effective_task_store(self):
         return get_execution_context().get("task_store")
@@ -172,6 +411,23 @@ class AgentConversationMixin:
                 self._inbox_receipt_ids(messages).union(ids)
             )
 
+    def _stage_checkpoint_history(self, messages):
+        if (
+            isinstance(messages, ChatMessages)
+            and self._get_effective_checkpoint_store() is not None
+        ):
+            return messages.copy()
+        return messages
+
+    @staticmethod
+    def _publish_checkpoint_history(original, staged) -> None:
+        if (
+            isinstance(original, ChatMessages)
+            and isinstance(staged, ChatMessages)
+            and original is not staged
+        ):
+            original._hydrate_state(staged._to_state())
+
     @staticmethod
     def _emit_notification_drain(notification_ids) -> None:
         ids = sorted(set(notification_ids))
@@ -220,19 +476,56 @@ class AgentConversationMixin:
                 None,
             )
             if consumed is not None:
-                self._record_inbox_receipts(messages, [consumed])
+                if self._get_effective_checkpoint_store() is None:
+                    self._record_inbox_receipts(messages, [consumed])
                 inbox.mark_delivered([consumed])
-            inbox.release(except_ids=inbox.delivered_ids())
+            self._release_inbox_notifications(error, except_ids=inbox.delivered_ids())
             if self._get_effective_checkpoint_store() is None:
                 inbox.ack(inbox.delivered_ids())
             raise
-        except BaseException:
-            inbox.release()
+        except BaseException as error:
+            self._release_inbox_notifications(error)
             raise
 
     def _finish_inbox_delivery(self, inbox, messages, notifications, *, drain):
         ids = [item.notification_id for item in notifications]
-        notification_messages = inbox.render_messages(notifications)
+        configuration = [
+            item
+            for item in notifications
+            if item.source == "model_configuration"
+            and item.status == "reasoning_effort"
+        ]
+        if configuration:
+            effort = configuration[-1].metadata["reasoning_effort"]
+            update = {
+                "type": "model_configuration",
+                "reasoning_effort": effort,
+                "metadata": {
+                    "inbox_receipts": [item.notification_id for item in configuration]
+                },
+            }
+            if isinstance(messages, ChatMessages):
+                active_turn = messages.get_active_turn()
+                start = (
+                    active_turn.get("start_item_index")
+                    if active_turn is not None
+                    else None
+                )
+                has_model_output = isinstance(start, int) and any(
+                    item.get("role") == "assistant"
+                    or item.get("type")
+                    in {"reasoning", "function_call", "tool_search_call"}
+                    for item in messages[start:]
+                )
+                if has_model_output:
+                    messages.append(update)
+                else:
+                    messages.insert_before_active_turn(update)
+            else:
+                messages.append(update)
+        notification_messages = inbox.render_messages(
+            item for item in notifications if item not in configuration
+        )
         for item in notification_messages:
             item["metadata"] = {**item.get("metadata", {}), "inbox_receipts": ids}
         self._persist_notification_messages(messages, notification_messages)
@@ -290,9 +583,9 @@ class AgentConversationMixin:
             return self._finish_inbox_delivery(
                 inbox, messages, notifications, drain=drain_notifications
             )
-        except BaseException:
+        except BaseException as error:
             if drain_notifications:
-                inbox.release()
+                self._release_inbox_notifications(error)
             raise
 
     async def _adrain_inbox_into_messages(
@@ -338,9 +631,9 @@ class AgentConversationMixin:
             return self._finish_inbox_delivery(
                 inbox, messages, notifications, drain=drain_notifications
             )
-        except BaseException:
+        except BaseException as error:
             if drain_notifications:
-                inbox.release()
+                self._release_inbox_notifications(error)
             raise
 
     # --- Inbox Delivery ---
@@ -606,6 +899,19 @@ class AgentConversationMixin:
 
     # --- Response Extraction Helpers ---
 
+    def _append_failed_tool_stream_history(self, messages, model_response) -> None:
+        if not isinstance(messages, ChatMessages):
+            return
+        start = len(messages)
+        # Keep received diagnostics without turning incomplete calls into intents.
+        messages.extend(
+            item
+            for item in model_response.chat_accumulator.snapshot()
+            if item.get("type") == "reasoning"
+            or (item.get("type") == "message" and item.get("role") == "assistant")
+        )
+        attach_response_metadata(messages, model_response.metadata, after_index=start)
+
     def _append_tool_model_history(
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
@@ -624,23 +930,36 @@ class AgentConversationMixin:
             items = getattr(model_response, "history_items", [])
         if not isinstance(items, list):
             return set()
+        has_commentary = bool(getattr(model_response, "commentary", None))
+        call_item_types = {"function_call", *native_item_types()}
         trajectory_items = [
             item
             for item in items
-            if item.get("type")
-            in {
-                "reasoning",
-                "tool_search_call",
-                "tool_search_output",
-                "function_call",
-            }
+            if (
+                item.get("type")
+                in {
+                    "reasoning",
+                    "tool_search_call",
+                    "tool_search_output",
+                    *call_item_types,
+                }
+                or (
+                    has_commentary
+                    and item.get("type") == "message"
+                    and item.get("role") == "assistant"
+                    and (
+                        item.get("phase") == "commentary"
+                        or item.get("visibility") == "commentary"
+                    )
+                )
+            )
         ]
         messages.extend(trajectory_items)
 
         existing_call_ids = {
             item.get("call_id") or item.get("id")
             for item in messages
-            if item.get("type") == "function_call"
+            if item.get("type") in call_item_types
         }
         get_tool_intents = getattr(model_response, "get_tool_intents", None)
         if callable(get_tool_intents):
@@ -681,18 +1000,19 @@ class AgentConversationMixin:
             messages.extend(tool_response_messages)
             return
 
+        call_item_types = {"function_call", *native_item_types()}
         existing_call_ids = {
-            item.get("call_id")
+            item.get("call_id") or item.get("id")
             for item in messages
-            if item.get("type") == "function_call"
+            if item.get("type") in call_item_types
         }
         normalized = ChatMessages(tool_response_messages).to_items()
         messages.extend(
             item
             for item in normalized
             if not (
-                item.get("type") == "function_call"
-                and item.get("call_id") in existing_call_ids
+                item.get("type") in call_item_types
+                and (item.get("call_id") or item.get("id")) in existing_call_ids
             )
         )
 
@@ -719,13 +1039,16 @@ class AgentConversationMixin:
         self,
         messages: Union[ChatMessages, List[Mapping[str, Any]]],
         raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
-    ) -> None:
+    ) -> Union[ChatMessages, List[Mapping[str, Any]]]:
         if not isinstance(messages, ChatMessages):
-            return
+            return messages
 
         if isinstance(raw_response, ModelStreamResponse):
-            return
-        messages.end_turn(event="complete")
+            return messages
+
+        finalized = self._stage_checkpoint_history(messages)
+        finalized.end_turn(event="complete")
+        return finalized
 
     def _attach_stream_checkpoint_finalizer(  # noqa: C901
         self,
@@ -734,6 +1057,8 @@ class AgentConversationMixin:
         vars: Mapping[str, Any],
         *,
         async_mode: bool = False,
+        model_preference: str | None = None,
+        tool_filter=None,
     ) -> None:
         # Producers can finish on a worker thread after Agent.forward has returned.
         # Capture the execution identity while it is still bound.
@@ -775,9 +1100,19 @@ class AgentConversationMixin:
                     settled, reason=str(error) if error is not None else None
                 )
             elif settled.get_active_turn() is not None:
-                settled.end_turn(event="complete" if status == "completed" else "fail")
+                settled.end_turn(
+                    event={"completed": "complete", "paused": "pause"}.get(
+                        status, "fail"
+                    )
+                )
+
+        released = False
 
         def release(settled, committed):
+            nonlocal released
+            if released:
+                return
+            released = True
             if not tracked:
                 if committed:
                     messages[:] = settled
@@ -800,12 +1135,37 @@ class AgentConversationMixin:
             try:
                 run_end = prepare(final_state)
                 try:
-                    run_end = self._run_run_end_hook("before_run_end", run_end)
-                except Exception:
-                    close_turn(settled, "failed", final_state.error)
-                    self._checkpoint_save(settled, vars, status="failed")
+                    complete = self._ready_to_complete(
+                        settled, vars, force=final_state.status != "completed"
+                    )
+                    if complete:
+                        run_end = self._run_run_end_hook("before_run_end", run_end)
+                except (Exception, asyncio.CancelledError) as error:
+                    outcome = self._terminal_error_outcome(error)
+                    _seal_terminal_steering(self, settled, error)
+                    close_turn(settled, outcome, error)
+                    self._checkpoint_save(settled, vars, status=outcome)
                     committed = True
                     raise
+                if not complete:
+                    # Publish the durable intermediate history and release this
+                    # provider stream's claim before a successor can claim it.
+                    release(settled, True)
+                    result = self._execute_prepared_run(
+                        None,
+                        {
+                            "messages": messages,
+                            "vars": vars,
+                            "scope": scope,
+                            "model_preference": model_preference,
+                            "tool_filter": tool_filter,
+                        },
+                        continuation=True,
+                    )
+                    model_response._set_continuation(
+                        self._steering_stream_result(result)
+                    )
+                    return
                 settled = run_end.messages
                 close_turn(settled, final_state.status, final_state.error)
                 self._checkpoint_save(
@@ -826,12 +1186,39 @@ class AgentConversationMixin:
             try:
                 run_end = prepare(final_state)
                 try:
-                    run_end = await self._arun_run_end_hook("before_run_end", run_end)
-                except Exception:
-                    close_turn(settled, "failed", final_state.error)
-                    await self._acheckpoint_save(settled, vars, status="failed")
+                    complete = await self._aready_to_complete(
+                        settled, vars, force=final_state.status != "completed"
+                    )
+                    if complete:
+                        run_end = await self._arun_run_end_hook(
+                            "before_run_end", run_end
+                        )
+                except (Exception, asyncio.CancelledError) as error:
+                    outcome = self._terminal_error_outcome(error)
+                    _seal_terminal_steering(self, settled, error)
+                    close_turn(settled, outcome, error)
+                    await self._acheckpoint_save(settled, vars, status=outcome)
                     committed = True
                     raise
+                if not complete:
+                    # Publish the durable intermediate history and release this
+                    # provider stream's claim before a successor can claim it.
+                    release(settled, True)
+                    result = await self._aexecute_prepared_run(
+                        None,
+                        {
+                            "messages": messages,
+                            "vars": vars,
+                            "scope": scope,
+                            "model_preference": model_preference,
+                            "tool_filter": tool_filter,
+                        },
+                        continuation=True,
+                    )
+                    model_response._set_continuation(
+                        self._steering_stream_result(result)
+                    )
+                    return
                 settled = run_end.messages
                 close_turn(settled, final_state.status, final_state.error)
                 await self._acheckpoint_save(
@@ -922,10 +1309,28 @@ class AgentConversationMixin:
                     stacklevel=2,
                 )
 
-    def _release_inbox_notifications(self) -> None:
+    def _release_inbox_notifications(
+        self, primary_error: BaseException, *, except_ids=()
+    ) -> None:
         inbox = self._get_effective_agent_inbox()
         if inbox is not None:
-            inbox.release()
+            try:
+                if except_ids:
+                    inbox.release(except_ids=except_ids)
+                else:
+                    inbox.release()
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+            ):
+                raise
+            except Exception as cleanup_error:
+                primary_error.add_note(
+                    "Inbox lease cleanup failed while handling "
+                    f"{type(primary_error).__name__}: "
+                    f"{type(cleanup_error).__name__}: {cleanup_error}"
+                )
 
     def _checkpoint_save(
         self,
@@ -969,8 +1374,8 @@ class AgentConversationMixin:
                 checkpoint_store.save_state(
                     self.get_module_name(), thread_id, run_id, state
                 )
-        except BaseException:
-            self._release_inbox_notifications()
+        except BaseException as error:
+            self._release_inbox_notifications(error)
             raise
         self._ack_inbox_notifications(messages)
 
@@ -1027,8 +1432,8 @@ class AgentConversationMixin:
                 checkpoint_store.save_state(
                     self.get_module_name(), thread_id, run_id, state
                 )
-        except BaseException:
-            self._release_inbox_notifications()
+        except BaseException as error:
+            self._release_inbox_notifications(error)
             raise
         self._ack_inbox_notifications(messages)
 
@@ -1087,11 +1492,52 @@ class AgentConversationMixin:
         scope = context.get("scope") or get_execution_context()["scope"]
         if run is not None:
             run.head_item_id = messages[-1].get("item_id") if messages else None
+        from msgflux.runtime.workspace.references import (  # noqa: PLC0415
+            encode_workspace_reference,
+        )
+
+        workspace_scope = self._workspace_scope(scope)
+        workspace_reference = encode_workspace_reference(workspace_scope.workspace)
+        policy_state = get_execution_context().get("workspace_policy")
+        if run is not None and policy_state is not None:
+            run.set_extension(
+                "workspace_policy", msgspec.to_builtins(policy_state.current)
+            )
+        runtime_state = run.durable_state() if run is not None else {}
+        if run is not None:
+            from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+                mark_tool_outputs_recorded,
+            )
+
+            receipts = run.get_extension("command_receipts", [])
+            if receipts:
+                run.set_extension(
+                    "command_receipts",
+                    mark_tool_outputs_recorded(
+                        receipts, messages._to_state().get("items", [])
+                    ),
+                )
+                runtime_state = run.durable_state()
+        if workspace_reference is not None:
+            if run is not None:
+                run.set_extension("workspace_reference", workspace_reference)
+                runtime_state = run.durable_state()
+            else:
+                runtime_state = {
+                    "schema_version": 1,
+                    "extensions": {"workspace_reference": workspace_reference},
+                }
+        model_configuration = model_configuration_from_history(messages._items)
         state = {
             "schema_version": 1,
+            "model_configuration": (
+                msgspec.to_builtins(model_configuration)
+                if model_configuration is not None
+                else None
+            ),
             "status": status,
             "messages": messages._to_state(),
-            "runtime": run.durable_state() if run is not None else {},
+            "runtime": runtime_state,
             "scope": scope.to_dict(),
             "model_preference": context.get("model_preference"),
             "metadata": {
@@ -1159,12 +1605,14 @@ class AgentConversationMixin:
         if checkpoint_store.load_state(namespace, thread_id, run_id) is not None:
             return messages, vars, model_preference
 
-        latest = checkpoint_store.load_latest_run(namespace, thread_id)
+        latest = _select_checkpoint_state(
+            checkpoint_store, namespace, thread_id, run_id, _get_history_origin()
+        )
         if latest is None:
             return messages, vars, model_preference
 
         restored = ChatMessages()
-        restored._hydrate_state(latest.get("messages", {}))
+        restored._hydrate_state(self._validated_checkpoint_messages(latest))
         restored.configure_thread(thread_id=thread_id, namespace=namespace)
 
         restored_model_preference = (
@@ -1201,15 +1649,14 @@ class AgentConversationMixin:
         if current is not None:
             return messages, vars, model_preference
 
-        if hasattr(checkpoint_store, "aload_latest_run"):
-            latest = await checkpoint_store.aload_latest_run(namespace, thread_id)
-        else:
-            latest = checkpoint_store.load_latest_run(namespace, thread_id)
+        latest = await _aselect_checkpoint_state(
+            checkpoint_store, namespace, thread_id, run_id, _get_history_origin()
+        )
         if latest is None:
             return messages, vars, model_preference
 
         restored = ChatMessages()
-        restored._hydrate_state(latest.get("messages", {}))
+        restored._hydrate_state(self._validated_checkpoint_messages(latest))
         restored.configure_thread(thread_id=thread_id, namespace=namespace)
 
         restored_model_preference = (
@@ -1250,9 +1697,13 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        messages_state = self._validated_checkpoint_messages(state)
+        self._validate_checkpoint_command_receipts(state)
+        self._validate_checkpoint_workspace(state, scope=scope)
+
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
-        restored._hydrate_state(state.get("messages", {}))
+        restored._hydrate_state(messages_state)
         if not restored.turns or restored.turns[-1]["turn_id"] != run_id:
             restored.begin_turn(turn_id=run_id)
         elif restored.get_active_turn() is None:
@@ -1309,9 +1760,13 @@ class AgentConversationMixin:
                 f"`{effective_thread_id}`."
             )
 
+        messages_state = self._validated_checkpoint_messages(state)
+        self._validate_checkpoint_command_receipts(state)
+        self._validate_checkpoint_workspace(state, scope=scope)
+
         self._restore_agent_run(state, effective_thread_id, run_id)
         restored = ChatMessages()
-        restored._hydrate_state(state.get("messages", {}))
+        restored._hydrate_state(messages_state)
         if not restored.turns or restored.turns[-1]["turn_id"] != run_id:
             restored.begin_turn(turn_id=run_id)
         elif restored.get_active_turn() is None:
@@ -1328,6 +1783,59 @@ class AgentConversationMixin:
             "model_preference": state.get("model_preference"),
             "scope": effective_scope,
         }
+
+    @staticmethod
+    def _validate_checkpoint_command_receipts(state) -> None:
+        from msgflux.exceptions import TaskPauseRequestedError  # noqa: PLC0415
+        from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+            decode_command_receipt,
+            mark_tool_outputs_recorded,
+            resolved_command_execution_ids,
+            unresolved_command_receipts,
+        )
+
+        extensions = state.get("runtime", {}).get("extensions", {})
+        receipts = extensions.get("command_receipts", [])
+        if not receipts:
+            return
+        receipts = [decode_command_receipt(item) for item in receipts]
+        reconciled = resolved_command_execution_ids(extensions, receipts=receipts)
+        messages = state.get("messages", {}).get("items", [])
+        receipts = [
+            decode_command_receipt(item)
+            for item in mark_tool_outputs_recorded(receipts, messages)
+        ]
+        if any(
+            receipt.execution_id not in reconciled
+            for receipt in unresolved_command_receipts(receipts)
+        ):
+            raise TaskPauseRequestedError(
+                message=(
+                    "Workspace command outcome requires host reconciliation before "
+                    "this Agent run can resume."
+                )
+            )
+
+    def _validate_checkpoint_workspace(self, state, *, scope=None) -> None:
+        from msgflux.exceptions import TaskPauseRequestedError  # noqa: PLC0415
+        from msgflux.runtime.workspace.references import (  # noqa: PLC0415
+            WorkspaceCwdMismatchError,
+            validate_workspace_reference,
+        )
+
+        reference = (
+            state.get("runtime", {}).get("extensions", {}).get("workspace_reference")
+        )
+        active = scope
+        if active is None:
+            active = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self), {}).get("scope")
+        if active is None:
+            active = get_execution_context().get("scope")
+        effective = self._workspace_scope(active)
+        try:
+            validate_workspace_reference(reference, effective.workspace)
+        except WorkspaceCwdMismatchError as error:
+            raise TaskPauseRequestedError(message=str(error)) from error
 
     def _restore_agent_run(self, state, thread_id, run_id) -> None:
         current = get_agent_run()

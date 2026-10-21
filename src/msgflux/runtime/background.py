@@ -1,7 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 from concurrent.futures import CancelledError as FutureCancelledError
-from contextlib import nullcontext
+from contextlib import contextmanager, nullcontext
 from functools import partial
 from threading import Lock
 from typing import Any, Dict, Mapping
@@ -9,17 +10,22 @@ from uuid import uuid4
 
 from msgflux._private.executor import Executor
 from msgflux.exceptions import (
+    AbortRequestedError,
     TaskIdCollisionError,
     TaskInterruptRequestedError,
     TaskLeaseLostError,
     TaskPauseRequestedError,
 )
 from msgflux.logger import logger
+from msgflux.models.response import _stream_response_from_result
 from msgflux.runtime.agent_inbox import AgentInbox, AgentNotification
 from msgflux.runtime.context import (
     ExecutionScope,
+    _history_origin_context,
+    _HistoryOrigin,
     execution_context,
     get_execution_context,
+    get_execution_scope,
     new_run_id,
     new_thread_id,
 )
@@ -33,6 +39,10 @@ from msgflux.runtime.events import (
 )
 from msgflux.runtime.permissions import require_permissions
 from msgflux.runtime.task_leases import TaskLeaseHeartbeats
+from msgflux.runtime.workspace.references import (
+    encode_workspace_reference,
+    validate_workspace_reference,
+)
 from msgflux.tasks import TaskActivityRecorder, TaskHandle
 from msgflux.tools.builtin.task_tool import (
     build_background_dispatch_result,
@@ -41,7 +51,73 @@ from msgflux.tools.builtin.task_tool import (
 from msgflux.tools.handles import ToolBucketHandle
 from msgflux.tools.responses import ToolCall
 from msgflux.tools.types import ToolBackground, ToolBucket
+from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import lossless_json_roundtrip
+
+
+def _await_event_finalized_result(result: Any, task_id: str) -> Any:
+    stream = _stream_response_from_result(result)
+    finalization = getattr(stream, "_msgflux_event_finalization_future", None)
+    if finalization is None:
+        return result
+    try:
+        return finalization.result()
+    except (FutureCancelledError, asyncio.CancelledError) as exc:
+        raise TaskInterruptRequestedError(
+            task_id,
+            "Agent stream finalization was cancelled",
+        ) from exc
+
+
+@contextmanager
+def _task_history_origin_context(task_id: str, metadata: Mapping[str, Any]):
+    is_agent_task = metadata.get("task_kind") == "agent"
+    source_run_id = metadata.get("checkpoint_origin_run_id")
+    generation = metadata.get("resume_generation", 0)
+    current = get_execution_context()
+    current_run_id = current.get("run_id")
+    if (
+        is_agent_task
+        and isinstance(generation, int)
+        and generation > 0
+        and not (isinstance(source_run_id, str) and source_run_id)
+    ):
+        initial_run = current_run_id == task_id
+        store = current.get("checkpoint_store")
+        has_current_checkpoint = (
+            store is not None
+            and isinstance(current.get("namespace"), str)
+            and isinstance(current.get("thread_id"), str)
+            and isinstance(current_run_id, str)
+            and store.load_state(
+                current["namespace"], current["thread_id"], current_run_id
+            )
+            is not None
+        )
+        if not initial_run and not has_current_checkpoint:
+            raise RuntimeError(
+                f"Task `{task_id}` resumed without a known checkpoint origin run; "
+                "refusing to select unrelated history."
+            )
+    origin = None
+    if (
+        is_agent_task
+        and isinstance(current.get("namespace"), str)
+        and isinstance(current.get("thread_id"), str)
+        and isinstance(current.get("run_id"), str)
+    ):
+        origin = _HistoryOrigin(
+            namespace=current["namespace"],
+            thread_id=current["thread_id"],
+            run_id=current["run_id"],
+            source_run_id=(
+                source_run_id
+                if isinstance(source_run_id, str) and source_run_id
+                else None
+            ),
+        )
+    with _history_origin_context(origin):
+        yield
 
 
 class BackgroundTaskDispatcher:
@@ -128,6 +204,31 @@ class BackgroundTaskDispatcher:
             return configured
         return get_execution_context().get("checkpoint_store")
 
+    def _task_agent(self, *, tool: Any, resume_params: Mapping[str, Any]) -> Any:
+        """Resolve the Agent whose workspace/checkpoint behavior a bucket targets."""
+        impl = getattr(tool, "impl", None)
+        if isinstance(impl, ToolBucket):
+            child_param = getattr(impl, "task_checkpoint_namespace_param", None)
+            child_name = resume_params.get(child_param) if child_param else None
+            if isinstance(child_name, str):
+                child = self.library_handle.get_tool_definition(child_name).executor
+                impl = getattr(child, "impl", None)
+        return impl
+
+    def validate_task_workspace(
+        self, task: Any, *, tool: Any, resume_params: Mapping[str, Any]
+    ) -> Any:
+        """Validate a durable task workspace reference against the host binding."""
+        agent = self._task_agent(tool=tool, resume_params=resume_params)
+        scope = get_execution_scope()
+        # Agent lifecycle gives an inherited live workspace precedence over its
+        # configured default. Keep that rule here without invoking Agent code.
+        workspace = scope.workspace or getattr(agent, "workspace", None)
+        validate_workspace_reference(
+            task.metadata.get("workspace_reference"), workspace
+        )
+        return workspace
+
     @staticmethod
     def _validate_checkpoint_binding(task: Any, store: Any | None) -> None:
         expected = task.metadata.get("checkpoint_store_id")
@@ -146,8 +247,8 @@ class BackgroundTaskDispatcher:
         thread_id: str,
         run_id: str,
     ) -> Mapping[str, Any] | None:
-        if task.status != "running":
-            raise RuntimeError(f"Task `{task.task_id}` is not running.")
+        if task.status not in {"queued", "running"}:
+            raise RuntimeError(f"Task `{task.task_id}` is not queued or running.")
         checkpoint = (
             checkpoint_store.load_state(namespace, thread_id, run_id)
             if checkpoint_store is not None
@@ -161,6 +262,85 @@ class BackgroundTaskDispatcher:
                 "to recover."
             )
         return checkpoint
+
+    @staticmethod
+    def _validate_recovery_command_receipts(
+        task: Any, task_store: Any, checkpoint: Mapping[str, Any] | None
+    ) -> None:
+        from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+            decode_command_receipt,
+            mark_tool_outputs_recorded,
+            resolved_command_execution_ids,
+            task_command_receipts,
+            unresolved_command_receipts,
+        )
+
+        receipts = task_command_receipts(task_store, task.task_id)
+        extensions = (
+            checkpoint.get("runtime", {}).get("extensions", {})
+            if checkpoint is not None
+            else {}
+        )
+        reconciled = resolved_command_execution_ids(extensions, receipts=receipts)
+        if checkpoint is not None:
+            messages = checkpoint.get("messages", {}).get("items", [])
+            receipt_data = mark_tool_outputs_recorded(receipts, messages)
+            receipts = tuple(decode_command_receipt(item) for item in receipt_data)
+        if any(
+            receipt.execution_id not in reconciled
+            for receipt in unresolved_command_receipts(receipts)
+        ):
+            raise RuntimeError(
+                f"Task `{task.task_id}` has a command receipt requiring host "
+                "reconciliation before recovery."
+            )
+
+    @staticmethod
+    def _verify_claimed_checkpoint(
+        task: Any, before: Mapping[str, Any] | None, after: Mapping[str, Any] | None
+    ) -> None:
+        if before is None or after is None:
+            if before is not after:
+                raise RuntimeError(
+                    f"Task `{task.task_id}` checkpoint changed during recovery."
+                )
+        else:
+            before_revision = before.get("_checkpoint", {}).get("revision")
+            after_revision = after.get("_checkpoint", {}).get("revision")
+            if (
+                type(before_revision) is not int
+                or type(after_revision) is not int
+                or before_revision != after_revision
+                or before.get("status") != after.get("status")
+            ):
+                raise RuntimeError(
+                    f"Task `{task.task_id}` checkpoint changed during recovery."
+                )
+        if after is not None:
+            pending = (
+                after.get("runtime", {}).get("extensions", {}).get("pending_approvals")
+            )
+            if pending is not None:
+                if (
+                    not isinstance(pending, Mapping)
+                    or pending.get("schema_version") != 1
+                ):
+                    raise RuntimeError(
+                        f"Task `{task.task_id}` has an approval batch requiring "
+                        "host reconciliation before recovery."
+                    )
+                phase = pending.get("phase")
+                if phase is None:
+                    phase = "awaiting_decision"
+                if phase not in {
+                    "awaiting_decision",
+                    "awaiting-decision",
+                    "approved",
+                }:
+                    raise RuntimeError(
+                        f"Task `{task.task_id}` has an approval batch requiring "
+                        "host reconciliation before recovery."
+                    )
 
     @staticmethod
     def _durable_initial_params(visible_params: Mapping[str, Any]) -> dict | None:
@@ -189,6 +369,9 @@ class BackgroundTaskDispatcher:
         task_resume_params: Mapping[str, Any],
     ) -> str:
         impl = getattr(tool, "impl", None)
+        agent = self._task_agent(tool=tool, resume_params=task_resume_params)
+        if hasattr(agent, "get_module_name"):
+            return agent.get_module_name()
         namespace_param = getattr(impl, "task_checkpoint_namespace_param", None)
         if isinstance(namespace_param, str):
             value = task_resume_params.get(namespace_param)
@@ -211,14 +394,15 @@ class BackgroundTaskDispatcher:
         required_resources: tuple = (),
         recover_expired: bool = False,
     ) -> Any:
-        scope = execution_scope or {}
+        task = task_handle._store.get(task_handle.task_id)
+        metadata = task.metadata if task is not None else {}
         capture = (
             nullcontext()
             if _is_capturing_events()
             else _capture_events(_hub_event_sink())
         )
         with (
-            execution_context(**scope),
+            execution_context(**(execution_scope or {})),
             capture,
             event_source(tool_name, "background"),
         ):
@@ -232,35 +416,18 @@ class BackgroundTaskDispatcher:
                 raise TaskLeaseLostError(task_handle.task_id)
             TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
             try:
-                require_permissions(required_permissions, required_resources)
-                result = tool(**call_params)
+                with _task_history_origin_context(task_handle.task_id, metadata):
+                    require_permissions(required_permissions, required_resources)
+                    result = tool(**call_params)
+                    result = _await_event_finalized_result(result, task_handle.task_id)
             except TaskLeaseLostError:
                 raise
-            except TaskInterruptRequestedError as exc:
-                task_handle.interrupt(reason=str(exc))
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
+            except (Exception, asyncio.CancelledError) as exc:
+                self._settle_task_failure(
+                    task_handle,
                     tool_name=tool_name,
-                    status="interrupted",
                     agent_inbox=agent_inbox,
-                )
-                raise
-            except TaskPauseRequestedError as exc:
-                task_handle.pause(reason=str(exc))
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
-                    tool_name=tool_name,
-                    status="paused",
-                    agent_inbox=agent_inbox,
-                )
-                raise
-            except Exception as exc:
-                task_handle.fail(exc)
-                self.publish_task_notification(
-                    task_id=task_handle.task_id,
-                    tool_name=tool_name,
-                    status="failed",
-                    agent_inbox=agent_inbox,
+                    error=exc,
                 )
                 raise
             else:
@@ -282,7 +449,13 @@ class BackgroundTaskDispatcher:
         message: str,
         recover_expired: bool = False,
         reconcile_terminal: bool = False,
+        worker_stopped: bool = False,
     ) -> str:
+        if recover_expired and not reconcile_terminal and worker_stopped is not True:
+            raise RuntimeError(
+                "Confirm that the previous worker has stopped before recovering "
+                "this task."
+            )
         task_store = self.library_handle.get_task_store()
         tool_name = task.tool_name
         tool = self.library_handle.get_tool(tool_name)
@@ -303,6 +476,9 @@ class BackgroundTaskDispatcher:
             resume_params=task.metadata.get("task_resume_params") or {},
         )
         self._validate_checkpoint_binding(task, checkpoint_store)
+        selected_workspace = self.validate_task_workspace(
+            task, tool=tool, resume_params=task.metadata.get("task_resume_params") or {}
+        )
         thread_id = task.metadata.get("checkpoint_thread_id")
         if not isinstance(thread_id, str) or not thread_id:
             thread_id = new_thread_id()
@@ -316,6 +492,8 @@ class BackgroundTaskDispatcher:
             checkpoint = self._validate_recovery_checkpoint(
                 task, checkpoint_store, checkpoint_namespace, thread_id, run_id
             )
+            if not reconcile_terminal:
+                self._validate_recovery_command_receipts(task, task_store, checkpoint)
             if reconcile_terminal:
                 if checkpoint is None or checkpoint.get("status") != "completed":
                     raise RuntimeError(
@@ -373,6 +551,15 @@ class BackgroundTaskDispatcher:
                 lease_seconds=self.lease_seconds,
                 recover_expired=True,
             )
+            try:
+                latest = checkpoint_store.load_state(
+                    checkpoint_namespace, thread_id, run_id
+                )
+                self._verify_claimed_checkpoint(task, checkpoint, latest)
+                self._validate_recovery_command_receipts(task, task_store, latest)
+            except BaseException:
+                task_handle.release_worker()
+                raise
             emit_event(
                 EventType.TASK_START,
                 {
@@ -391,6 +578,15 @@ class BackgroundTaskDispatcher:
             )
             return "Completed background agent result reconciled from checkpoint."
         execution_scope = {
+            "scope": ExecutionScope(
+                thread_id=thread_id,
+                namespace=checkpoint_namespace,
+                run_id=run_id,
+                parent_run_id=task.metadata.get("parent_run_id"),
+                root_run_id=task.metadata.get("root_run_id"),
+                workspace=selected_workspace,
+                account_name=task.metadata.get("account_name"),
+            ),
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
             else None,
@@ -418,6 +614,8 @@ class BackgroundTaskDispatcher:
                 run_id=run_id,
                 parent_run_id=task.metadata.get("parent_run_id"),
                 root_run_id=task.metadata.get("root_run_id"),
+                workspace=selected_workspace,
+                account_name=task.metadata.get("account_name"),
             ),
         }
         if recover_expired and checkpoint is None:
@@ -437,6 +635,21 @@ class BackgroundTaskDispatcher:
                 lease_seconds=self.lease_seconds,
                 recover_expired=True,
             )
+            try:
+                self.validate_task_workspace(
+                    task,
+                    tool=tool,
+                    resume_params=task.metadata.get("task_resume_params") or {},
+                )
+                latest = (
+                    checkpoint_store.load_state(checkpoint_namespace, thread_id, run_id)
+                    if checkpoint_store is not None
+                    else None
+                )
+                self._verify_claimed_checkpoint(task, checkpoint, latest)
+            except BaseException:
+                task_handle.release_worker()
+                raise
             emit_event(
                 EventType.TASK_START,
                 {
@@ -474,10 +687,13 @@ class BackgroundTaskDispatcher:
                     recover_expired=recover_expired,
                 )
             )
-        except BaseException:
-            if recover_expired:
-                TaskLeaseHeartbeats.unregister(task_handle)
-                task_handle.fail("Worker submission failed")
+        except BaseException as exc:
+            self._settle_task_failure(
+                task_handle,
+                tool_name=tool_name,
+                agent_inbox=root_inbox,
+                error=exc,
+            )
             raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
@@ -505,14 +721,57 @@ class BackgroundTaskDispatcher:
     def log_task_failure(self, future: Any) -> None:
         try:
             future.result()
-        except FutureCancelledError:
+        except (FutureCancelledError, asyncio.CancelledError):
             return
-        except TaskInterruptRequestedError:
+        except (AbortRequestedError, TaskInterruptRequestedError):
             return
         except TaskPauseRequestedError:
             return
         except Exception as exc:
             logger.error(f"Background task error: {exc!s}", exc_info=True)
+
+    def _settle_task_failure(
+        self,
+        task_handle: TaskHandle,
+        *,
+        tool_name: str,
+        agent_inbox: AgentInbox | None,
+        error: BaseException,
+    ) -> None:
+        """Persist a task failure without replacing its original exception."""
+        TaskLeaseHeartbeats.unregister(task_handle)
+        interrupted = isinstance(
+            error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                FutureCancelledError,
+                asyncio.CancelledError,
+            ),
+        )
+        status = "interrupted" if interrupted else "failed"
+        try:
+            if isinstance(error, TaskPauseRequestedError):
+                status = "paused"
+                record = task_handle.pause(reason=exception_message(error))
+            elif interrupted:
+                record = task_handle.interrupt(reason=exception_message(error))
+            else:
+                record = task_handle.fail(error)
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Could not persist background task failure")
+            return
+        if record is None:
+            return
+        try:
+            self.publish_task_notification(
+                task_id=task_handle.task_id,
+                tool_name=tool_name,
+                status=status,
+                agent_inbox=agent_inbox,
+            )
+        except (Exception, asyncio.CancelledError):
+            logger.exception("Could not publish background task failure notification")
 
     def dispatch(
         self,
@@ -546,9 +805,14 @@ class BackgroundTaskDispatcher:
             thread_id = new_thread_id()
         parent_run_id = context.get("run_id")
         root_run_id = context.get("root_run_id")
+        account_name = context["scope"].account_name
         checkpoint_store = self._effective_checkpoint_store(
             tool=tool,
             resume_params=task_resume_params,
+        )
+        target_agent = self._task_agent(tool=tool, resume_params=task_resume_params)
+        selected_workspace = context.get("workspace") or getattr(
+            target_agent, "workspace", None
         )
         root_agent_inbox = context.get("agent_inbox")
         if root_agent_inbox is None:
@@ -565,6 +829,11 @@ class BackgroundTaskDispatcher:
                 if is_agent_task and checkpoint_store is not None
                 else None
             ),
+            "workspace_reference": (
+                encode_workspace_reference(selected_workspace)
+                if is_agent_task
+                else None
+            ),
             "task_resume_params": task_resume_params,
             "initial_call_params": (
                 self._durable_initial_params(visible_params) if is_agent_task else None
@@ -572,6 +841,7 @@ class BackgroundTaskDispatcher:
             "thread_id": thread_id,
             "parent_run_id": parent_run_id,
             "root_run_id": root_run_id,
+            "account_name": account_name,
             "checkpoint_thread_id": thread_id,
             "background_capabilities": list(task_capabilities),
             "interrupt_requested": False,
@@ -624,6 +894,8 @@ class BackgroundTaskDispatcher:
                     if isinstance(root_run_id, str) and root_run_id
                     else task.task_id
                 ),
+                workspace=selected_workspace,
+                account_name=account_name,
             )
         runner_params["tool_call_id"] = tool_id
         activity_recorder = TaskActivityRecorder(task.task_id, task_store)
@@ -634,6 +906,23 @@ class BackgroundTaskDispatcher:
             agent_inbox=root_agent_inbox,
         )
         execution_scope = {
+            "scope": ExecutionScope(
+                thread_id=thread_id,
+                namespace=checkpoint_namespace,
+                run_id=task.task_id,
+                parent_run_id=(
+                    parent_run_id
+                    if isinstance(parent_run_id, str) and parent_run_id
+                    else None
+                ),
+                root_run_id=(
+                    root_run_id
+                    if isinstance(root_run_id, str) and root_run_id
+                    else None
+                ),
+                workspace=selected_workspace,
+                account_name=account_name,
+            ),
             "thread_id": thread_id
             if isinstance(thread_id, str) and thread_id
             else None,
@@ -658,19 +947,28 @@ class BackgroundTaskDispatcher:
                 task_store=task_store,
                 activity_recorder=activity_recorder,
             )
-        future = Executor.get_instance().submit(
-            partial(
-                self.run_tool,
-                tool=tool,
-                task_handle=task_handle,
-                tool_name=tool_name,
-                call_params=runner_params,
-                required_permissions=definition.required_permissions,
-                required_resources=definition.required_resources,
-                execution_scope=execution_scope,
-                agent_inbox=root_agent_inbox,
+        try:
+            future = Executor.get_instance().submit(
+                partial(
+                    self.run_tool,
+                    tool=tool,
+                    task_handle=task_handle,
+                    tool_name=tool_name,
+                    call_params=runner_params,
+                    required_permissions=definition.required_permissions,
+                    required_resources=definition.required_resources,
+                    execution_scope=execution_scope,
+                    agent_inbox=root_agent_inbox,
+                )
             )
-        )
+        except BaseException as exc:
+            self._settle_task_failure(
+                task_handle,
+                tool_name=tool_name,
+                agent_inbox=root_agent_inbox,
+                error=exc,
+            )
+            raise
         self.register_task_future(task.task_id, future)
         future.add_done_callback(partial(self.cleanup_task_future, task.task_id))
         future.add_done_callback(self.log_task_failure)
@@ -680,8 +978,6 @@ class BackgroundTaskDispatcher:
             parameters=dict(visible_params),
             result=build_background_dispatch_result(
                 task_id=task.task_id,
-                tool_name=tool_name,
-                task_capabilities=task_capabilities,
             ),
         )
 

@@ -314,14 +314,16 @@ def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901
             or getattr(original_class, "__name__", None)
         )
         display_name = configured_display_name or getattr(impl, "display_name", None)
-        usage_guidance = configured_usage_guidance or getattr(
-            impl, "usage_guidance", None
-        )
+        usage_guidance = configured_usage_guidance
+        if usage_guidance is None and not isinstance(impl, ToolBucket):
+            usage_guidance = getattr(impl, "usage_guidance", None)
+        default_usage_guidance = getattr(impl, "default_usage_guidance", None)
 
-        # Instantiate class first if needed, so we can get instance attributes
+        # Keep the class as the annotation source after normalizing an instance.
         class_annotation_source = original_class
 
-        # Now extract annotations (after instantiation for classes)
+        # Extract annotations after class construction, with the original class
+        # available for declarations that store them on the class.
         annotation_source = None
         has_bucket_annotations = isinstance(impl, ToolBucket) and (
             "annotations" in vars(type(impl)) or "annotations" in vars(impl)
@@ -375,9 +377,10 @@ def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901
 
         name = name_overridden or impl.__name__
         display_name = configured_display_name or getattr(impl, "display_name", None)
-        usage_guidance = configured_usage_guidance or getattr(
-            impl, "usage_guidance", None
-        )
+        usage_guidance = configured_usage_guidance
+        if usage_guidance is None:
+            usage_guidance = getattr(impl, "usage_guidance", None)
+        default_usage_guidance = getattr(impl, "default_usage_guidance", None)
 
     else:
         raise ValueError(
@@ -449,6 +452,7 @@ def _inspect_tool_declaration(impl: Callable) -> ToolDeclaration:  # noqa: C901
         implementation=impl,
         display_name=display_name or name,
         usage_guidance=usage_guidance,
+        default_usage_guidance=default_usage_guidance,
         execution_namespace=(
             impl.get_module_name()
             if tool_kind == "agent" and hasattr(impl, "get_module_name")
@@ -517,6 +521,7 @@ def _declaration_from_tool(tool: Tool) -> ToolDeclaration:
         implementation=getattr(tool, "impl", tool),
         display_name=getattr(tool, "display_name", None) or tool.name,
         usage_guidance=getattr(tool, "usage_guidance", None),
+        default_usage_guidance=getattr(tool, "default_usage_guidance", None),
         execution_namespace=getattr(tool, "execution_namespace", None),
     )
 

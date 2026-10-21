@@ -1,5 +1,120 @@
 # Changelog
 
+## [1.0.0rc3] - 2026-10-17
+
+Third release candidate for Coding and AgentService.
+
+### Coding CLI And Service Operation
+- Observe and steer an existing thread from independent CLI processes (#251).
+- Detach prompt admission and always expose thread/request/run identities (#252).
+- Retrieve current thread or explicit run status and final answer from the CLI and HTTP
+  API, with optional waiting (#253).
+- Inspect the running server's loaded HTTP policy, distinct from configuration edits
+  pending restart (#260).
+
+### Agent Extensions
+- Discover installed extension packages and select/configure them per agent (#255).
+- Add or remove extension selections from the CLI with constructor options and
+  independent aliases, preserving service TOML formatting and atomic publication (#256).
+
+### Durability And Context
+- Safely recover pending approvals after a local daemon restart without bypassing review
+  or replaying uncertain effects automatically (#254).
+- Compact eligible paused/failed checkpoint-backed threads from the SDK or HTTP API;
+  preserve pending approvals and support the native Codex subscription compaction flow
+  (#257).
+
+### Browser Access And Observability
+- Configure explicit browser origins or a standalone '*' wildcard; bearer authorization
+  remains required (#258).
+- Manage CORS origins through `msgflux config cors ls/add/remove`; edited policies take
+  effect after restart (#260).
+- Instrument authenticated HTTP/SSE requests using the existing OpenTelemetry providers
+  (#258).
+- Link detached execution attempts to their scheduling requests, with model/tool
+  ancestry and durable identity/outcome attributes (#259).
+
+### Validation And Installation
+- Real Codex subscription checks with concurrent threads, approval pause/resume,
+  observer disconnection, a TCP service and an OpenTelemetry Collector.
+- Fresh wheel installation with [coding,service], detached admission/result retrieval,
+  graceful restart, same-thread history continuity and final shutdown cleanup.
+- Install with `uv tool install 'msgflux[coding,service]==1.0.0rc3'` after publication.
+- Python 3.11+; no change to explicit host reconciliation for uncertain external
+  effects.
+
+## [1.0.0rc2] - 2026-10-15
+
+Second release candidate for Coding and AgentService.
+
+### Service Operation
+- Added service inspection and stop commands, thread interruption, stop and
+  resume commands, and run inspection (#242).
+- Added agent activity listing, effective agent configuration inspection, and
+  service configuration validation (#243, #244).
+
+### Durability And Diagnostics
+- Preserve non-authentication Codex HTTP errors and their diagnostics (#245).
+- Preserve interrupted status and cancellation reasons for aborted background
+  tasks instead of reporting them as failed (#247).
+- Preserve structured task results, including workspace execution results,
+  when persisting and reopening SQLite task stores (#248).
+- Preserve partial assistant text and commentary when provider streams fail,
+  including failed-run history, without executing incomplete tool calls (#249).
+- Added controlled integration coverage for interrupted provider streams,
+  checkpoint write failures, receipt write failures, thread isolation, and
+  duplicate-request safety (#249).
+- Extended live service stress tests to use saved accounts (#246).
+
+### Installation
+- Renamed the workspace tool extra to `coding` and validated installed-package
+  Coding and AgentService workflows (#245).
+- Install with `pip install "msgflux[coding,service]==1.0.0rc2"` or
+  `uv tool install "msgflux[coding,service]==1.0.0rc2"`.
+- Requires Python 3.11 or newer; CI covers Python 3.11 through 3.14.
+- Recovery of uncertain external effects still requires an explicit trusted-host
+  decision. This release does not introduce automatic replay or exactly-once
+  guarantees for external operations.
+
+## [1.0.0rc1] - 2026-10-14
+
+First release candidate for the 1.0 API, focused on Coding and AgentService.
+
+### Coding And AgentService
+- Added `CodingSession`, a coding harness with provider-aware workspace tools,
+  configurable agents and subagents, reasoning settings, and a default system prompt.
+- Added `AgentService` with durable prompt admission, per-thread workspace and
+  account bindings, recorded results, approvals, and explicit recovery.
+- Added the optional HTTP/SSE service adapter and session client, supporting
+  observation, reconnection, interruption, and frontend-independent execution.
+- Added the `msgflux` CLI for initialization, account login, service status and
+  restart, and noninteractive coding prompts with JSON or streamed NDJSON output.
+- Added named account bundles for API keys and Codex OAuth, including managed
+  token refresh and account isolation across concurrent executions.
+- Consolidated workspace injection, local and Docker execution, bounded reads,
+  approval previews, background tasks, and durable subagent histories.
+
+### Recovery And Validation
+- Preserve workspace identity and approval bindings across service restarts.
+- Recover lost prompt-admission responses by request ID without resubmission.
+- Await streamed response classification on every tool round so subsequent tool
+  calls execute and receive matching outputs before final completion.
+- Preserve concrete recovery diagnostics and avoid automatic replay of uncertain
+  external effects; previous-worker quiescence remains a trusted-host decision.
+- Validate coding, service, accounts, approvals, cleanup, and recovery with
+  offline integration and independent-process failure tests.
+
+### Compatibility And Installation
+- Requires Python 3.11 or newer; CI covers Python 3.11 through 3.14.
+- The 1.0 coding/service configuration uses agent entries and named accounts.
+  Earlier experimental configuration formats are not retained.
+- Install the local/HTTP service dependencies with
+  `pip install "msgflux[service]==1.0.0rc1"` or
+  `uv add "msgflux[service]==1.0.0rc1"`.
+- This is a prerelease for adoption testing. Interruption is cooperative and
+  does not undo completed effects; independent background tasks require their
+  own inspection and interruption.
+
 ## [0.5.1] - 2026-05-29
 
 ### CI / Maintenance

@@ -694,10 +694,19 @@ def test_background_task_reports_progress_and_output():
 
     get_result = library([("call_3", "task_status", {"task_id": task_id})])
     task_state = get_result.tool_calls[0].result
+    assert set(task_state) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "running_for_seconds",
+    }
     assert task_state["status"] == "running"
     assert "started_at" in task_state
     assert isinstance(task_state["running_for_seconds"], float)
-    assert task_state["metadata"]["background_capabilities"] == []
+    internal_task_store = library.get_handle().get_task_store()
+    assert internal_task_store.get(task_id).metadata["background_capabilities"] == []
     assert task_state["progress"]["stage"] == "work"
     assert task_state["progress"]["percent"] == 50.0
 
@@ -713,6 +722,14 @@ def test_background_task_reports_progress_and_output():
     final_state = (
         library([("call_6", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
+    assert set(final_state) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "elapsed_seconds",
+    }
     assert "elapsed_seconds" in final_state
 
     output_result = library([("call_5", "task_output", {"task_id": task_id})])
@@ -735,7 +752,7 @@ def test_task_wait_returns_final_output():
     assert "task_interrupt" in library.get_tool_names()
     task_id = library([("call_2", "task_list", {})]).tool_calls[0].result[0]["task_id"]
     assert f"task_id='{task_id}'" in dispatch.tool_calls[0].result
-    assert "`task_wait`" in dispatch.tool_calls[0].result
+    assert dispatch.tool_calls[0].result == f"task_id='{task_id}'"
 
     timer = threading.Timer(0.1, release.set)
     timer.start()
@@ -852,11 +869,21 @@ def test_task_interrupt_interrupts_background_agent_at_next_checkpoint():
         library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
     assert status["status"] == "interrupted"
-    assert status["metadata"]["background_capabilities"] == [
+    assert set(status) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "elapsed_seconds",
+        "reason",
+    }
+    internal_task_store = library.get_handle().get_task_store()
+    assert internal_task_store.get(task_id).metadata["background_capabilities"] == [
         "activity",
         "message",
     ]
-    assert status["last_activity_summary"] == "Status: Task interrupted."
+    assert status["reason"]
 
 
 def test_cancelled_background_future_is_not_logged_as_error():
@@ -1325,14 +1352,23 @@ def test_background_agent_inherits_context_and_checkpoint_run_id():
     task_state = (
         library([("call_4", "task_status", {"task_id": task_id})]).tool_calls[0].result
     )
-    assert task_state["metadata"]["thread_id"] == "user_42"
-    assert task_state["metadata"]["parent_run_id"] == "run_root"
-    assert task_state["metadata"]["root_run_id"] == "run_root"
-    assert task_state["metadata"]["checkpoint_thread_id"] == "user_42"
-    assert task_state["metadata"]["checkpoint_run_id"] == task_id
+    assert set(task_state) == {
+        "task_id",
+        "tool_name",
+        "status",
+        "progress",
+        "started_at",
+        "elapsed_seconds",
+    }
+    task_record = library.get_handle().get_task_store().get(task_id)
+    assert task_record.metadata["thread_id"] == "user_42"
+    assert task_record.metadata["parent_run_id"] == "run_root"
+    assert task_record.metadata["root_run_id"] == "run_root"
+    assert task_record.metadata["checkpoint_thread_id"] == "user_42"
+    assert task_record.metadata["checkpoint_run_id"] == task_id
 
 
-def test_background_agent_dispatch_mentions_task_message_and_activity():
+def test_background_agent_controls_include_message_and_activity():
     worker = Agent(name="worker", model=_mock_model("done"))
     worker.tool_config = {"background": True}
 
@@ -1341,14 +1377,15 @@ def test_background_agent_dispatch_mentions_task_message_and_activity():
     dispatch = library([("call_1", "worker", {"task": "Solve this"})])
     result = dispatch.tool_calls[0].result
 
-    assert "`task_activity`" in result
-    assert "`task_message`" in result
-    assert "`task_interrupt`" in result
-    assert "`task_wait`" in result
-    assert "`task_output`" in result
-    assert "task_message" in library.get_tool_names()
-    assert "task_activity" in library.get_tool_names()
-    assert "task_interrupt" in library.get_tool_names()
+    task_id = library.get_handle().get_task_store().list()[0].task_id
+    assert result == f"task_id='{task_id}'"
+    assert {
+        "task_activity",
+        "task_message",
+        "task_interrupt",
+        "task_wait",
+        "task_output",
+    } <= set(library.get_tool_names())
 
 
 def test_injected_handle_can_add_background_agent_with_agent_task_tools():
@@ -1374,7 +1411,7 @@ def test_injected_handle_can_add_background_agent_with_agent_task_tools():
     assert "task_message" in add_result
 
 
-def test_background_tool_dispatch_does_not_mention_task_activity():
+def test_background_tool_dispatch_is_compact_without_activity_controls():
     @mf.tool_config(background=True)
     def slow_pipeline(value: int) -> int:
         """Run a simple background tool."""
@@ -1385,12 +1422,12 @@ def test_background_tool_dispatch_does_not_mention_task_activity():
     dispatch = library([("call_1", "slow_pipeline", {"value": 4})])
     result = dispatch.tool_calls[0].result
 
-    assert "`task_status`" in result
-    assert "`task_interrupt`" in result
-    assert "`task_wait`" in result
-    assert "`task_output`" in result
-    assert "`task_activity`" not in result
-    assert "`task_message`" not in result
+    assert "task_status" in library.get_tool_names()
+    assert "task_interrupt" in library.get_tool_names()
+    assert "task_wait" in library.get_tool_names()
+    assert "task_output" in library.get_tool_names()
+    task_id = library.get_handle().get_task_store().list()[0].task_id
+    assert result == f"task_id='{task_id}'"
     assert "task_activity" not in library.get_tool_names()
 
 
@@ -1405,7 +1442,7 @@ def test_background_activity_capability_is_available_for_non_agent_task():
     dispatch = library([("call_1", "monitored_pipeline", {"value": 4})])
     task_id = dispatch.tool_calls[0].result.split("task_id='")[1].split("'")[0]
 
-    assert "`task_activity`" in dispatch.tool_calls[0].result
+    assert dispatch.tool_calls[0].result == f"task_id='{task_id}'"
     assert "`task_message`" not in dispatch.tool_calls[0].result
     assert "task_activity" in library.get_tool_names()
     assert "task_message" not in library.get_tool_names()
@@ -1419,8 +1456,10 @@ def test_background_activity_capability_is_available_for_non_agent_task():
         .result
     )
 
-    assert task["metadata"]["task_kind"] == "tool"
-    assert task["metadata"]["background_capabilities"] == ["activity"]
+    task_record = library.get_handle().get_task_store().get(task_id)
+    assert task_record.metadata["task_kind"] == "tool"
+    assert task_record.metadata["background_capabilities"] == ["activity"]
+    assert "metadata" not in task
     assert isinstance(activity, list)
 
 
@@ -1556,7 +1595,20 @@ def test_task_message_resumes_completed_background_agent():
             .tool_calls[0]
             .result
         )
-        resumed_run_id = task_state["metadata"]["checkpoint_run_id"]
+        assert set(task_state) == {
+            "task_id",
+            "tool_name",
+            "status",
+            "progress",
+            "started_at",
+            "elapsed_seconds",
+        }
+        resumed_run_id = (
+            library.get_handle()
+            .get_task_store()
+            .get(task_id)
+            .metadata["checkpoint_run_id"]
+        )
         assert resumed_run_id != task_id
         assert store.load_state("worker", "user_42", task_id)["status"] == "completed"
         assert (
@@ -1721,16 +1773,22 @@ def test_expired_agent_recovery_requires_checkpoint_or_initial_input_and_expired
     assert tasks.claim_worker(task.task_id, "old", lease_seconds=30)
 
     with execution_context(checkpoint_store=checkpoints):
+        with pytest.raises(RuntimeError, match="previous worker has stopped"):
+            library.recover_agent_task(task.task_id, message="Continue")
         with pytest.raises(
             RuntimeError, match="no checkpoint or durable initial input"
         ):
-            library.recover_agent_task(task.task_id, message="Continue")
+            library.recover_agent_task(
+                task.task_id, message="Continue", worker_stopped=True
+            )
 
         checkpoints.save_state(
             "worker", "orphaned-thread", "orphaned-task", {"status": "running"}
         )
         with pytest.raises(TaskLeaseLostError):
-            library.recover_agent_task(task.task_id, message="Continue")
+            library.recover_agent_task(
+                task.task_id, message="Continue", worker_stopped=True
+            )
 
     assert tasks.get(task.task_id).status == "running"
     assert tasks.get_worker_lease(task.task_id).owner_id == "old"
@@ -1758,11 +1816,16 @@ def test_terminal_checkpoint_reconciliation_requires_result_but_accepts_none():
     )
     assert tasks.claim_worker(task.task_id, "old", lease_seconds=1)
     checkpoints.save_state(
-        "worker", "orphaned-thread", "orphaned-task", {"status": "completed"}
+        "worker",
+        "orphaned-thread",
+        "orphaned-task",
+        {"status": "completed", "_checkpoint": {"revision": 0}},
     )
     with execution_context(checkpoint_store=checkpoints):
         with pytest.raises(RuntimeError, match="terminal checkpoint"):
-            library.recover_agent_task(task.task_id, message="Continue")
+            library.recover_agent_task(
+                task.task_id, message="Continue", worker_stopped=True
+            )
         with pytest.raises(RuntimeError, match="no recorded result"):
             library.reconcile_agent_task(task.task_id)
     assert tasks.get_worker_lease(task.task_id).owner_id == "old"
@@ -1770,7 +1833,11 @@ def test_terminal_checkpoint_reconciliation_requires_result_but_accepts_none():
         "worker",
         "orphaned-thread",
         "orphaned-task",
-        {"status": "completed", "task_result": {"value": None}},
+        {
+            "status": "completed",
+            "task_result": {"value": None},
+            "_checkpoint": {"revision": 0},
+        },
     )
     tasks._clock = lambda: time.time() + 2
     with execution_context(checkpoint_store=checkpoints):
@@ -1864,7 +1931,9 @@ def test_expired_agent_recovery_replays_initial_input_before_first_checkpoint(
     now[0] = 111.0
 
     with execution_context(checkpoint_store=checkpoints):
-        library.recover_agent_task(task.task_id, message="Extra instruction")
+        library.recover_agent_task(
+            task.task_id, message="Extra instruction", worker_stopped=True
+        )
         _wait_until(lambda: tasks.get(task.task_id).status == "completed")
 
     assert tasks.get(task.task_id).result == "replayed"
@@ -2026,7 +2095,9 @@ def test_expired_agent_recovery_reuses_task_and_checkpoint():
         tasks._clock = lambda: now[0]
         assert tasks.claim_worker(task_id, "crashed", lease_seconds=10)
         now[0] = 111.0
-        assert "recovered" in library.recover_agent_task(task_id, message="Continue")
+        assert "recovered" in library.recover_agent_task(
+            task_id, message="Continue", worker_stopped=True
+        )
         _wait_until(lambda: tasks.get(task_id).status == "completed")
 
     assert tasks.get(task_id).result == "recovered"
@@ -2349,7 +2420,20 @@ def test_task_message_resume_clears_previous_interrupt_reason():
             .tool_calls[0]
             .result
         )
-        assert "interrupt_reason" in interrupted_state["metadata"]
+        assert set(interrupted_state) == {
+            "task_id",
+            "tool_name",
+            "status",
+            "progress",
+            "started_at",
+            "elapsed_seconds",
+            "reason",
+        }
+        assert interrupted_state["reason"]
+        assert (
+            "interrupt_reason"
+            in library.get_handle().get_task_store().get(task_id).metadata
+        )
 
         message_result = (
             library(
@@ -2380,7 +2464,18 @@ def test_task_message_resume_clears_previous_interrupt_reason():
             .tool_calls[0]
             .result
         )
-        assert "interrupt_reason" not in resumed_state["metadata"]
+        assert set(resumed_state) == {
+            "task_id",
+            "tool_name",
+            "status",
+            "progress",
+            "started_at",
+            "elapsed_seconds",
+        }
+        assert (
+            "interrupt_reason"
+            not in library.get_handle().get_task_store().get(task_id).metadata
+        )
 
     state = store.load_state("worker", "user_42", task_id)
     assert state is not None

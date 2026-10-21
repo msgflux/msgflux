@@ -2,6 +2,10 @@
 
 from collections.abc import Mapping
 from copy import deepcopy
+from datetime import UTC, datetime
+from typing import Any
+
+import msgspec
 
 from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores.base import CheckpointConflictError
@@ -20,6 +24,53 @@ def inspect_batch(store, namespace, thread_id, run_id):
     if state is None:
         raise ValueError("Checkpoint run not found")
     return deepcopy(dict(state))
+
+
+def _resolve_command_receipts_for_batch(  # noqa: C901
+    extensions, messages, call_ids, run_id
+):
+    """Resolve only the latest matching command receipt from this approved batch."""
+    from msgflux.runtime.workspace.receipts import (  # noqa: PLC0415
+        decode_command_receipt,
+        retain_command_receipts,
+    )
+
+    current = extensions.get("command_receipts", [])
+    if not isinstance(current, list):
+        raise ValueError("Command receipt extension is malformed")
+    receipts = [decode_command_receipt(item) for item in current]
+    outputs: dict[str, list[int]] = {}
+    for index, item in enumerate(messages._to_state().get("items", [])):
+        if not isinstance(item, Mapping):
+            continue
+        call_id = item.get("tool_call_id")
+        if item.get("type") == "function_call_output":
+            call_id = item.get("call_id", call_id)
+        if isinstance(call_id, str) and call_id in call_ids:
+            outputs.setdefault(call_id, []).append(index)
+    latest: dict[str, Any] = {}
+    for receipt in receipts:
+        if (
+            receipt.run_id == run_id
+            and receipt.tool_call_id in call_ids
+            and receipt.message_offset is not None
+            and receipt.unresolved
+        ):
+            prior = latest.get(receipt.tool_call_id)
+            if prior is None or receipt.message_offset > prior.message_offset:
+                latest[receipt.tool_call_id] = receipt
+    now = datetime.now(UTC).isoformat()
+    for call_id, receipt in latest.items():
+        if any(index >= receipt.message_offset for index in outputs.get(call_id, [])):
+            reconciled = msgspec.structs.replace(
+                receipt,
+                state="reconciled",
+                tool_output_recorded=True,
+                updated_at=now,
+            )
+            current = retain_command_receipts(current, reconciled)
+    if current:
+        extensions["command_receipts"] = current
 
 
 def _validate_decision(
@@ -57,7 +108,7 @@ def _validate_decision(
     }
 
 
-def reconcile_batch(
+def reconcile_batch(  # noqa: C901
     store,
     namespace,
     thread_id,
@@ -133,6 +184,8 @@ def reconcile_batch(
     state["messages"] = messages._to_state()
     state["status"] = "interrupted" if abandon else "paused"
     del extensions[PENDING_KEY]
+    if not abandon:
+        _resolve_command_receipts_for_batch(extensions, messages, call_ids, run_id)
     receipts[decision_id] = decision
     store.commit_state(
         namespace,

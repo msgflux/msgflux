@@ -1,0 +1,38 @@
+"""Lazy loading of the optional AgentService server dependency."""
+
+from collections.abc import Callable
+
+from msgflux.runtime.service import AgentService
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
+
+
+def create_service_app(
+    service: AgentService,
+    *,
+    token: str,
+    http_config: ServiceHTTPConfig | None = None,
+    close_service: bool = False,
+    event_buffer_limit: int | None = 1024,
+    instance_id: str | None = None,
+    on_shutdown: Callable[[], None] | None = None,
+):
+    """Create the Litestar app; install msgflux[service] for server support."""
+    try:
+        from msgflux.runtime.service.http.app import (  # noqa: PLC0415
+            create_service_app as create_app,
+        )
+    except ModuleNotFoundError as error:
+        if error.name and error.name.startswith("litestar"):
+            raise ImportError(
+                "Install server support with: uv add 'msgflux[service]'"
+            ) from error
+        raise
+    return create_app(
+        service,
+        token=token,
+        http_config=http_config,
+        close_service=close_service,
+        event_buffer_limit=event_buffer_limit,
+        instance_id=instance_id,
+        on_shutdown=on_shutdown,
+    )

@@ -1,4 +1,5 @@
 import asyncio
+import os
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -57,6 +58,7 @@ from msgflux.runtime.context import (
     execution_context,
 )
 from msgflux.runtime.skills import SkillsConfig
+from msgflux.runtime.workspace.api import AgentWorkspace
 
 if TYPE_CHECKING:
     from msgflux.data.stores import CheckpointStore
@@ -67,6 +69,7 @@ from msgflux.nn.modules.agent.context import (
     _RESERVED_KWARGS,
     _UNSET,
     _apply_before_resume,
+    _apply_explicit_model_preference,
     _prepare_agent_guard_input,
     _prepare_agent_guard_output,
 )
@@ -75,12 +78,16 @@ from msgflux.nn.modules.agent.conversation import AgentConversationMixin
 from msgflux.nn.modules.agent.inputs import AgentInputMixin
 from msgflux.nn.modules.agent.lifecycle import AgentLifecycleMixin
 from msgflux.nn.modules.agent.model_runtime import AgentModelRuntimeMixin
+from msgflux.nn.modules.agent.resources import AgentResourceMixin, resource_call
+from msgflux.nn.modules.agent.steering import AgentSteeringMixin
 
 
 class Agent(
+    AgentResourceMixin,
     AgentApprovalMixin,
     AgentLifecycleMixin,
     AgentContinuationMixin,
+    AgentSteeringMixin,
     AgentModelRuntimeMixin,
     AgentCompactionMixin,
     AgentInputMixin,
@@ -144,6 +151,8 @@ class Agent(
         checkpoint_store: Optional["CheckpointStore"] = None,
         agent_inbox: Optional[AgentInbox] = None,
         approvals: Optional[AgentApprovals] = None,
+        workspace: Optional[AgentWorkspace] = None,
+        agent_dir: Optional[Union[str, os.PathLike[str]]] = None,
     ):
         """Initialize the Agent module.
 
@@ -289,6 +298,12 @@ class Agent(
             Store used to persist and resume agent execution snapshots. A store
             configured directly on the agent takes precedence over one inherited
             from `execution_context(...)`.
+        agent_dir:
+            Managed persistence root. Per-thread SQLite stores are opened lazily.
+            Cannot be combined with explicit storage adapters or approvals.
+        workspace:
+            Default live workspace for tool dependency injection. A workspace
+            supplied through ExecutionScope overrides this default.
         approvals:
             Optional host-owned AgentApprovals policy for foreground tool calls.
             Requires atomic checkpoints and an explicit live principal. Pending
@@ -337,10 +352,19 @@ class Agent(
             self.set_annotations(_DEFAULT_AGENT_ANNOTATIONS.copy())
 
         self._set_config(config)
+        self._init_resources(
+            agent_dir,
+            checkpoint_store=checkpoint_store,
+            agent_inbox=agent_inbox,
+            approvals=approvals,
+        )
         self.checkpoint_store = checkpoint_store
         if approvals is not None and not isinstance(approvals, AgentApprovals):
             raise TypeError("approvals must be AgentApprovals or None")
         self.approvals = approvals
+        if workspace is not None and not isinstance(workspace, AgentWorkspace):
+            raise TypeError("workspace must be AgentWorkspace or None")
+        self.workspace = workspace
         if agent_inbox is None:
             self.agent_inbox = AgentInbox(
                 verbose=config.get("verbose", False) if config else False,
@@ -445,6 +469,7 @@ class Agent(
                 "tool_turn_limit", ToolTurnLimitExtension(max_tool_turns)
             )
 
+    @resource_call
     def forward(
         self,
         message: Optional[Union[str, Mapping[str, Any], Message]] = None,
@@ -521,8 +546,8 @@ class Agent(
             >>> # Filter tools - block specific tools
             >>> agent("query", tool_filter={"block": ["browser"]})
         """
-        approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
+        kwargs["scope"] = requested_scope
         resumed = self._try_resume_from_checkpoint(
             kwargs.get("messages"),
             scope=requested_scope,
@@ -541,6 +566,7 @@ class Agent(
                 resume_event,
                 vars=kwargs.get("vars", {}),
             )
+            _apply_explicit_model_preference(inputs, kwargs)
         else:
             run_event = self._run_lifecycle_hooks(
                 "before_run",
@@ -564,34 +590,10 @@ class Agent(
                 agent_inbox=effective_inbox,
             ),
         ):
-            try:
-                try:
-                    model_response = self._approval_replay() or self._execute_model(
-                        prefilling=self.prefilling,
-                        **inputs,
-                    )
-                except _GuardInterrupt as e:
-                    model_response = self._guard_model_response(e.response)
-                response = self._process_model_response(
-                    message,
-                    model_response,
-                    **inputs,
-                )
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                self._settle_terminal_run(inputs, "interrupted", exc)
-                self._raise_interrupted_from_abort(inputs, exc)
-            except ApprovalReconciliationRequiredError:
-                raise
-            except TaskPauseRequestedError as exc:
-                self._settle_terminal_run(inputs, "paused", exc)
-                raise
-            except Exception as exc:
-                settled_error = self._settle_processing_error(inputs, exc)
-                if settled_error is exc:
-                    raise
-                raise settled_error from exc
-            return response
+            self._open_steering()
+            return self._execute_prepared_run(message, inputs)
 
+    @resource_call
     async def aforward(
         self,
         message: Optional[Union[str, Mapping[str, Any], Message]] = None,
@@ -600,8 +602,8 @@ class Agent(
         **kwargs: Any,
     ) -> Union[str, Mapping[str, None], ModelStreamResponse, Message]:
         """Async version of forward."""
-        approvals = self._get_effective_approvals(approvals)
         requested_scope = self._get_requested_scope(kwargs)
+        kwargs["scope"] = requested_scope
         resumed = await self._atry_resume_from_checkpoint(
             kwargs.get("messages"),
             scope=requested_scope,
@@ -620,6 +622,7 @@ class Agent(
                 resume_event,
                 vars=kwargs.get("vars", {}),
             )
+            _apply_explicit_model_preference(inputs, kwargs)
         else:
             run_event = await self._arun_lifecycle_hooks(
                 "before_run",
@@ -643,44 +646,84 @@ class Agent(
                 agent_inbox=effective_inbox,
             ),
         ):
+            self._open_steering()
+            return await self._aexecute_prepared_run(message, inputs)
+
+    def _execute_prepared_run(self, message, inputs, *, continuation=False):
+        try:
             try:
-                try:
-                    model_response = self._approval_replay()
-                    if model_response is None:
-                        model_response = await self._aexecute_model(
-                            prefilling=self.prefilling,
-                            **inputs,
-                        )
-                except _GuardInterrupt as e:
-                    model_response = self._guard_model_response(e.response)
-                response = await self._aprocess_model_response(
-                    message,
-                    model_response,
+                model_response = self._approval_replay() or self._execute_model(
+                    prefilling=None if continuation else self.prefilling,
                     **inputs,
                 )
-            except (AbortRequestedError, TaskInterruptRequestedError) as exc:
-                await self._asettle_terminal_run(inputs, "interrupted", exc)
-                self._raise_interrupted_from_abort(inputs, exc)
-            except asyncio.CancelledError as exc:
-                await self._asettle_terminal_run(inputs, "interrupted", exc)
+            except _GuardInterrupt as e:
+                model_response = self._guard_model_response(e.response)
+            response = self._process_model_response(
+                message,
+                model_response,
+                **inputs,
+            )
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            asyncio.CancelledError,
+        ) as exc:
+            self._settle_terminal_run(inputs, "interrupted", exc)
+            self._raise_interrupted_from_abort(inputs, exc)
+        except ApprovalReconciliationRequiredError:
+            raise
+        except TaskPauseRequestedError as exc:
+            self._settle_terminal_run(inputs, "paused", exc)
+            raise
+        except Exception as exc:
+            settled_error = self._settle_processing_error(inputs, exc)
+            if settled_error is exc:
                 raise
-            except ApprovalReconciliationRequiredError:
+            # Unwrap the hook error without chaining it back to its marker.
+            raise settled_error from settled_error.__cause__
+        return response
+
+    async def _aexecute_prepared_run(self, message, inputs, *, continuation=False):
+        try:
+            try:
+                model_response = self._approval_replay()
+                if model_response is None:
+                    model_response = await self._aexecute_model(
+                        prefilling=None if continuation else self.prefilling,
+                        **inputs,
+                    )
+            except _GuardInterrupt as e:
+                model_response = self._guard_model_response(e.response)
+            response = await self._aprocess_model_response(
+                message,
+                model_response,
+                **inputs,
+            )
+        except (AbortRequestedError, TaskInterruptRequestedError) as exc:
+            await self._asettle_terminal_run(inputs, "interrupted", exc)
+            self._raise_interrupted_from_abort(inputs, exc)
+        except asyncio.CancelledError as exc:
+            await self._asettle_terminal_run(inputs, "interrupted", exc)
+            raise
+        except ApprovalReconciliationRequiredError:
+            raise
+        except TaskPauseRequestedError as exc:
+            await self._asettle_terminal_run(inputs, "paused", exc)
+            raise
+        except Exception as exc:
+            settled_error = await self._asettle_processing_error(inputs, exc)
+            if settled_error is exc:
                 raise
-            except TaskPauseRequestedError as exc:
-                await self._asettle_terminal_run(inputs, "paused", exc)
-                raise
-            except Exception as exc:
-                settled_error = await self._asettle_processing_error(inputs, exc)
-                if settled_error is exc:
-                    raise
-                raise settled_error from exc
-            return response
+            # Unwrap the hook error without chaining it back to its marker.
+            raise settled_error from settled_error.__cause__
+        return response
 
     @staticmethod
     def _guard_model_response(response: str) -> ModelResponse:
         model_response = ModelResponse()
         model_response.set_response_type("text_generation")
         model_response.add(response)
+        model_response._steering_terminal = True
         return model_response
 
     # --- Extensions ---

@@ -4,6 +4,7 @@ import functools
 import inspect
 import weakref
 from collections import OrderedDict, namedtuple
+from concurrent.futures import Future
 from contextlib import nullcontext, suppress
 from types import MethodType
 from typing import (
@@ -37,10 +38,18 @@ from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.envs import envs
-from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.exceptions import (
+    AbortRequestedError,
+    TaskInterruptRequestedError,
+    TaskPauseRequestedError,
+)
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.model import Model
-from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.response import (
+    ModelResponse,
+    ModelStreamResponse,
+    _stream_response_from_result,
+)
 from msgflux.nn.hooks import Hook, RemovableHandle
 from msgflux.nn.hooks.events import RunEndContext
 from msgflux.nn.parameter import Parameter
@@ -61,6 +70,7 @@ from msgflux.runtime.events import (
 from msgflux.telemetry import Spans
 from msgflux.telemetry.context import aactive_span, active_span
 from msgflux.utils.convert import convert_camel_snake_to_title
+from msgflux.utils.errors import exception_message
 from msgflux.utils.mermaid import plot_mermaid
 from msgflux.utils.msgspec import StructFactory
 from msgflux.utils.templates import format_template
@@ -85,11 +95,14 @@ T = TypeVar("T", bound="Module")
 
 
 def _run_exception_event(error: BaseException) -> str:
-    return (
-        EventType.RUN_PAUSED
-        if isinstance(error, TaskPauseRequestedError)
-        else EventType.RUN_ERROR
-    )
+    if isinstance(error, TaskPauseRequestedError):
+        return EventType.RUN_PAUSED
+    if isinstance(
+        error,
+        (AbortRequestedError, TaskInterruptRequestedError, asyncio.CancelledError),
+    ):
+        return EventType.RUN_INTERRUPTED
+    return EventType.RUN_ERROR
 
 
 class _IncompatibleKeys(
@@ -1456,7 +1469,7 @@ class Module:
                 if run_boundary:
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
                 raise
@@ -1465,6 +1478,10 @@ class Module:
                     self._start_detached_event_finalizer(result, scope=scope)
                 else:
                     self._emit_nested_run_completion(result, scope=scope)
+            else:
+                release, _context = self._take_detached_event_context(result)
+                if release is not None:
+                    release()
             return result
 
     async def _afinalize_detached_event_result(
@@ -1472,15 +1489,74 @@ class Module:
         result: ModelStreamResponse,
         *,
         scope: Any = None,
-    ) -> None:
+        _release: Any = None,
+    ) -> Any:
         try:
-            await self._afinalize_event_result(result)
+            return await self._afinalize_event_result(result)
         except BaseException as exc:
             emit_event(
                 _run_exception_event(exc),
-                {"error": str(exc)},
+                {"error": exception_message(exc)},
                 scope=scope,
             )
+            raise
+        finally:
+            if _release is not None:
+                _release()
+
+    @staticmethod
+    def _install_event_finalization_future(result: Any) -> Future | None:
+        stream = _stream_response_from_result(result)
+        if stream is None:
+            return None
+        future = Future()
+        stream._msgflux_event_finalization_future = future
+        return future
+
+    @staticmethod
+    def _settle_event_finalization_future(
+        future: Future | None,
+        *,
+        error: BaseException | None = None,
+        output: Any = None,
+    ) -> None:
+        if future is None or future.done():
+            return
+        if isinstance(error, asyncio.CancelledError):
+            future.cancel()
+        elif error is not None:
+            future.set_exception(error)
+        else:
+            future.set_result(output)
+
+    @staticmethod
+    def _event_finalizer_done(scheduler_future, settled, release) -> None:
+        if scheduler_future.cancelled():
+            output = None
+            error = asyncio.CancelledError()
+        else:
+            try:
+                output = scheduler_future.result()
+                error = None
+            except BaseException as exc:
+                output = None
+                error = exc
+        try:
+            if release is not None:
+                release()
+        except BaseException as exc:
+            error = exc
+        if error is not None:
+            Module._settle_event_finalization_future(settled, error=error)
+        else:
+            Module._settle_event_finalization_future(settled, output=output)
+
+    @staticmethod
+    def _take_detached_event_context(result: Any):
+        stream = _stream_response_from_result(result)
+        if stream is None:
+            return None, None
+        return stream.__dict__.pop("_msgflux_detached_event_context", (None, None))
 
     def _start_detached_event_finalizer(
         self,
@@ -1488,12 +1564,35 @@ class Module:
         *,
         scope: Any = None,
     ) -> None:
-        context = contextvars.copy_context()
+        settled = self._install_event_finalization_future(result)
+        release, context = self._take_detached_event_context(result)
+        if context is None:
+            context = contextvars.copy_context()
 
-        def finalize() -> None:
-            asyncio.run(self._afinalize_detached_event_result(result, scope=scope))
+        def finalize() -> Any:
+            return asyncio.run(
+                self._afinalize_detached_event_result(
+                    result,
+                    scope=scope,
+                    _release=release,
+                )
+            )
 
-        Executor.get_instance().submit(context.run, finalize)
+        try:
+            future = Executor.get_instance().submit(context.run, finalize)
+        except BaseException as exc:
+            error = exc
+            if release is not None:
+                try:
+                    release()
+                except BaseException as release_error:
+                    error = release_error
+            self._settle_event_finalization_future(settled, error=error)
+            raise
+
+        future.add_done_callback(
+            lambda done: self._event_finalizer_done(done, settled, release)
+        )
 
     def _call_impl_with_hooks(self, *args, **kwargs):
         if not (self._forward_hooks or self._forward_pre_hooks):
@@ -1634,6 +1733,32 @@ class Module:
             loop = asyncio.get_event_loop()
             return await loop.run_in_executor(None, functools.partial(hook, *args))
 
+    def _start_async_detached_event_finalizer(self, result, *, scope):
+        settled = self._install_event_finalization_future(result)
+        release, context = self._take_detached_event_context(result)
+        finalize_coro = self._afinalize_detached_event_result(
+            result,
+            scope=scope,
+            _release=release,
+        )
+        try:
+            task = asyncio.create_task(finalize_coro, context=context)
+        except BaseException as exc:
+            finalize_coro.close()
+            error = exc
+            if release is not None:
+                try:
+                    release()
+                except BaseException as release_error:
+                    error = release_error
+            self._settle_event_finalization_future(settled, error=error)
+            raise
+
+        task.add_done_callback(
+            lambda done: self._event_finalizer_done(done, settled, release)
+        )
+        _track_event_task(task)
+
     async def _acall_impl(self, *args, **kwargs):
         root_hub_run = bool(
             not _is_capturing_events()
@@ -1663,22 +1788,19 @@ class Module:
                 if run_boundary:
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
                 raise
             if run_boundary:
                 if self._stream_response_from_result(result) is not None:
-                    _track_event_task(
-                        asyncio.create_task(
-                            self._afinalize_detached_event_result(
-                                result,
-                                scope=scope,
-                            )
-                        )
-                    )
+                    self._start_async_detached_event_finalizer(result, scope=scope)
                 else:
                     self._emit_nested_run_completion(result, scope=scope)
+            else:
+                release, _context = self._take_detached_event_context(result)
+                if release is not None:
+                    release()
             return result
 
     async def _acall_impl_with_hooks(self, *args, **kwargs):
@@ -1844,14 +1966,7 @@ class Module:
     @staticmethod
     def _stream_response_from_result(result: Any) -> ModelStreamResponse | None:
         """Find a model stream wrapped by a presentation response envelope."""
-        if isinstance(result, ModelStreamResponse):
-            return result
-        if isinstance(result, dict):
-            candidate = result.get("response")
-            if isinstance(candidate, ModelStreamResponse):
-                return candidate
-        candidate = getattr(result, "response", None)
-        return candidate if isinstance(candidate, ModelStreamResponse) else None
+        return _stream_response_from_result(result)
 
     @staticmethod
     def _incremental_output_transformer(module: Any):
@@ -1879,27 +1994,77 @@ class Module:
         emit_content: bool = True,
         output_transformer: Any = None,
     ) -> None:
+        event_stream = response.consume_events()
+        primary_error = None
         try:
-            async for event in response.consume_events():
-                if event.type == "output.delta":
-                    if emit_content:
-                        delta = event.data
-                        if output_transformer is not None and isinstance(delta, str):
-                            delta = output_transformer.feed(delta)
-                        if delta:
-                            emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
-                elif event.type == "reasoning.delta":
-                    emit_event(EventType.REASONING_DELTA, {"delta": event.data})
-                elif event.type == "reasoning_summary.delta":
-                    emit_event(
-                        EventType.REASONING_SUMMARY_DELTA,
-                        {"delta": event.data},
-                    )
+            async for event in event_stream:
+                Module._emit_stream_event(
+                    event,
+                    emit_content=emit_content,
+                    output_transformer=output_transformer,
+                )
+        except BaseException as error:
+            primary_error = error
+            raise
         finally:
-            if not response._is_finalized():
-                response.finish(status="interrupted")
-            await response._await_pending_finalizers()
+            await Module._afinalize_event_consumer(
+                response, event_stream, primary_error
+            )
+
+    @staticmethod
+    def _emit_stream_event(event, *, emit_content, output_transformer) -> None:
+        if event.type == "output.delta":
+            if emit_content:
+                delta = event.data
+                if output_transformer is not None and isinstance(delta, str):
+                    delta = output_transformer.feed(delta)
+                if delta:
+                    emit_event(EventType.MESSAGE_DELTA, {"delta": delta})
+        elif event.type in {"tool.start", "tool.update", "tool.end", "tools.updated"}:
+            emit_event(event.type, event.data)
+        elif event.type in {
+            "reasoning.delta",
+            "commentary.delta",
+            "reasoning_summary.delta",
+        }:
+            emit_event(event.type, {"delta": event.data})
+        elif (
+            event.type in {"message.end", "message.start"}
+            and emit_content
+            and output_transformer is None
+        ):
+            boundary_type = (
+                EventType.MESSAGE_END
+                if event.type == "message.end"
+                else EventType.MESSAGE_START
+            )
+            emit_event(boundary_type, event.data)
+
+    @staticmethod
+    async def _afinalize_event_consumer(response, event_stream, primary_error) -> None:
+        try:
+            try:
+                await Module._aclose_event_stream(response, event_stream, primary_error)
+            finally:
+                if not response._is_finalized():
+                    response.finish(status="interrupted")
+                    await response._await_pending_finalizers(primary_error)
+        finally:
             response._run_consumer_finalizers()
+
+    @staticmethod
+    async def _aclose_event_stream(response, event_stream, primary_error) -> None:
+        try:
+            await event_stream.aclose()
+        except Exception as finalizer_error:
+            if primary_error is None:
+                raise
+            combined_error = response._combine_finalizer_error(
+                primary_error, finalizer_error
+            )
+            if combined_error is finalizer_error:
+                raise
+            raise combined_error from finalizer_error
 
     async def _afinalize_event_result(self, result: Any) -> Any:
         stream_response = self._stream_response_from_result(result)
@@ -1985,7 +2150,7 @@ class Module:
                 ):
                     emit_event(
                         _run_exception_event(exc),
-                        {"error": str(exc)},
+                        {"error": exception_message(exc)},
                         scope=scope,
                     )
             finally:

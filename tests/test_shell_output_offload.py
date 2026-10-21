@@ -1,5 +1,7 @@
 """Shell offload, structured retrieval and native history compatibility."""
 
+from msgflux.runtime import AgentWorkspace
+
 from copy import deepcopy
 from unittest.mock import AsyncMock, Mock
 
@@ -208,7 +210,9 @@ async def test_builtin_bash_event_contains_preview_and_retrievable_reference(tmp
     )
     with execution_context(
         scope=ExecutionScope(
-            environment=environment, permissions=PermissionSet(["process.execute"])
+            workspace=AgentWorkspace.from_environment(
+                environment, permissions=PermissionSet(["process.execute"])
+            ),
         )
     ):
         events = [
@@ -231,3 +235,56 @@ async def test_builtin_bash_event_contains_preview_and_retrievable_reference(tmp
     assert complete["results"][0]["stdout"] == "x" * 20000
     assert complete["results"][0]["stderr"] == "error" * 2000
     assert complete["results"][0]["returncode"] == 3
+
+
+@pytest.mark.asyncio
+async def test_shell_output_persistence_failure_warns_without_leaking_payload(tmp_path):
+    executor = Mock(spec=ProcessExecutor)
+    executor.capabilities = SandboxCapabilities(
+        {"filesystem", "network", "process", "resource_limits"}
+    )
+    executor.supports_workspace.return_value = True
+
+    async def stream(_request, *, on_output, **kwargs):
+        del kwargs
+        await on_output("stdout", b"private command output" * 1000)
+        return ProcessResult(0)
+
+    executor.execute_stream = AsyncMock(side_effect=stream)
+
+    class FailingStore(LocalToolResultStore):
+        def put(self, chunks, *, media_type="application/octet-stream"):
+            raise OSError("private storage path unavailable")
+
+    environment = ExecutionEnvironment(InMemoryWorkspace("test"), executor)
+    store = FailingStore(tmp_path)
+    library = ToolLibrary(
+        "shell",
+        [BashTool()],
+        extensions=[
+            ToolOutputOffloadExtension(store, max_inline_bytes=64, preview_bytes=8)
+        ],
+    )
+    scope = ExecutionScope(
+        workspace=AgentWorkspace.from_environment(
+            environment, permissions=PermissionSet(["process.execute"])
+        ),
+    )
+    with execution_context(scope=scope):
+        events = [
+            event
+            async for event in library.stream_events(
+                [("call", "bash", {"command": "ignored by fake executor"})]
+            )
+        ]
+
+    end = next(event for event in events if event.type == "tool.end")
+    assert executor.execute_stream.await_count == 1
+    assert end.data["result"] is None
+    assert "Commands may already have executed" in end.data["error"]
+    assert "do not retry automatically" in end.data["error"]
+    assert "OSError" in end.data["error"]
+    assert end.data["error_info"]["details"]["exception_type"] == "RuntimeError"
+    assert "private storage path" not in str(events)
+    assert "private command output" not in str(events)
+    assert list(store.root.iterdir()) == []

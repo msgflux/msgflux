@@ -62,11 +62,18 @@ the Model remains responsible for counting tokens and producing the compacted
 view. See [Conversation Compaction](compaction.md).
 
 `before_run_end` participates in the terminal commit and may still turn a
-successful run into a failure. `after_run_end` runs after that commit. If its
-handler raises, the committed output and outcome remain primary and the hook
-failure produces a runtime warning. The run is not executed or checkpointed a
-second time. A completed turn therefore cannot be silently rewritten as failed
-by an observational hook.
+successful run into a failure. If an already failed, interrupted, or paused run
+is being committed, an ordinary exception from `before_run_end` is recorded as
+a note on the original error and does not prevent the terminal checkpoint from
+being saved. Control exceptions and cancellation continue to propagate.
+`after_run_end` runs after the commit. If its handler raises, the committed
+output and outcome remain primary and the hook failure produces a runtime
+warning. The run is not executed or checkpointed a second time. A completed turn
+therefore cannot be silently rewritten as failed by an observational hook.
+Cancellation delivered while `after_run_end` is running also stops that
+observer and produces a warning; the caller receives the already committed
+output or original run error. Cancellation before the commit still interrupts
+the run.
 
 Import typed payloads from `msgflux.nn.hooks`. Dataclass replacement keeps a
 handler explicit and preserves fields added to the contract later:
@@ -98,6 +105,14 @@ call and are not exposed to or removed by the hook. If a `before_tool` handler
 raises or returns an invalid payload, execution fails closed and the tool is not
 called. An `after_tool` handler failure leaves the original outcome unchanged
 and emits a `handler.error` execution event.
+
+Cooperative pause and interruption still propagate. When a tool batch has
+settled, the Agent records its completed sibling results before checkpointing
+the pause or interruption. Calls without a result receive an interrupted output:
+their effects may already have occurred, so they must not be retried
+automatically. This also applies to `ToolFlowControl` result injection and
+history construction. An uncertain approval-protected execution still requires
+host reconciliation; recording an interrupted output does not authorize replay.
 
 `transform_tool_output` is the strict output-processing boundary used by
 `ToolOutputOffloadExtension`. Library handlers run before owning-Agent handlers,
@@ -174,6 +189,14 @@ checkpoint is written between these boundaries. A direct `ModelStreamResponse`
 settles later in its stream finalizer, so these hooks do not run when that
 stream is handed directly to the caller; use `stream_events()` when lifecycle
 observation must include the complete streamed execution.
+
+Control exceptions raised by `before_run_end` retain their meaning: pauses are
+checkpointed as `paused`, while interruptions and cancellation are checkpointed
+as `interrupted`. The failing hook is not invoked again during settlement;
+`after_run_end` observes the settled outcome. Ordinary hook errors record `failed`.
+The same checkpoint statuses apply when `before_run_end` runs during stream
+finalization: pause records `paused`, and interruption or cancellation records
+`interrupted`. The stream still propagates the hook error to its consumer.
 
 ```python
 agent = Agent(

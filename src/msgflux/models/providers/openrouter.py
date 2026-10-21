@@ -2,13 +2,21 @@ from typing import Any, Dict
 
 import msgspec
 
+from msgflux.chat_messages import ChatMessages
+from msgflux.models.chat_capabilities import ChatAPIModeCapabilities
 from msgflux.models.chat_extensions import ChatRequestContext, ChatSpeedExtension
 from msgflux.models.openai_compatible import (
     OpenAICompatibleChatCompletion,
+    OpenAIResponsesAPI,
 )
 from msgflux.models.provider_env import ProviderEnvBase
-from msgflux.models.reasoning import OpenRouterReasoningCodec
+from msgflux.models.reasoning import (
+    OpenRouterReasoningCodec,
+    OpenRouterResponsesReasoningCodec,
+)
 from msgflux.models.registry import register_model
+from msgflux.models.session import merge_session_headers
+from msgflux.runtime.context import get_thread_id
 
 
 class _BaseOpenRouter(ProviderEnvBase):
@@ -76,9 +84,67 @@ class OpenRouterChatCompletion(_BaseOpenRouter, OpenAICompatibleChatCompletion):
     chat_extensions = (OpenRouterSpeedExtension(),)
 
     capabilities = OpenAICompatibleChatCompletion.capabilities.replace(
+        api_modes=(
+            *OpenAICompatibleChatCompletion.capabilities.api_modes,
+            ChatAPIModeCapabilities(
+                name="responses",
+                adapter=OpenAIResponsesAPI(),
+                reasoning_codec=OpenRouterResponsesReasoningCodec(),
+                request_reasoning_effort=True,
+            ),
+        ),
         default_reasoning_codec=OpenRouterReasoningCodec(),
         reasoning_max_tokens=True,
     )
+
+    def _build_generation_params(self, messages, *args, **kwargs):
+        params = super()._build_generation_params(messages, *args, **kwargs)
+        if (
+            isinstance(messages, ChatMessages)
+            and messages.thread_id
+            and get_thread_id() is None
+            and "session_id" not in (params.get("extra_body") or {})
+        ):
+            headers = dict(params.get("extra_headers") or {})
+            headers.setdefault("x-session-id", messages.thread_id)
+            params["extra_headers"] = headers
+        return params
+
+    @staticmethod
+    def _with_session_headers(params: Dict[str, Any]) -> Dict[str, Any]:
+        if "session_id" in (params.get("extra_body") or {}):
+            return params
+        return merge_session_headers(params, "x-session-id")
+
+    def _adapt_responses_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
+        params = super()._adapt_responses_params(params)
+        extra_body = dict(params.get("extra_body") or {})
+        store = params.pop("store", None)
+        if store is not None:
+            provider_preferences = dict(extra_body.get("provider") or {})
+            provider_preferences["zdr"] = not store
+            extra_body["provider"] = provider_preferences
+
+        reasoning_max_tokens = params.pop("reasoning_max_tokens", None)
+        if reasoning_max_tokens is not None:
+            if params.get("reasoning") is not None:
+                raise ValueError(
+                    "`reasoning_max_tokens` cannot be used together with "
+                    "`reasoning_effort` for OpenRouter."
+                )
+            reasoning = dict(extra_body.get("reasoning") or {})
+            reasoning["max_tokens"] = reasoning_max_tokens
+            extra_body["reasoning"] = reasoning
+
+        if extra_body:
+            params["extra_body"] = extra_body
+
+        params["extra_headers"] = {
+            **(params.get("extra_headers") or {}),
+            "HTTP-Referer": "msgflux.com",
+            "X-Title": "msgflux",
+        }
+        return self._with_session_headers(params)
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
         extra_body = dict(params.get("extra_body") or {})
@@ -121,7 +187,8 @@ class OpenRouterChatCompletion(_BaseOpenRouter, OpenAICompatibleChatCompletion):
 
         params["extra_body"] = extra_body
         params["extra_headers"] = {
+            **(params.get("extra_headers") or {}),
             "HTTP-Referer": "msgflux.com",
             "X-Title": "msgflux",
         }
-        return params
+        return self._with_session_headers(params)

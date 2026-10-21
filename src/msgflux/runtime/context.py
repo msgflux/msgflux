@@ -10,15 +10,47 @@ from __future__ import annotations
 
 import contextvars
 from contextlib import contextmanager
-from dataclasses import dataclass
-from typing import Any, Mapping
+from dataclasses import dataclass, replace
+from typing import TYPE_CHECKING, Any, Mapping
 from uuid import uuid4
 
+import msgspec
+
 from msgflux.runtime.abort import AbortSignal
-from msgflux.runtime.environment import ExecutionEnvironment
-from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.permissions import PermissionSet, intersect_permissions
+from msgflux.runtime.workspace.policy import WorkspacePolicyState
+
+if TYPE_CHECKING:
+    from msgflux.runtime.workspace.api import AgentWorkspace
 
 DEFAULT_NAMESPACE = "default_namespace"
+
+
+class _HistoryOrigin(msgspec.Struct, frozen=True, kw_only=True):
+    """Checkpoint source selected for one agent invocation."""
+
+    namespace: str
+    thread_id: str
+    run_id: str
+    source_run_id: str | None = None
+
+
+_CURRENT_HISTORY_ORIGIN: contextvars.ContextVar[_HistoryOrigin | None] = (
+    contextvars.ContextVar("msgflux_history_origin", default=None)
+)
+
+
+@contextmanager
+def _history_origin_context(origin: _HistoryOrigin | None):
+    origin_token = _CURRENT_HISTORY_ORIGIN.set(origin)
+    try:
+        yield
+    finally:
+        _CURRENT_HISTORY_ORIGIN.reset(origin_token)
+
+
+def _get_history_origin() -> _HistoryOrigin | None:
+    return _CURRENT_HISTORY_ORIGIN.get()
 
 
 def new_thread_id() -> str:
@@ -41,15 +73,17 @@ class ExecutionScope:
     abort_signal: AbortSignal | None = None
     principal: str | None = None
     permissions: PermissionSet | None = None
-    environment: ExecutionEnvironment | None = None
+    workspace: AgentWorkspace | None = None
+    account_name: str | None = None
 
     def __post_init__(self) -> None:
-        if self.environment is not None and not isinstance(
-            self.environment, ExecutionEnvironment
-        ):
-            raise TypeError(
-                "ExecutionScope.environment must be ExecutionEnvironment or None"
-            )
+        from msgflux.runtime.workspace.api import AgentWorkspace  # noqa: PLC0415
+
+        if self.workspace is not None:
+            if not isinstance(self.workspace, AgentWorkspace):
+                raise TypeError(
+                    "ExecutionScope.workspace must be AgentWorkspace or None"
+                )
         if self.permissions is not None and not isinstance(
             self.permissions, PermissionSet
         ):
@@ -61,6 +95,12 @@ class ExecutionScope:
         ):
             raise ValueError(
                 "ExecutionScope.principal must be a non-empty string or None"
+            )
+        if self.account_name is not None and (
+            not isinstance(self.account_name, str) or not self.account_name.strip()
+        ):
+            raise ValueError(
+                "ExecutionScope.account_name must be a non-empty string or None"
             )
 
     def with_overrides(
@@ -74,9 +114,11 @@ class ExecutionScope:
         abort_signal: AbortSignal | None = None,
         principal: str | None = None,
         permissions: PermissionSet | None = None,
-        environment: ExecutionEnvironment | None = None,
+        workspace: AgentWorkspace | None = None,
+        account_name: str | None = None,
     ) -> ExecutionScope:
         resolved_run_id = run_id if run_id is not None else self.run_id
+        resolved_workspace = workspace if workspace is not None else self.workspace
         return ExecutionScope(
             thread_id=thread_id if thread_id is not None else self.thread_id,
             namespace=namespace if namespace is not None else self.namespace,
@@ -94,7 +136,10 @@ class ExecutionScope:
             ),
             principal=principal if principal is not None else self.principal,
             permissions=permissions if permissions is not None else self.permissions,
-            environment=environment if environment is not None else self.environment,
+            workspace=resolved_workspace,
+            account_name=account_name
+            if account_name is not None
+            else self.account_name,
         )
 
     def to_dict(self) -> dict[str, str | None]:
@@ -104,12 +149,34 @@ class ExecutionScope:
             "run_id": self.run_id,
             "parent_run_id": self.parent_run_id,
             "root_run_id": self.root_run_id,
+            "account_name": self.account_name,
         }
+
+    @classmethod
+    def from_dict(cls, value: Mapping[str, Any]) -> ExecutionScope:
+        """Restore durable identity fields while accepting pre-account snapshots."""
+        return cls(
+            **{
+                key: value[key]
+                for key in (
+                    "thread_id",
+                    "namespace",
+                    "run_id",
+                    "parent_run_id",
+                    "root_run_id",
+                    "account_name",
+                )
+                if key in value
+            }
+        )
 
 
 _CURRENT_SCOPE: contextvars.ContextVar[ExecutionScope | None] = contextvars.ContextVar(
     "msgflux_execution_scope",
     default=None,
+)
+_CURRENT_WORKSPACE_POLICY: contextvars.ContextVar[WorkspacePolicyState | None] = (
+    contextvars.ContextVar("msgflux_workspace_policy", default=None)
 )
 _CURRENT_THREAD_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
     "msgflux_thread_id",
@@ -157,10 +224,16 @@ _CURRENT_ABORT_SIGNAL: contextvars.ContextVar[AbortSignal | None] = (
         default=None,
     )
 )
+_CURRENT_TOOL_CALL_ID: contextvars.ContextVar[str | None] = contextvars.ContextVar(
+    "msgflux_tool_call_id", default=None
+)
+_CURRENT_TOOL_CALL_MESSAGE_OFFSET: contextvars.ContextVar[int | None] = (
+    contextvars.ContextVar("msgflux_tool_call_message_offset", default=None)
+)
 
 
 @contextmanager
-def execution_context(
+def execution_context(  # noqa: C901
     *,
     scope: ExecutionScope | None = None,
     thread_id: str | None = None,
@@ -174,6 +247,9 @@ def execution_context(
     task_handle: Any = None,
     task_activity_recorder: Any = None,
     abort_signal: AbortSignal | None = None,
+    tool_call_id: str | None = None,
+    tool_call_message_offset: int | None = None,
+    workspace_policy: WorkspacePolicyState | None = None,
 ):
     """Set execution identity for the enclosed scope.
 
@@ -186,24 +262,41 @@ def execution_context(
             f"`scope` must be an ExecutionScope or None, given `{type(scope)}`"
         )
 
-    current_scope = get_execution_scope()
+    current_scope = _get_execution_scope_ceiling()
     base_scope = scope or current_scope
     principal = base_scope.principal
     permissions = base_scope.permissions
-    environment = base_scope.environment
+    workspace = base_scope.workspace
+    account_name = base_scope.account_name
     if _CURRENT_SCOPE.get() is not None:
-        if environment is not None and environment is not current_scope.environment:
-            raise ValueError("Nested execution cannot replace its environment")
-        environment = current_scope.environment
+        if account_name is not None and account_name != current_scope.account_name:
+            raise ValueError("Nested execution cannot change its account")
+        account_name = current_scope.account_name
+        if workspace is not None and (
+            current_scope.workspace is None
+            or not workspace.shares_environment(current_scope.workspace)
+        ):
+            raise ValueError("Nested execution cannot replace its workspace driver")
+        workspace = workspace or current_scope.workspace
         if principal is not None and principal != current_scope.principal:
             raise ValueError("Nested execution cannot change its principal")
         principal = current_scope.principal
-        inherited = current_scope.permissions or PermissionSet()
-        permissions = (
-            inherited.intersect(permissions) if permissions is not None else inherited
+        inherited = current_scope.permissions
+        if inherited is None:
+            inherited = (
+                current_scope.workspace.permissions
+                if current_scope.workspace is not None
+                else PermissionSet()
+            )
+        permissions = intersect_permissions(
+            inherited,
+            permissions if permissions is not None else inherited,
+            workspace_id=(workspace.workspace_id if workspace is not None else None),
         )
     elif permissions is None:
-        permissions = PermissionSet()
+        permissions = (
+            workspace.permissions if workspace is not None else PermissionSet()
+        )
 
     current_thread_id = _CURRENT_THREAD_ID.get()
     resolved_thread_id = (
@@ -247,6 +340,20 @@ def execution_context(
         else base_scope.abort_signal or current_abort_signal
     )
 
+    active_policy = _CURRENT_WORKSPACE_POLICY.get()
+    if workspace_policy is not None:
+        if not isinstance(workspace_policy, WorkspacePolicyState):
+            raise TypeError("workspace_policy must be WorkspacePolicyState or None")
+        if active_policy is not None and active_policy is not workspace_policy:
+            raise ValueError("Nested execution cannot replace workspace policy")
+        active_policy = workspace_policy
+    elif active_policy is not None and workspace is not None:
+        if active_policy.workspace is not None and not workspace.shares_environment(
+            active_policy.workspace
+        ):
+            raise ValueError("Nested execution cannot replace the policy workspace")
+    if active_policy is None and workspace is not None:
+        permissions = workspace.effective_permissions(permissions)
     resolved_scope = ExecutionScope(
         thread_id=resolved_thread_id,
         namespace=resolved_namespace,
@@ -256,9 +363,14 @@ def execution_context(
         abort_signal=resolved_abort_signal,
         principal=principal,
         permissions=permissions,
-        environment=environment,
+        workspace=workspace,
+        account_name=account_name,
     )
-
+    if (
+        active_policy is not None
+        and active_policy.current.thread_id != resolved_scope.thread_id
+    ):
+        raise ValueError("Workspace policy does not belong to this thread")
     current_checkpoint_store = _CURRENT_CHECKPOINT_STORE.get()
     resolved_checkpoint_store = (
         checkpoint_store if checkpoint_store is not None else current_checkpoint_store
@@ -281,6 +393,7 @@ def execution_context(
     )
 
     scope_token = _CURRENT_SCOPE.set(resolved_scope)
+    policy_token = _CURRENT_WORKSPACE_POLICY.set(active_policy)
     thread_token = _CURRENT_THREAD_ID.set(resolved_scope.thread_id)
     namespace_token = _CURRENT_NAMESPACE.set(resolved_scope.namespace)
     run_token = _CURRENT_RUN_ID.set(resolved_scope.run_id)
@@ -294,10 +407,19 @@ def execution_context(
         resolved_task_activity_recorder
     )
     abort_token = _CURRENT_ABORT_SIGNAL.set(resolved_abort_signal)
+    tool_call_token = _CURRENT_TOOL_CALL_ID.set(
+        tool_call_id if tool_call_id is not None else _CURRENT_TOOL_CALL_ID.get()
+    )
+    offset_token = _CURRENT_TOOL_CALL_MESSAGE_OFFSET.set(
+        tool_call_message_offset
+        if tool_call_message_offset is not None
+        else _CURRENT_TOOL_CALL_MESSAGE_OFFSET.get()
+    )
     try:
-        yield resolved_scope
+        yield get_execution_scope()
     finally:
         _CURRENT_SCOPE.reset(scope_token)
+        _CURRENT_WORKSPACE_POLICY.reset(policy_token)
         _CURRENT_THREAD_ID.reset(thread_token)
         _CURRENT_NAMESPACE.reset(namespace_token)
         _CURRENT_RUN_ID.reset(run_token)
@@ -309,6 +431,8 @@ def execution_context(
         _CURRENT_TASK_HANDLE.reset(task_handle_token)
         _CURRENT_TASK_ACTIVITY_RECORDER.reset(activity_token)
         _CURRENT_ABORT_SIGNAL.reset(abort_token)
+        _CURRENT_TOOL_CALL_ID.reset(tool_call_token)
+        _CURRENT_TOOL_CALL_MESSAGE_OFFSET.reset(offset_token)
 
 
 @contextmanager
@@ -324,6 +448,19 @@ def thread_context(
 
 def get_execution_scope() -> ExecutionScope:
     """Return the active execution scope."""
+    scope = _CURRENT_SCOPE.get() or ExecutionScope()
+    policy = _CURRENT_WORKSPACE_POLICY.get()
+    if policy is not None:
+        return replace(scope, permissions=policy.effective_permissions(scope))
+    return scope
+
+
+def _get_execution_scope_ceiling() -> ExecutionScope:
+    """Return the immutable scope ceiling before live policy clipping.
+
+    Trusted delegation code uses this to avoid converting a temporary runtime
+    restriction into a permanent child ceiling.
+    """
     return _CURRENT_SCOPE.get() or ExecutionScope()
 
 
@@ -343,9 +480,12 @@ def get_execution_context() -> Mapping[str, Any | None]:
         "task_handle": _CURRENT_TASK_HANDLE.get(),
         "task_activity_recorder": _CURRENT_TASK_ACTIVITY_RECORDER.get(),
         "abort_signal": _CURRENT_ABORT_SIGNAL.get(),
+        "tool_call_id": _CURRENT_TOOL_CALL_ID.get(),
+        "tool_call_message_offset": _CURRENT_TOOL_CALL_MESSAGE_OFFSET.get(),
         "principal": scope.principal,
         "permissions": scope.permissions,
-        "environment": scope.environment,
+        "workspace": scope.workspace,
+        "workspace_policy": _CURRENT_WORKSPACE_POLICY.get(),
     }
 
 

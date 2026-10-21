@@ -2,31 +2,73 @@
 
 msgFlux provides built-in tools that work out of the box:
 
+## Send a progress message
+
+For models without a trusted Responses `commentary` phase, add
+`SendUserMessageTool` to the Agent's tools. It emits `commentary.delta` through
+the active event stream and returns control to the model so it can continue.
+The application displays that event to the user. The tool requires an active
+event stream; a plain Agent call without one raises an error rather than claiming
+delivery. Do not put private reasoning in the message.
+
+```python
+import asyncio
+import msgflux as mf
+from msgflux.nn import Agent
+from msgflux.tools.builtin import SendUserMessageTool
+from msgflux.runtime.events import EventType
+
+model = mf.Model.chat_completion(
+    "openrouter/meta/muse-spark-1.3-contributor", api_mode="responses"
+)
+agent = Agent(
+    name="assistant", model=model, tools=[SendUserMessageTool()], config={"stream": True}
+)
+
+async def main():
+    async for event in agent.stream_events("Check the inventory"):
+        if event.type == EventType.COMMENTARY_DELTA:
+            print("Progress:", event.data["delta"])
+        elif event.type == EventType.MESSAGE_DELTA:
+            print(event.data["delta"], end="")
+
+asyncio.run(main())
+```
+
+The tool call publishes a progress message before the Agent's final answer;
+`message.delta` continues to represent answer text.
+
 ## Workspace tools
 
 `ReadFileTool`, `WriteTool`, `EditTool`, `DeleteTool` and `ApplyPatchTool`
-operate through the live workspace binding, not directly on host paths.
+operate through an injected `AgentWorkspace` with shared file and command paths.
+For a local project, pass `workspace=AgentWorkspace.local(".")` to the Agent; no
+context manager is required. See the [workspace API](../runtime.md#workspace)
+for configuration, custom tools and read-only scopes.
 `DeleteTool` removes one UTF-8 file or one empty directory and uses the same
 review and approval mechanism as write/edit. It does not implement recursive
 `rm`, follow symlinks or remove the workspace root. A directory review records
 its identity and requires it to remain the same empty directory at execution.
 
 ```python
+from msgflux import AgentWorkspace
 from msgflux.tools.builtin import DeleteTool, EditTool, ReadFileTool, WriteTool
 
-tools = [ReadFileTool(cwd="/project"), WriteTool(cwd="/project"),
-         EditTool(cwd="/project"), DeleteTool(cwd="/project")]
+workspace = AgentWorkspace.local(".")
+tools = [ReadFileTool(), WriteTool(),
+         EditTool(), DeleteTool()]
 ```
 
-This creates tools whose relative paths start at virtual `/project`. Pass them
-to an Agent with an execution environment and exact resource grants. Configure
+Pass these tools and `workspace=workspace` to an Agent. Relative paths start
+at the workspace cwd, initially virtual `/` for the local factory. To select
+another directory, use `workspace.with_cwd("src")`. Configure
 `AgentApprovals` when changes require user confirmation; a standalone tool call
 does not create a confirmation UI. See the
 [runtime guide](../runtime.md#write-edit-and-delete-tools-with-agent-previews)
 for configuration, review previews and checkpoint recovery.
 
-For example, a model call `delete(path="build-empty")` with `cwd="/project"`
-removes virtual `/project/build-empty` only if it is empty. Grant
+For example, a model call `delete(path="build-empty")` from workspace cwd `/`
+removes virtual `/build-empty` only if it is empty. Grant
 `filesystem.list` and `filesystem.delete` on that directory; no file-read grant
 is needed. If content appears after approval, deletion fails and the content is
 preserved. A local backend uses cooperative comparison, not a transaction
@@ -34,7 +76,7 @@ against unrelated host processes.
 
 ### List, glob and grep
 
-Install query dependencies with `uv add 'msgflux[workspace-tools]'` in your
+Install query dependencies with `uv add 'msgflux[coding]'` in your
 application. These tools use the same workspace API on local and in-memory
 backends, without invoking shell commands:
 
@@ -42,16 +84,17 @@ backends, without invoking shell commands:
 from msgflux.tools.builtin import GlobTool, GrepTool, LsTool
 
 tools = [
-    LsTool(cwd="/project", max_entries=10_000),
-    GlobTool(cwd="/project", max_results=1_000),
-    GrepTool(cwd="/project", max_results=100, max_file_bytes=1_000_000),
+    LsTool(max_entries=10_000),
+    GlobTool(max_results=1_000),
+    GrepTool(max_results=100, max_file_bytes=1_000_000),
 ]
 ```
 
 This configures host-side limits without adding budget parameters to every model
 call. The model sees `ls(path)`, `glob(pattern, path)` and `grep(pattern, path)`.
-`path` defaults to `.` and identifies a directory; `cwd` is a virtual path, not
-a host path and not a security boundary.
+`path` defaults to `.` and identifies a directory relative to the workspace
+cwd. Configure that cwd on the workspace; the tools have no independent cwd.
+The virtual cwd is not a security boundary.
 
 `ls` returns `{"path": ..., "entries": [{"name": ..., "kind": ...}]}` for one
 directory. `glob` returns `{"matches": [{"path": ..., "kind": ...}],
@@ -84,6 +127,39 @@ Result limits report truncation; traversal limits raise. Time checks are
 cooperative and cannot interrupt a blocking backend operation. Large results
 can still be handled by `ToolOutputOffloadExtension`; offload does not remove
 the need to bound search work.
+
+### Bound Text Reads
+
+`ReadFileTool` returns at most 32 KiB of text per call by default, in addition
+to its 2,000-line ceiling. Configure the byte budget on the tool instance:
+
+```python
+reader = ReadFileTool(max_text_bytes=16 * 1024)
+```
+
+The budget counts UTF-8 bytes. If the selected page exceeds it, the error asks
+for `offset` and a smaller `limit`. If a single line exceeds it, the error asks
+for another available tool, such as Bash. These are separate errors, and
+neither returns file content. Opt into the tool's default guidance on its
+library to explain both cases before execution:
+
+```python
+from msgflux.nn import ToolLibrary
+
+library = ToolLibrary(
+    name="files", tools=[ReadFileTool(max_text_bytes=16 * 1024)]
+)
+library.apply_default_usage_guidance()
+```
+
+This selects the tool-owned `default_usage_guidance` when no explicit guidance
+is supplied. Without the library opt-in, the default text instructions stay
+inactive. This also applies to saved tool results;
+rejecting a read does not create another offload file. If a single line exceeds
+the budget, `read` cannot retrieve it: use another available tool, such as Bash,
+to filter or extract a smaller portion. Image reads retain their separate
+`max_image_bytes` budget. Successive reads can still accumulate context.
+
 
 ## WebFetchTool
 
@@ -366,3 +442,50 @@ The tool returns a structured `dotdict` with:
 
         response = agent("Tell me about the history of the Python programming language")
         ```
+
+## TaskTool Bucket
+
+The coding harness automatically groups the controls needed by background-capable
+tools into one `task` tool. Its typed request schema exposes only available
+operations: `status`, `list`, `output`, `wait`, `interrupt`, and, when supported,
+`activity` and `message`. Adding or removing sources updates the schema.
+
+```json
+{"request": {"operation": "status", "task_id": "..."}}
+```
+
+```json
+{"request": {"operation": "wait", "task_id": "...", "timeout": 10.0}}
+```
+
+`status` returns compact state; `activity` shows progress; `output` and `wait`
+retrieve final results. Results can be fetched repeatedly. Each operation accepts
+its own fields, rather than requiring unrelated optional fields for every call.
+
+An execution abort observed by a background worker records `interrupted` and
+preserves the reason in task inspection and results. Provider and tool exceptions
+record `failed`. A shell command's nonzero exit code remains in its `ShellResult`;
+it does not by itself mark the background task as failed.
+
+Generic ToolLibrary users can opt in after installing their tools:
+
+```python
+library.extensions["background_tasks"].enable_grouping()
+```
+
+The individual task controls remain the default outside the coding harness.
+`TaskTool` is also exported from `msgflux.tools.builtin` for explicit composition.
+
+
+A background dispatch returns only its task identifier:
+
+```text
+task_id='abc123'
+```
+
+Instructions for consulting and controlling tasks belong to the controller's
+usage guidance, rather than being repeated in each dispatch result. The coding
+harness applies TaskTool's default usage guidance automatically. Generic
+ToolLibrary users can opt in with `library.apply_default_usage_guidance()`.
+The guidance is associated with the registered tool name, so a renamed controller
+uses that name without changes to the background runtime.

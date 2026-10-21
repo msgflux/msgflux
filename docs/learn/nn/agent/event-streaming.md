@@ -151,7 +151,7 @@ async def main() -> None:
 
         async for event in watcher:
             update_ui(event)
-            if event.type in {"run.end", "run.error"}:
+            if event.type in {"run.end", "run.error", "run.paused", "run.interrupted"}:
                 break
 
     await run
@@ -253,13 +253,16 @@ them. All following events remain correlatable through `run_id` and
 | `model.response` | The model response settled; includes compact token usage and timing when available |
 | `message.start` | Assistant output presentation started |
 | `message.delta` | Assistant content chunk |
+| `commentary.delta` | User-visible intermediate assistant update, distinct from final content and reasoning |
 | `reasoning.delta` | Reasoning content chunk, when exposed by the provider |
 | `reasoning_summary.delta` | Provider reasoning-summary chunk |
 | `message.end` | Complete assistant output |
-| `tool.start` | A validated tool call is starting |
-| `tool.blocked` | A tool policy rejected the call before execution; includes the public arguments and reason |
+| `tool.start` | A validated local tool call or an observed provider search is starting |
+| `tool.blocked` | A tool policy rejected the call before execution; includes its reason. Permission denials omit arguments. |
+| `tool.permission_denied` | Required permissions were denied before dispatch; includes the call ID, tool name, code, and structured error |
 | `tool.update` | Intermediate tool progress |
-| `tool.end` | Tool execution completed or failed |
+| `tool.end` | Tool execution completed or failed; failed tool calls may include structured `error_info` |
+| `tools.updated` | Deferred tool schemas were loaded locally or discovered through the provider |
 | `task.start` | A background task was dispatched |
 | `task.update` | Background task status or progress changed |
 | `task.end` | A background task completed, failed, paused, or was interrupted |
@@ -268,6 +271,101 @@ them. All following events remain correlatable through `run_id` and
 | `turn.end` | The turn reached a terminal boundary; it has no output payload |
 | `run.end` | The run completed and reports its outcome |
 | `run.error` | Execution failed; the iterator raises after this event |
+| `run.paused` | Execution paused; the iterator raises the pause signal after this event |
+| `run.interrupted` | Execution was aborted, interrupted or cancelled; the iterator raises the control signal after this event |
+
+Terminal event types distinguish ordinary failures from control signals. A
+cooperative abort, task interruption or asyncio cancellation emits
+`run.interrupted`; a pause emits `run.paused`. The original exception still
+propagates to direct callers and event-stream consumers. Service observers
+receive the event; the service owns execution and settles the corresponding
+receipt.
+
+The textual `data.error` preserves the exception message. Empty or
+whitespace-only messages fall back to the exception class, such as `ReadTimeout`,
+so a failed run does not produce a blank diagnostic. The same rule applies to
+failed service receipts/results and exception values passed to built-in task
+stores. Nonblank provider messages retain their existing details; this does not
+include raw response bodies or Python tracebacks.
+
+Permission-denied `tool.permission_denied` and `tool.blocked` events retain
+`data.code` and include `data.error` with `code`, `message`, and `details`. This
+message also reaches model feedback. Failures inside an executing workspace
+operation appear on `tool.end`: the existing textual `data.error` remains, and
+`data.error_info` provides `{code, message, details}` for programmatic handling.
+Execution failures use the generic `tool_execution_failed` code. When execution
+raises an exception, `details.exception_type` identifies its class. The event
+does not include a traceback. The textual `data.error`, `error_info.message`,
+canonical `ToolOutcome.error.message`, model feedback and conversation history
+use the same failure message. An exception with an empty or whitespace-only
+message uses its class name, such as `RuntimeError`. Tool failures do not add
+the parallel gather index (`Task 0 failed:`); the call ID and tool name identify
+the operation. The generic `TaskError` representation used by gather/scatter
+outside tool dispatch is unchanged.
+
+Pause, interruption and cancellation remain control signals. They do not
+produce `error_info` or become ordinary failed tool outcomes. Output-processing
+failures continue to use a neutral message because tool execution may already
+have completed; their raw output and internal storage exception are not exposed.
+
+For example, a UI can show the error while retaining its structured fields for
+logs or diagnostics:
+
+```python
+async for event in observer:
+    if event.type != "tool.end":
+        continue
+    if info := event.data.get("error_info"):
+        print(info["code"], info["message"])
+        print(info.get("details", {}).get("exception_type"))
+    elif error := event.data.get("error"):
+        print(error)
+```
+
+The fallback reads the existing textual field for events without structured
+error metadata. A Bash process that exits nonzero or reaches its timeout still
+returns a structured command result with completed tool status; these outcomes
+are not dispatch exceptions and do not produce `error_info`. Inspect each
+result's `status` and `returncode` (`timed_out` has no return code) instead. Tool
+error payloads are also delivered through AgentService HTTP/SSE clients.
+
+## Tool Discovery
+
+Portable `tool_search` calls emit the usual `tool.start` and `tool.end` events.
+Selecting deferred tools also emits `tools.updated` after the thread's loading
+state changes. Re-selecting already loaded tools does not emit another update.
+Searching without selecting does not change the available schemas.
+
+OpenAI Responses and OpenAI Codex also expose provider search items through
+`tool.start`, optional `tool.update` for completed arguments, and `tool.end`.
+These events have `tool_name="tool_search"`, a shared `tool_call_id`,
+`execution="provider"`, `provider`, and `api_mode`. The native protocol items
+remain in conversation history for replay. Observing them does not dispatch a
+local tool. A failed or interrupted search ends with an `error` and does not
+report tools as loaded.
+
+A successful provider search reports names in `tools.updated` and in the
+`tool.end` result as `{"loaded_tools": [...]}`. Namespace tools use qualified
+names such as `crm.lookup`. Full parameter schemas are not copied into events.
+Provider loading describes native discovery; it does not mutate the portable
+catalog's loading state. These events add visibility without changing request
+schemas or cache behavior.
+
+```python
+async for event in agent.stream_events("Find a tool to fetch a web page"):
+    if event.type == "tools.updated":
+        origin = event.data["execution"]  # "client" or "provider"
+        print(origin, event.data["loaded_tools"])
+    elif event.type == "tool.end" and event.data["tool_name"] == "tool_search":
+        print("Search finished:", event.data.get("error") or event.data["result"])
+```
+
+This example displays loading changes and the search outcome. Local loading
+updates include `catalog_id`; provider updates include `tool_call_id` for
+association with the search. Both ordinary and streamed model responses expose
+these execution events. Streamed providers preserve their order relative to
+assistant deltas. Direct model consumers can inspect `ModelResponse.events` or
+iterate `ModelStreamResponse.consume_events()` to observe native discovery.
 
 ## Model Metrics
 

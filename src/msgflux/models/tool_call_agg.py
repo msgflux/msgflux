@@ -185,7 +185,7 @@ class ToolCallAggregator:
 
         # Adding the results of function calls as separate messages
         for call in self.tool_calls.values():
-            if call["result"] is not None:
+            if "result" in call:
                 if not isinstance(call["result"], str):  # convert to str
                     call["result"] = msgspec_dumps(call["result"])
                 item = ChatBlock.tool(call["id"], call["result"])

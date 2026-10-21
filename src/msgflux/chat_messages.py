@@ -856,6 +856,7 @@ class ChatMessages:
     ) -> List[dict[str, Any]]:
         messages: List[dict[str, Any]] = []
         pending_reasoning: list[Mapping[str, Any]] = []
+        pending_tool_commentary = False
         for stored_item in self._materialized_items(
             provider=provider, api_mode=api_mode
         ):
@@ -866,6 +867,8 @@ class ChatMessages:
                 item = adapter.project_history(item)
                 item_type = item["type"]
             if item_type == "turn":
+                continue
+            if item_type == "model_configuration":
                 continue
             if item_type == "reasoning":
                 pending_reasoning.append(item)
@@ -902,6 +905,22 @@ class ChatMessages:
                         reasoning_codec,
                     )
                     pending_reasoning = []
+                if (
+                    api_mode == "chat_completions"
+                    and pending_tool_commentary
+                    and messages
+                    and messages[-1].get("role") == "assistant"
+                ):
+                    preceding = messages.pop()
+                    converted_call["content"] = preceding["content"]
+                    converted_call.update(
+                        {
+                            key: value
+                            for key, value in preceding.items()
+                            if key not in {"role", "content"}
+                        }
+                    )
+                pending_tool_commentary = False
                 if (
                     messages
                     and messages[-1].get("role") == "assistant"
@@ -961,6 +980,10 @@ class ChatMessages:
                         if converted_reasoning is not None:
                             messages.append(converted_reasoning)
                         pending_reasoning = []
+                    pending_tool_commentary = (
+                        item.get("visibility") == "commentary"
+                        and api_mode == "chat_completions"
+                    )
                     messages.append(converted)
                 continue
 
@@ -1006,6 +1029,7 @@ class ChatMessages:
         api_mode: str = "responses",
         reasoning_codec: ReasoningCodec | None = None,
         native_tools: bool = True,
+        reasoning_updates: bool = False,
     ) -> List[dict[str, Any]]:
         result: List[dict[str, Any]] = []
         for stored_item in self._materialized_items(
@@ -1030,6 +1054,22 @@ class ChatMessages:
                 item = adapter.project_history(item)
             item_type = item.get("type")
             if item_type == "turn":
+                continue
+            if item_type == "model_configuration":
+                has_prior_response = any(
+                    prior.get("role") == "assistant"
+                    or prior.get("type") in {"function_call", "reasoning"}
+                    for prior in result
+                )
+                if reasoning_updates and has_prior_response:
+                    update = {
+                        "type": "configuration_update",
+                        "reasoning": {"effort": item["reasoning_effort"]},
+                    }
+                    if result and result[-1].get("type") == "configuration_update":
+                        result[-1] = update
+                    else:
+                        result.append(update)
                 continue
             if item_type == "reasoning":
                 converted_reasoning = self._reasoning_item_to_responses(
@@ -1480,6 +1520,13 @@ class ChatMessages:
     ) -> List[dict[str, Any]]:
         normalized = deepcopy(dict(item))
         item_type = normalized.get("type")
+
+        if item_type == "model_configuration":
+            effort = normalized.get("reasoning_effort")
+            if not isinstance(effort, str) or not effort.strip():
+                raise TypeError("`reasoning_effort` must be a non-empty string")
+            normalized["reasoning_effort"] = effort.strip()
+            return [normalized]
 
         if item_type == "reasoning":
             text = self._extract_reasoning_content(normalized)

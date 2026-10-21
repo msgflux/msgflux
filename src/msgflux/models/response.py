@@ -1,4 +1,4 @@
-from typing import Literal
+from typing import Any, Literal
 
 from msgflux._private.response import BaseResponse, BaseStreamResponse, LMStreamEvent
 
@@ -26,3 +26,15 @@ class ModelResponse(BaseResponse):
 
 class ModelStreamResponse(BaseStreamResponse):
     response_type: Literal["audio_generation", "text_generation", "tool_call"]
+
+
+def _stream_response_from_result(result: Any) -> ModelStreamResponse | None:
+    """Find a model stream wrapped by a presentation response envelope."""
+    if isinstance(result, ModelStreamResponse):
+        return result
+    if isinstance(result, dict):
+        candidate = result.get("response")
+        if isinstance(candidate, ModelStreamResponse):
+            return candidate
+    candidate = getattr(result, "response", None)
+    return candidate if isinstance(candidate, ModelStreamResponse) else None

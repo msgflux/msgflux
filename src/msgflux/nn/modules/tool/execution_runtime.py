@@ -2,7 +2,9 @@
 
 # ruff: noqa: A001, A002
 
+import asyncio
 import weakref
+from concurrent.futures import CancelledError as FutureCancelledError
 from dataclasses import replace
 from functools import partial
 from typing import Any, Callable, Dict, List, Mapping, Optional, Tuple
@@ -15,6 +17,7 @@ from msgflux.exceptions import (
     AbortRequestedError,
     TaskError,
     TaskInterruptRequestedError,
+    TaskPauseRequestedError,
 )
 from msgflux.nn.hooks.events import AfterTool, BeforeTool, BeforeToolDispatch
 from msgflux.nn.modules.tool.implementations import Tool
@@ -32,7 +35,7 @@ from msgflux.nn.modules.tool.runtime import (
 )
 from msgflux.runtime.abort import await_with_abort
 from msgflux.runtime.approvals.agent import approved_tool_execution, guard_approved_plan
-from msgflux.runtime.context import get_execution_context
+from msgflux.runtime.context import execution_context, get_execution_context
 from msgflux.runtime.events import EventType, emit_event, event_source
 from msgflux.runtime.permissions import require_permissions
 from msgflux.tools.helpers import (
@@ -41,8 +44,18 @@ from msgflux.tools.helpers import (
     coerce_tool_params,
 )
 from msgflux.tools.responses import ToolResponses
-from msgflux.tools.runtime import ToolIntent, ToolOutcome
+from msgflux.tools.runtime import ToolError, ToolIntent, ToolOutcome
 from msgflux.tools.types import ToolBucket, ToolLibraryOperator
+from msgflux.utils.errors import exception_message
+
+
+class _ToolBatchControlError(Exception):
+    """Carry observed batch results to Agent history before control settlement."""
+
+    def __init__(self, error: BaseException, outcomes: Tuple[ToolOutcome, ...]):
+        self.error = error
+        self.outcomes = outcomes
+        super().__init__(str(error))
 
 
 class _ToolBackgroundScheduler:
@@ -56,6 +69,13 @@ class _ToolBackgroundScheduler:
         if library is None:
             raise RuntimeError("The ToolLibrary is no longer available")
         plan = request.plan
+        # Workers bypass the foreground execute() guard. Consume the approval
+        # before any durable task can be admitted.
+        denied = library._permission_outcome(
+            plan.intent, plan.definition
+        ) or guard_approved_plan(plan, consume=True)
+        if denied is not None:
+            return denied
         call = library.get_background_dispatcher().dispatch(
             tool=plan.definition.executor,
             definition=plan.definition,
@@ -329,7 +349,7 @@ class ToolLibraryExecutionMixin:
         sync_dispatch: bool,
     ) -> ToolRuntimeContext:
         execution = get_execution_context()
-        environment = execution.get("environment")
+        workspace = execution.get("workspace")
         handle = self.get_handle().for_tool(
             tool_name=tool_name,
             agent_inbox=execution.get("agent_inbox"),
@@ -353,8 +373,10 @@ class ToolLibraryExecutionMixin:
                 "background_dispatcher": _ToolBackgroundScheduler(self),
                 "sync_dispatch": sync_dispatch,
                 **(
-                    {"environment": environment, "filesystem": environment.filesystem}
-                    if environment is not None
+                    {
+                        "workspace": workspace,
+                    }
+                    if workspace is not None
                     else {}
                 ),
             }
@@ -428,7 +450,11 @@ class ToolLibraryExecutionMixin:
                 ),
                 context.get("abort_signal"),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return self._failed_intent(
@@ -459,7 +485,11 @@ class ToolLibraryExecutionMixin:
                 ),
                 context.get("abort_signal"),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return self._failed_intent(
@@ -608,7 +638,11 @@ class ToolLibraryExecutionMixin:
                 ),
             )
             return event
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return replace(
@@ -638,7 +672,11 @@ class ToolLibraryExecutionMixin:
                 ),
             )
             return event
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return replace(
@@ -668,7 +706,11 @@ class ToolLibraryExecutionMixin:
                     expected_type=BeforeTool,
                 ),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return BeforeTool(
@@ -700,7 +742,11 @@ class ToolLibraryExecutionMixin:
                     expected_type=BeforeTool,
                 ),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             return BeforeTool(
@@ -770,16 +816,13 @@ class ToolLibraryExecutionMixin:
                 arguments=event_data["arguments"],
                 result=result,
             )
-        outcome = self._run_after_tool_hook(outcome)
-        outcome = self._transform_tool_output(outcome)
-        emit_event(
-            EventType.TOOL_END,
-            {
-                **event_data,
-                "result": outcome.result,
-                "error": str(outcome.error) if outcome.error is not None else None,
-            },
-        )
+        try:
+            outcome = self._run_after_tool_hook(outcome)
+            outcome = self._transform_tool_output(outcome)
+        except BaseException as exc:
+            self._emit_tool_end(event_data, replace(outcome, result=None, error=exc))
+            raise
+        self._emit_tool_end(event_data, outcome)
         if outcome.error is not None:
             if isinstance(outcome.error, BaseException):
                 raise outcome.error
@@ -826,21 +869,32 @@ class ToolLibraryExecutionMixin:
                 arguments=event_data["arguments"],
                 result=result,
             )
-        outcome = await self._arun_after_tool_hook(outcome)
-        outcome = await self._atransform_tool_output(outcome)
-        emit_event(
-            EventType.TOOL_END,
-            {
-                **event_data,
-                "result": outcome.result,
-                "error": str(outcome.error) if outcome.error is not None else None,
-            },
-        )
+        try:
+            outcome = await self._arun_after_tool_hook(outcome)
+            outcome = await self._atransform_tool_output(outcome)
+        except BaseException as exc:
+            self._emit_tool_end(event_data, replace(outcome, result=None, error=exc))
+            raise
+        self._emit_tool_end(event_data, outcome)
         if outcome.error is not None:
             if isinstance(outcome.error, BaseException):
                 raise outcome.error
             raise RuntimeError(str(outcome.error))
         return outcome.result
+
+    def _emit_tool_end(self, event_data: Mapping[str, Any], outcome: AfterTool) -> None:
+        error = self._tool_error(outcome.error)
+        emit_event(
+            EventType.TOOL_END,
+            {
+                **event_data,
+                "result": outcome.result,
+                "error": error.message
+                if error
+                else (str(outcome.error) if outcome.error is not None else None),
+                "error_info": msgspec.to_builtins(error) if error else None,
+            },
+        )
 
     @staticmethod
     def _tool_output_failure(outcome: AfterTool, error: Exception) -> AfterTool:
@@ -851,7 +905,47 @@ class ToolLibraryExecutionMixin:
         emit_event(
             EventType.HANDLER_ERROR, {"hook": "transform_tool_output", "error": message}
         )
+        if isinstance(
+            outcome.error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ),
+        ):
+            return replace(outcome, result=None)
         return replace(outcome, result=None, error=message)
+
+    @staticmethod
+    def _tool_error(error: BaseException | str | None) -> ToolError | None:
+        if error is None:
+            return None
+        if isinstance(
+            error,
+            (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ),
+        ):
+            return None
+        message = (
+            exception_message(error) if isinstance(error, BaseException) else error
+        )
+        details = (
+            {"exception_type": type(error).__name__}
+            if isinstance(error, BaseException)
+            else {}
+        )
+        if not message.strip():
+            message = "Tool execution failed"
+        return ToolError(
+            code="tool_execution_failed",
+            message=message,
+            details=details,
+        )
 
     def _transform_tool_output(self, outcome: AfterTool) -> AfterTool:
         try:
@@ -868,7 +962,11 @@ class ToolLibraryExecutionMixin:
                             "transform_tool_output must return AfterTool or None"
                         )
             return current
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as error:
             return self._tool_output_failure(outcome, error)
@@ -888,7 +986,11 @@ class ToolLibraryExecutionMixin:
                             "transform_tool_output must return AfterTool or None"
                         )
             return current
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as error:
             return self._tool_output_failure(outcome, error)
@@ -905,7 +1007,11 @@ class ToolLibraryExecutionMixin:
             if not isinstance(outcome, AfterTool):
                 raise TypeError("after_tool handlers must return AfterTool or None")
             return outcome
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             emit_event(
@@ -926,7 +1032,11 @@ class ToolLibraryExecutionMixin:
             if not isinstance(outcome, AfterTool):
                 raise TypeError("after_tool handlers must return AfterTool or None")
             return outcome
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception as exc:
             emit_event(
@@ -1117,12 +1227,15 @@ class ToolLibraryExecutionMixin:
     ) -> Tuple[ToolOutcome, ...]:
         """Execute canonical intents without lowering them to legacy responses."""
         normalized = self._validate_intents(intents)
-        return self._execute_intent_batch(
-            normalized,
-            message=message,
-            messages=messages,
-            vars=vars,
-        )
+        try:
+            return self._execute_intent_batch(
+                normalized,
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
+        except _ToolBatchControlError as exc:
+            raise exc.error from None
 
     async def aexecute_intents(
         self,
@@ -1134,12 +1247,15 @@ class ToolLibraryExecutionMixin:
     ) -> Tuple[ToolOutcome, ...]:
         """Async counterpart of execute_intents."""
         normalized = self._validate_intents(intents)
-        return await self._aexecute_intent_batch(
-            normalized,
-            message=message,
-            messages=messages,
-            vars=vars,
-        )
+        try:
+            return await self._aexecute_intent_batch(
+                normalized,
+                message=message,
+                messages=messages,
+                vars=vars,
+            )
+        except _ToolBatchControlError as exc:
+            raise exc.error from None
 
     @staticmethod
     def _validate_intents(
@@ -1148,6 +1264,15 @@ class ToolLibraryExecutionMixin:
         normalized = tuple(intents)
         if not all(isinstance(intent, ToolIntent) for intent in normalized):
             raise TypeError("`intents` must contain ToolIntent values")
+        seen = set()
+        duplicates = set()
+        for intent in normalized:
+            if intent.id in seen:
+                duplicates.add(intent.id)
+            seen.add(intent.id)
+        if duplicates:
+            formatted = ", ".join(f"`{call_id}`" for call_id in sorted(duplicates))
+            raise ValueError(f"Duplicate tool call IDs: {formatted}")
         return normalized
 
     @staticmethod
@@ -1164,6 +1289,7 @@ class ToolLibraryExecutionMixin:
         message: str,
         feedback: Any = None,
         arguments: Mapping[str, Any] | None = None,
+        details: Mapping[str, Any] | None = None,
     ) -> ToolOutcome:
         return ToolOutcome.failed(
             intent,
@@ -1171,9 +1297,33 @@ class ToolLibraryExecutionMixin:
             code=code,
             message=message,
             feedback=feedback,
+            details=details,
             metadata=cls._outcome_metadata(
                 intent.arguments if arguments is None else arguments
             ),
+        )
+
+    def _failed_task_outcome(
+        self,
+        intent: ToolIntent,
+        plan: ToolExecutionPlan,
+        result: TaskError,
+    ) -> ToolOutcome:
+        if isinstance(result.exception, FutureCancelledError):
+            raise asyncio.CancelledError(
+                "Tool execution cancelled"
+            ) from result.exception
+        error = self._tool_error(result.exception)
+        if error is None:
+            raise result.exception
+        return self._failed_intent(
+            intent,
+            status="execution_failed",
+            code=error.code,
+            message=error.message,
+            feedback=self.get_tool_definition(intent.name).feedback,
+            arguments=plan.visible_arguments,
+            details=error.details,
         )
 
     @classmethod
@@ -1453,10 +1603,12 @@ class ToolLibraryExecutionMixin:
                 self.get_tool_definition(intent.name).required_resources,
             )
         except PermissionError as exc:
+            error = ToolError(code="tool_permission_denied", message=str(exc))
             payload = {
                 "tool_call_id": intent.id,
                 "tool_name": intent.name,
-                "code": "tool_permission_denied",
+                "code": error.code,
+                "error": error,
             }
             emit_event(EventType.TOOL_PERMISSION_DENIED, payload)
             emit_event(EventType.TOOL_BLOCKED, payload)
@@ -1477,7 +1629,7 @@ class ToolLibraryExecutionMixin:
         ):
             raise ValueError("Dispatch cannot replace the executing tool intent")
 
-    async def _adispatch_runtime_plan(
+    async def _adispatch_runtime_plan(  # noqa: C901
         self,
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
@@ -1503,7 +1655,18 @@ class ToolLibraryExecutionMixin:
             if denied is not None:
                 execution_denial = denied
                 return denied
-            with approved_tool_execution(current):
+            context_messages = context.values.get("messages")
+            try:
+                message_offset = len(context_messages)
+            except TypeError:
+                message_offset = None
+            with (
+                execution_context(
+                    tool_call_id=current.intent.id,
+                    tool_call_message_offset=message_offset,
+                ),
+                approved_tool_execution(current),
+            ):
                 result = await self._aexecute_prepared_tool(
                     current.definition.executor,
                     current.call_arguments,
@@ -1555,7 +1718,11 @@ class ToolLibraryExecutionMixin:
                 ),
                 context.get("abort_signal"),
             )
-        except (AbortRequestedError, TaskInterruptRequestedError):
+        except (
+            AbortRequestedError,
+            TaskInterruptRequestedError,
+            TaskPauseRequestedError,
+        ):
             raise
         except Exception:
             return outcome
@@ -1612,30 +1779,7 @@ class ToolLibraryExecutionMixin:
 
         if prepared_calls:
             results = F.scatter_gather(prepared_calls)
-            for (index, intent, plan), result in zip(prepared_metadata, results):
-                if isinstance(result, ToolOutcome):
-                    outcomes[index] = result
-                elif isinstance(result, TaskError):
-                    if isinstance(
-                        result.exception,
-                        (AbortRequestedError, TaskInterruptRequestedError),
-                    ):
-                        raise result.exception
-                    outcomes[index] = self._failed_intent(
-                        intent,
-                        status="execution_failed",
-                        code="tool_execution_failed",
-                        message=str(result),
-                        feedback=self.get_tool_definition(intent.name).feedback,
-                        arguments=plan.visible_arguments,
-                    )
-                else:
-                    outcomes[index] = self._completed_intent(
-                        intent,
-                        result,
-                        feedback=self.get_tool_definition(intent.name).feedback,
-                        arguments=plan.visible_arguments,
-                    )
+            return self._collect_intent_results(outcomes, prepared_metadata, results)
         return self._finalize_outcomes(outcomes)
 
     async def _aexecute_intent_batch(
@@ -1684,31 +1828,57 @@ class ToolLibraryExecutionMixin:
 
         if prepared_calls:
             results = await F.ascatter_gather(prepared_calls)
-            for (index, intent, plan), result in zip(prepared_metadata, results):
+            return self._collect_intent_results(outcomes, prepared_metadata, results)
+        return self._finalize_outcomes(outcomes)
+
+    def _collect_intent_results(
+        self,
+        outcomes: List[ToolOutcome | None],
+        prepared_metadata: List[Tuple[int, ToolIntent, ToolExecutionPlan]],
+        results: Tuple[Any, ...],
+    ) -> Tuple[ToolOutcome, ...]:
+        control_error = None
+        for (index, intent, plan), result in zip(prepared_metadata, results):
+            try:
+                if isinstance(result, asyncio.CancelledError):
+                    raise result
                 if isinstance(result, ToolOutcome):
                     outcomes[index] = result
                 elif isinstance(result, TaskError):
-                    if isinstance(
-                        result.exception,
-                        (AbortRequestedError, TaskInterruptRequestedError),
-                    ):
-                        raise result.exception
-                    outcomes[index] = self._failed_intent(
-                        intent,
-                        status="execution_failed",
-                        code="tool_execution_failed",
-                        message=str(result),
-                        feedback=self.get_tool_definition(intent.name).feedback,
-                        arguments=plan.visible_arguments,
-                    )
+                    outcomes[index] = self._failed_task_outcome(intent, plan, result)
                 else:
                     outcomes[index] = self._completed_intent(
                         intent,
                         result,
-                        feedback=self.get_tool_definition(intent.name).feedback,
+                        feedback=plan.definition.feedback,
                         arguments=plan.visible_arguments,
                     )
-        return self._finalize_outcomes(outcomes)
+            except (
+                AbortRequestedError,
+                TaskInterruptRequestedError,
+                TaskPauseRequestedError,
+                asyncio.CancelledError,
+            ) as exc:
+                if control_error is None:
+                    control_error = exc
+                outcomes[index] = self._failed_intent(
+                    intent,
+                    status="interrupted",
+                    code="tool_interrupted",
+                    message=(
+                        f"{exception_message(exc)} "
+                        "Tool result unavailable after execution was interrupted. "
+                        "Effects may already have occurred; do not retry automatically."
+                    ),
+                    feedback=plan.definition.feedback,
+                    arguments=plan.visible_arguments,
+                )
+        collected = self._finalize_outcomes(outcomes)
+        if control_error is not None:
+            # All workers have settled. Preserve observed sibling outcomes before
+            # propagating the first control in intent order.
+            raise _ToolBatchControlError(control_error, collected)
+        return collected
 
     @staticmethod
     def _finalize_outcomes(

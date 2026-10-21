@@ -42,6 +42,7 @@ class ToolDeclaration(msgspec.Struct, frozen=True, kw_only=True):
     implementation: Callable[..., Any]
     display_name: str | None = None
     usage_guidance: str | None = None
+    default_usage_guidance: str | None = None
     execution_namespace: str | None = None
 
     def __post_init__(self) -> None:
@@ -174,6 +175,7 @@ class ToolDefinitionCompiler:
             "catalog_role": getattr(declaration.implementation, "catalog_role", None),
             "execution_namespace": declaration.execution_namespace,
             "declared_usage_guidance": declaration.usage_guidance,
+            "default_usage_guidance": declaration.default_usage_guidance,
             "bucket": cls._compile_bucket_presentation(declaration.implementation),
             "background_capabilities": config.get("background_capabilities"),
             "disable_input": bool(config.get("disable_input", False)),

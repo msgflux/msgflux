@@ -66,6 +66,33 @@ When the tool library runs inside this context, it reads the active
 interrupt requests. If no task store is provided, msgFlux creates an in-memory
 store when background tools are used.
 
+The SQLite store persists `msgspec.Struct` and dataclass results as structured
+JSON, including nested values. After reopening, a Bash result still exposes
+`results`, `returncode`, `stdout`, and `stderr` through `task_output` or `task_wait`.
+Opaque Python objects retain their string fallback. Previously stored strings
+remain strings; the store does not parse Python representations.
+
+For lightweight foreground-run inspection, task stores provide
+`list_summaries(thread_id, run_id)` through `TaskStoreProtocol`. It returns
+`TaskSummary` records with
+`task_id`, `tool_name`, `status`, `updated_at`, and `error`, filtered to the
+requested thread and tasks whose `root_run_id` or `parent_run_id` matches the
+run. The summary query does not load results, progress metadata, or arguments:
+
+```python
+for task in task_store.list_summaries(
+    thread_id="customer_42",
+    run_id="ticket_9001",
+):
+    print(task.task_id, task.tool_name, task.status, task.updated_at, task.error)
+```
+
+Use `task_status()` or `task_output()` when full task progress or results are
+needed. A summary is a persisted status observation, not proof that a worker is
+currently alive or a guarantee that this caller can claim the task.
+Custom `TaskStoreProtocol` implementations must provide this query without
+loading full task results. The built-in in-memory and SQLite stores implement it.
+
 Task control tools are installed automatically while the library contains
 background-capable tools. Removing the last `background=True` or
 `allow_background=True` tool removes those task tools as well. You can still
@@ -145,6 +172,47 @@ result = agent.tool_library([("call_4", "task_output", {"task_id": task_id})])
 print(result.tool_calls[0].result)
 ```
 
+## Inspecting Tasks Without Loading Results
+
+`task_status` and `task_list` report task identity, state, progress and timing,
+plus an error or a pause/interruption reason when applicable. Their payloads
+omit results, internal metadata and activity history, including for completed
+tasks. Use `task_activity` for updates and tool calls, and `task_output` or
+`task_wait` to retrieve the output explicitly.
+Status queries do not consume the output or change the task's status.
+
+The task stores support the same distinction with `include_result=False`:
+
+```python
+from msgflux.tasks import SQLiteTaskStore
+
+store = SQLiteTaskStore("tasks.sqlite3")
+try:
+    task = store.create("worker")
+    store.complete(task.task_id, {"answer": 42})
+
+    snapshot = store.get(task.task_id, include_result=False)
+    print(snapshot.status)  # completed
+    print(snapshot.result)  # None: this snapshot omitted the result.
+
+    print(store.get(task.task_id).result)  # {"answer": 42}
+finally:
+    store.close()
+```
+
+This example inspects a completed task without reading its saved output, then
+retrieves the output through a normal read. Both `get` and `list` include results
+by default. Passing `include_result=False` returns independent snapshots with
+`result=None`; it leaves the stored result intact. SQLite avoids selecting the
+result column, and the in-memory store avoids copying the result. Other snapshot
+fields retain their usual behavior.
+
+Custom `TaskStoreProtocol` implementations must accept the keyword on both
+methods and omit the result before loading or copying it. With SQLite,
+`task_output` and `task_wait` can retrieve the saved output repeatedly, including
+after reopening the database. The in-memory store retains results for its
+lifetime because it has no disk copy to reload.
+
 ## Waiting For A Task
 
 Sometimes the agent has nothing useful to do until the task finishes.
@@ -158,8 +226,31 @@ print(wait_result.tool_calls[0].result)
 
 When the task completes, `task_wait` returns the same payload as
 `task_output(task_id)`. If the task fails, it returns the failed payload. If
-the timeout is reached first, it returns a timeout payload with the current
-task status and progress.
+the task pauses, it returns the current paused status so the host can resume it
+explicitly. If the timeout is reached while the task is still queued or running,
+it returns a timeout payload with the current task status and progress.
+
+### Streaming Agent Results
+
+A background Agent configured with `config={"stream": True}` stays `running`
+until its stream and output finalization finish. The task store receives the
+settled output, including presentation transforms, rather than a live stream
+object. `task_wait` and `task_output` return that same persisted value with both
+in-memory and SQLite task stores.
+
+```python
+# task_id identifies an already dispatched streaming subagent.
+result = agent.tool_library(
+    [("stream-result", "task_wait", {"task_id": task_id, "timeout": 5.0})]
+)
+print(result.tool_calls[0].result)
+```
+
+This waits for the subagent's final result. A timeout reports its current task
+state and leaves execution running. Tokens continue through the Agent's event
+stream; retrieving the task result does not consume the stream or run its
+lifecycle hooks again. Provider or finalization failures produce a failed task
+with the original cause instead of a completed stream placeholder.
 
 ## Model-Chosen Background Execution
 
@@ -192,9 +283,17 @@ interrupt_result = agent.tool_library([("call_6", "task_interrupt", {"task_id": 
 print(interrupt_result.tool_calls[0].result)
 ```
 
-If the task has not started yet, msgFlux may interrupt it immediately. If it is
-already running, the interrupt is observed at the next cooperative checkpoint. For
-background subagents, that means before the next provider call.
+A queued task with no worker lease transitions directly to `interrupted` in the
+task store. If a worker lease exists, or the task is already running or paused,
+msgFlux records a cooperative interrupt request instead. The worker observes it
+at its next cooperative checkpoint; for background subagents, that means before
+the next provider call.
+
+The task may complete before it observes the request. Completion and failure
+clear the pending interrupt flag while preserving the result or error and the
+activity history. If the task settles before the interrupt request reaches the
+store, `task_interrupt` returns its actual terminal status instead of reporting
+a pending interruption. Completed effects are not undone.
 
 ## Reading Task Activity
 
@@ -221,7 +320,19 @@ For background agents it can include compact tool call entries such as:
 For normal background tools, the task id is an operational handle. Background
 agents declare the `message` capability by default. The built-in `AgentTool`
 uses `task_message` to let the root model send another message to the same
-running subagent or continue it from its checkpoint:
+running subagent or continue it from its checkpoint.
+
+The agent name selects a reusable definition. Calling `AgentTool` twice with
+the same name starts two independent child conversations, including when both
+calls run in parallel. They can share the parent's workspace, thread ID and
+checkpoint store; their distinct run IDs identify separate checkpoints.
+Foreground calls through `AgentTool` also start independent conversations.
+
+To continue a particular child, use its `task_id`. After a completed child is
+continued, the runtime records its previous checkpoint run ID and restores
+that exact history. A newer checkpoint from another task with the same agent
+name is not used. If the required source checkpoint is missing, continuation
+fails with an explicit error rather than borrowing another child's history.
 
 ```python
 task_message(
@@ -311,12 +422,17 @@ with mf.execution_context(
     task_store=task_store, checkpoint_store=checkpoint_store
 ):
     result = agent.tool_library.recover_agent_task(
-        "ab12cd34", message="Continue the interrupted investigation."
+        "ab12cd34",
+        message="Continue the interrupted investigation.",
+        worker_stopped=True,
     )
 ```
 
-The call schedules the replacement worker and returns immediately. It only
-accepts an agent task whose prior worker lease has expired. When a checkpoint
+Before asserting `worker_stopped=True`, establish that the previous worker and
+its commands have stopped and inspect uncertain external effects. Lease expiry
+alone does not establish that condition. The call schedules the replacement
+worker and returns immediately. It only accepts an agent task whose prior worker
+lease has expired. When a checkpoint
 exists, the worker continues that run. If the process fell before the first
 checkpoint, msgFlux replays the JSON-serializable initial tool input saved at
 dispatch and queues the recovery message for the agent inbox. A live worker,
@@ -351,10 +467,80 @@ transformation made only by `after_run_end` is not guaranteed to survive a
 crash in this window. Reconciliation does not provide exactly-once delivery
 of external effects.
 
+### Inspecting and coordinating recovery
+
+For an application restart, reconnect the workspace and reconstruct the same
+Agent, tool library, and persistent task/inbox/checkpoint bindings first. The
+host coordinator inspects these dependencies without dispatching work:
+
+```python
+from msgflux.runtime import AgentTaskRecovery
+
+recovery = AgentTaskRecovery(agent.tool_library, workspace=reconnected_workspace)
+report = recovery.inspect("ab12cd34")
+print(report.classification, report.reasons)
+```
+
+The immutable `TaskRecoveryReport` uses `msgspec.Struct` and includes task,
+checkpoint, lease, workspace, inbox and permission status. It describes a
+snapshot, not a reservation. Neither inspection nor stored references authorize
+work or reconstruct credentials and grants.
+
+| Classification | Meaning |
+| --- | --- |
+| `completed` | The task result is already committed. |
+| `terminal_result` | A completed Agent checkpoint contains a result that can be copied to the task store without another model call. |
+| `active` | A valid worker lease exists; recovery cannot take it over. |
+| `recoverable` | An expired worker has compatible dependencies and durable input/checkpoint state. Confirm quiescence before resuming. |
+| `uncertain` | Pending execution needs explicit host reconciliation before resume. |
+| `blocked` | A dependency, route, grant or recoverable state is missing or incompatible. Inspect `reasons`. |
+
+When a terminal result is available, reconcile it through the same coordinator:
+
+```python
+if report.classification == "terminal_result":
+    recovery.recover("ab12cd34", message="")
+```
+
+For a resumable task, first establish that the old worker stopped and resolve any
+uncertain effects; then explicitly attest that condition:
+
+```python
+if report.classification == "recoverable":
+    # Application code has verified the old worker and commands are stopped.
+    recovery.recover(
+        "ab12cd34",
+        message="Continue the interrupted investigation.",
+        worker_stopped=True,
+    )
+```
+
+These calls require no user context manager. The coordinator re-inspects before
+acting, and the dispatcher claims through the existing task store and rereads
+the checkpoint after claiming. If the checkpoint changed, it refuses dispatch
+and expires only its own lease, retaining the ownership marker for a later
+attempt. Old owners cannot publish a task result under a new lease. Store
+fencing does not stop arbitrary operating-system effects of a surviving command.
+
+When recovery classifies a task as `uncertain`, its refusal includes the
+recorded reasons. An unresolved command outcome requires host command
+reconciliation; a pending approval execution requires approval reconciliation.
+Neither lease expiry nor `worker_stopped=True` resolves those outcomes. A command
+may have completed its external effect before its result reached the Agent
+checkpoint, so replay remains blocked until the host reconciles that record.
+
+An executing approval batch remains uncertain until the host uses the Agent's
+approval reconciliation API. A batch waiting for a decision can retain its
+reviewed request and pause safely until approval. Restored workspace identity
+and cwd must match, and current permissions, tool and policy versions are still
+validated when execution resumes.
+
 Custom task stores can implement the structural `TaskStoreProtocol` from
 `msgflux.tasks`. In addition to lifecycle, activity, messages, and conditional
-`requeue`, the contract includes atomic `claim_worker` and `renew_worker`
-operations with owner-checked status updates. The shared
+`requeue`, the contract includes atomic `claim_worker`, `renew_worker` and
+owner-conditional `release_worker` operations with owner-checked status updates.
+`release_worker` expires the lease while retaining its owner marker; it does not
+remove the fence or change task status. The shared
 conformance tests cover these semantics for memory and SQLite providers.
 
 The SQLite inbox and checkpoint stores persist their `routing_id` in their
@@ -434,9 +620,10 @@ It also includes timing helpers such as:
 {
     "started_at": "2026-04-14T14:00:00.000000+00:00",
     "running_for_seconds": 1.243,
-    "last_activity_summary": "Progress: Processed b.txt",
 }
 ```
+
+Use `task_activity(task_id)` to inspect progress updates and subagent tool calls.
 
 ## Passive Notifications Back Into The Agent
 

@@ -171,6 +171,12 @@ nav:
         - learn/nn/agent/async.md
         - learn/nn/agent/streaming.md
         - learn/nn/agent/event-streaming.md
+        - learn/nn/agent/service.md
+        - learn/nn/agent/service-http.md
+        - learn/nn/agent/service-local.md
+        - learn/nn/agent/coding-cli.md
+        - learn/nn/agent/accounts.md
+        - learn/nn/agent/coding-session.md
         - learn/nn/agent/prompt-cache.md
         - learn/nn/agent/reasoning.md
         - learn/nn/agent/debug.md
@@ -193,6 +199,7 @@ nav:
           - learn/nn/agent/tools/mcp.md
         - learn/nn/agent/skills.md
         - learn/nn/agent/extensions.md
+        - learn/nn/agent/extension-packages.md
         - learn/nn/agent/signatures.md
         - learn/nn/agent/hooks.md
         - learn/nn/agent/model-gateway.md

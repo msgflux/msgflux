@@ -134,8 +134,8 @@ class TestWebSearchToolInit:
         assert tool.engine_kind == "retriever"
         assert tool.engine_target == "wikipedia"
         assert tool.annotations == {"query": str, "return": str}
-        assert "current information" in tool.description.lower()
-        assert "concise search phrase" in tool.description.lower()
+        assert "current web sources" in tool.description.lower()
+        assert "known url" in tool.description.lower()
         assert "wikipedia" not in tool.description.lower()
 
     def test_model_engine_adds_goal_annotation(self, mocker):
@@ -154,8 +154,7 @@ class TestWebSearchToolInit:
         assert tool.annotations["query"] == str
         assert tool.annotations["goal"] == Optional[str]
         assert tool.annotations["return"] == str
-        assert "synthesized" in tool.description
-        assert "answer grounded in web results" in tool.description
+        assert "synthesize an answer" in tool.description
         assert "goal" in tool.description
         assert "openai/gpt-4o-search-preview" not in tool.description
         mock_factory.assert_called_once_with(
@@ -288,7 +287,7 @@ class TestWebSearchToolLibraryIntegration:
         schemas = library.get_tool_json_schemas()
 
         assert schemas[0]["function"]["name"] == "web_search"
-        assert "current information" in schemas[0]["function"]["description"].lower()
+        assert "current web sources" in schemas[0]["function"]["description"].lower()
         assert "query" in schemas[0]["function"]["parameters"]["properties"]
         assert "prompt" not in schemas[0]["function"]["parameters"]["properties"]
         assert "goal" not in schemas[0]["function"]["parameters"]["properties"]

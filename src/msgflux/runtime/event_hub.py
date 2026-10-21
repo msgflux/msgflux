@@ -167,7 +167,13 @@ class ThreadWatcher:
         if self._buffer is not None or self._closed:
             raise RuntimeError("A ThreadWatcher cannot be entered more than once.")
         self._buffer = _EventBuffer(self._event_buffer_limit)
-        self._snapshot = self._hub._subscribe(self)
+        try:
+            self._snapshot = self._hub._subscribe(self)
+        finally:
+            # Snapshot readers are single-use; retaining them would also keep
+            # their Agent, stores, or approval policy alive while events drain.
+            self._load_messages = None
+            self._load_approvals = None
         return self
 
     async def __aexit__(self, _exc_type, _exc, _traceback) -> None:
@@ -194,6 +200,8 @@ class ThreadWatcher:
         if self._closed:
             return
         self._closed = True
+        self._load_messages = None
+        self._load_approvals = None
         self._hub._unsubscribe(self)
         if self._buffer is not None:
             self._buffer.close()

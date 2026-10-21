@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING
 if TYPE_CHECKING:
     from msgflux.models.chat_capabilities import (
         ChatAPIModeCapabilities,
+        ChatModelCapabilities,
         ChatProviderCapabilities,
     )
     from msgflux.models.chat_context import (
@@ -12,6 +13,7 @@ if TYPE_CHECKING:
     )
     from msgflux.models.chat_extensions import ChatModelExtension, ChatRequestContext
     from msgflux.models.compaction import ContextTokenEstimate, ModelCompaction
+    from msgflux.models.configuration import ModelConfiguration
     from msgflux.models.model import Model
     from msgflux.models.model_credentials import (
         BearerTokenCredentialResolver,
@@ -24,10 +26,12 @@ __all__ = [
     "ChatAPIModeCapabilities",
     "ChatContextAdapter",
     "ChatModelExtension",
+    "ChatModelCapabilities",
     "ChatRequestContext",
     "ChatProviderCapabilities",
     "ContextTokenEstimate",
     "Model",
+    "ModelConfiguration",
     "ModelCompaction",
     "ModelCredentialResolver",
     "OpenAIResponsesContextAdapter",
@@ -44,7 +48,11 @@ def __getattr__(name: str):
         value = getattr(import_module("msgflux.models.model_credentials"), name)
         globals()[name] = value
         return value
-    if name in {"ChatAPIModeCapabilities", "ChatProviderCapabilities"}:
+    if name in {
+        "ChatAPIModeCapabilities",
+        "ChatModelCapabilities",
+        "ChatProviderCapabilities",
+    }:
         value = getattr(import_module("msgflux.models.chat_capabilities"), name)
         globals()[name] = value
         return value
@@ -58,6 +66,10 @@ def __getattr__(name: str):
         return value
     if name in {"ContextTokenEstimate", "ModelCompaction"}:
         value = getattr(import_module("msgflux.models.compaction"), name)
+        globals()[name] = value
+        return value
+    if name == "ModelConfiguration":
+        value = getattr(import_module("msgflux.models.configuration"), name)
         globals()[name] = value
         return value
     if name != "Model":

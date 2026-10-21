@@ -82,6 +82,15 @@ class ApprovalStore(ABC, ApprovalStoreType):
             **kwargs,
         )
 
+    @staticmethod
+    def _validate_expected_revision(expected_revision: int | None) -> None:
+        if expected_revision is None:
+            return
+        if type(expected_revision) is not int:
+            raise TypeError("expected_revision must be a positive integer or None")
+        if expected_revision < 1:
+            raise ValueError("expected_revision must be a positive integer")
+
     def request(
         self,
         binding: ApprovalBinding,
@@ -146,10 +155,16 @@ class ApprovalStore(ABC, ApprovalStoreType):
         *,
         approved: bool,
         decided_by: str,
+        expected_revision: int | None = None,
     ) -> ApprovalRecord:
-        """Record a trusted host decision. The host authenticates the reviewer."""
+        """Record a trusted host decision, optionally comparing its revision.
+
+        A repeated identical decision by the same reviewer remains idempotent
+        even when its expected revision is stale, covering a lost response.
+        """
         if type(approved) is not bool:
             raise TypeError("Approval decisions require a bool")
+        self._validate_expected_revision(expected_revision)
         require_name(decided_by)
         status = "approved" if approved else "denied"
 
@@ -162,6 +177,8 @@ class ApprovalStore(ABC, ApprovalStoreType):
                 return record
             if record.status == status and record.decided_by == decided_by:
                 return record
+            if expected_revision is not None and record.revision != expected_revision:
+                raise ApprovalConflictError("Approval revision changed")
             if record.status != "pending":
                 raise ApprovalConflictError("Approval decision is already settled")
             return self._transition(record, status, now, decided_by=decided_by)
@@ -226,10 +243,21 @@ class ApprovalStore(ABC, ApprovalStoreType):
         return await asyncio.to_thread(self.pending, namespace, thread_id, run_id)
 
     async def adecide(
-        self, namespace: str, request_id: str, *, approved: bool, decided_by: str
+        self,
+        namespace: str,
+        request_id: str,
+        *,
+        approved: bool,
+        decided_by: str,
+        expected_revision: int | None = None,
     ) -> ApprovalRecord:
         return await asyncio.to_thread(
-            self.decide, namespace, request_id, approved=approved, decided_by=decided_by
+            self.decide,
+            namespace,
+            request_id,
+            approved=approved,
+            decided_by=decided_by,
+            expected_revision=expected_revision,
         )
 
     async def aconsume(

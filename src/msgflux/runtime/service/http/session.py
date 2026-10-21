@@ -1,0 +1,204 @@
+"""Remote facade for one thread owned by an AgentService."""
+
+from __future__ import annotations
+
+import asyncio
+import math
+from contextlib import AbstractAsyncContextManager
+from pathlib import Path
+from typing import Literal
+from uuid import uuid4
+
+import msgspec
+
+from msgflux.runtime.compaction import CompactionResult
+from msgflux.runtime.permissions import PermissionSet
+from msgflux.runtime.service import (
+    AdmissionReceipt,
+    ApprovalReview,
+    RunInspection,
+    RunResult,
+    RunSummary,
+    ServiceThread,
+)
+from msgflux.runtime.service.http.client import AgentServiceClient, RemoteThreadWatcher
+from msgflux.runtime.service.http.records import SnapshotRecord
+from msgflux.runtime.service.store import validate_identifier
+from msgflux.runtime.workspace.policy import WorkspacePolicy
+
+
+class AgentSessionClient:
+    """Bind an HTTP client to one service-owned Agent thread.
+
+    The service owns the Agent, workspace, stores, and execution lifecycle. This
+    facade borrows its :class:`AgentServiceClient` and never closes it.
+    """
+
+    __slots__ = ("_client", "_thread")
+
+    def __init__(self, client: AgentServiceClient, thread: ServiceThread) -> None:
+        if not isinstance(client, AgentServiceClient):
+            raise TypeError("`client` must be an AgentServiceClient")
+        thread = msgspec.convert(thread, type=ServiceThread, strict=True)
+        validate_identifier(thread.thread_id, "thread_id")
+        validate_identifier(thread.agent_id, "agent_id")
+        self._client = client
+        self._thread = thread
+
+    @classmethod
+    async def open(
+        cls,
+        client: AgentServiceClient,
+        *,
+        agent_id: str | None = None,
+        thread_id: str | None = None,
+        cwd: str | Path | None = None,
+        interactive: bool | None = None,
+    ) -> AgentSessionClient:
+        """Open or retrieve a service thread and bind this facade to it."""
+        thread = await client.open_thread(
+            agent_id, thread_id=thread_id, cwd=cwd, interactive=interactive
+        )
+        return cls(client, thread)
+
+    @property
+    def thread_id(self) -> str:
+        """Stable identity of the bound thread."""
+        return self._thread.thread_id
+
+    @property
+    def agent_id(self) -> str:
+        """Service-side Agent configuration selected for the thread."""
+        return self._thread.agent_id
+
+    @property
+    def workspace_root(self) -> str | None:
+        """Canonical host path bound to the thread, if one was supplied."""
+        return self._thread.cwd
+
+    async def workspace_policy(self) -> WorkspacePolicy:
+        """Read the current host-selected permission and approval policy."""
+        return await self._client.workspace_policy(self.thread_id)
+
+    async def update_workspace_policy(
+        self,
+        *,
+        permissions: PermissionSet | Literal["read-only", "full-access"] | None = None,
+        approval_policy: Literal["on-request", "never"] | None = None,
+        expected_revision: int | None = None,
+    ) -> WorkspacePolicy:
+        """Update the current policy for this thread through the trusted service."""
+        return await self._client.update_workspace_policy(
+            self.thread_id,
+            permissions=permissions,
+            approval_policy=approval_policy,
+            expected_revision=expected_revision,
+        )
+
+    async def prompt(
+        self,
+        prompt: str,
+        *,
+        request_id: str | None = None,
+        account_name: str | None = None,
+    ) -> AdmissionReceipt:
+        """Admit a prompt without coupling execution to an observer."""
+        if request_id is None:
+            request_id = uuid4().hex
+        return await self._client.prompt(
+            self.thread_id, prompt, request_id=request_id, account_name=account_name
+        )
+
+    async def receipt(self, request_id: str) -> AdmissionReceipt:
+        """Return the current admission receipt for a request identity."""
+        return await self._client.receipt(self.thread_id, request_id)
+
+    async def compact(self, *, run_id: str | None = None) -> CompactionResult:
+        """Compact this thread without resuming its paused/failed run."""
+        return await self._client.compact(self.thread_id, run_id=run_id)
+
+    async def result(self, run_id: str | None = None) -> RunResult:
+        """Read the latest admission's result, or select an explicit historical run."""
+        if run_id is None:
+            return await self._client.thread_result(self.thread_id)
+        return await self._client.run_result(self.thread_id, run_id)
+
+    async def inspect_run(self, run_id: str) -> RunInspection:
+        """Read recorded run state; this never asserts old-worker quiescence."""
+        return await self._client.inspect_run(self.thread_id, run_id)
+
+    async def wait(
+        self, request_id: str, *, poll_interval: float = 0.05
+    ) -> AdmissionReceipt:
+        """Poll a receipt until it leaves accepted/running state.
+
+        Cancelling this coroutine only stops polling; the service continues to
+        own and execute the admitted run.
+        """
+        if (
+            isinstance(poll_interval, bool)
+            or not isinstance(poll_interval, (int, float))
+            or not math.isfinite(poll_interval)
+            or poll_interval <= 0
+        ):
+            raise ValueError("poll_interval must be a finite positive number")
+        while True:
+            current = await self._client.receipt(
+                self.thread_id, request_id, require_waitable=True
+            )
+            if current.status not in {"accepted", "running"}:
+                return current
+            await asyncio.sleep(poll_interval)
+
+    def watch(self) -> AbstractAsyncContextManager[RemoteThreadWatcher]:
+        """Return a caller-owned observer with a fresh snapshot on connect."""
+        return self._client.watch(self.thread_id)
+
+    async def snapshot(self) -> SnapshotRecord:
+        """Fetch the current portable thread projection."""
+        return await self._client.snapshot(self.thread_id)
+
+    async def cancel(self, run_id: str) -> bool:
+        """Request cooperative interruption of the explicitly selected run."""
+        return await self._client.interrupt(self.thread_id, run_id)
+
+    async def steer(self, run_id: str, content: str):
+        """Send a steering message to the explicitly selected live run."""
+        return await self._client.steer(self.thread_id, run_id, content)
+
+    async def resume(self, run_id: str) -> AdmissionReceipt:
+        """Ask the service to resume a saved run through trusted recovery checks."""
+        return await self._client.resume_checkpoint(self.thread_id, run_id)
+
+    async def approval_reviews(self, run_id: str) -> tuple[ApprovalReview, ...]:
+        """List approval requests that the host configured reviewer may inspect."""
+        return await self._client.approval_reviews(self.thread_id, run_id)
+
+    async def decide_approval(
+        self,
+        run_id: str,
+        request_id: str,
+        *,
+        approved: bool,
+        expected_revision: int,
+    ) -> ApprovalReview:
+        """Record an approval decision; call :meth:`resume` separately."""
+        return await self._client.decide_approval(
+            self.thread_id,
+            run_id,
+            request_id,
+            approved=approved,
+            expected_revision=expected_revision,
+        )
+
+    async def runs(self) -> tuple[RunSummary, ...]:
+        """List service-provided checkpoint summaries for this thread."""
+        return await self._client.runs(self.thread_id)
+
+    async def latest_run(self) -> RunSummary | None:
+        """Return the first checkpoint summary, or ``None`` when there are none."""
+        runs = await self.runs()
+        return runs[0] if runs else None
+
+    async def aclose(self) -> None:
+        """No-op: this facade borrows its HTTP client and service thread."""

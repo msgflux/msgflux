@@ -53,6 +53,8 @@ class CompactionExtension(AgentExtension):
         return (CONTEXT_COMPACTION_CAPABILITY,)
 
     def _decide(self, ctx: BeforeCompaction) -> BeforeCompaction:
+        if ctx.reason == "manual":
+            return replace(ctx, action="compact")
         capacity = self.policy.context_capacity or ctx.context_capacity
         if capacity is None:
             return replace(ctx, context_capacity=None, action="skip")

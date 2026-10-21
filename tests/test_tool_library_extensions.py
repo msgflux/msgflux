@@ -90,6 +90,92 @@ async def test_tool_library_extension_supports_async_hooks_and_cleanup():
     assert cleaned.is_set()
 
 
+@pytest.mark.asyncio
+@pytest.mark.parametrize("event_name", ["after_tool", "transform_tool_output"])
+async def test_cancelled_post_tool_hook_emits_one_interrupted_terminal_event(
+    event_name,
+):
+    from msgflux.runtime.events import _EventSink, _capture_events
+
+    hook_started = asyncio.Event()
+
+    async def wait_for_cancellation(_event):
+        hook_started.set()
+        await asyncio.Event().wait()
+
+    def complete() -> str:
+        return "effect already completed"
+
+    library = ToolLibrary("cancel-hooks", [complete])
+    library.register_lifecycle_hook(
+        event_name, Hook(event=event_name, handler=wait_for_cancellation)
+    )
+    events = []
+
+    async def call_tool():
+        return await library.acall([("call_1", "complete", {})])
+
+    with _capture_events(_EventSink(events.append)):
+        task = asyncio.create_task(call_tool())
+        await asyncio.wait_for(hook_started.wait(), timeout=2)
+        task.cancel("caller left")
+        with pytest.raises(asyncio.CancelledError, match="caller left"):
+            await task
+
+    assert [event.type for event in events] == ["tool.start", "tool.end"]
+    terminal = events[-1]
+    assert terminal.data["result"] is None
+    assert terminal.data["error"] == "caller left"
+    assert terminal.data["error_info"] is None
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_post_tool_hook_cancellation_preserves_exception_and_terminalizes(
+    asynchronous,
+):
+    from msgflux.runtime.events import _EventSink, _capture_events
+    from msgflux.tools.runtime import ToolIntent
+
+    effects = []
+    cancellation = asyncio.CancelledError("hook interrupted")
+
+    def complete() -> str:
+        effects.append("completed")
+        return "completed"
+
+    def cancel_sync(_event):
+        raise cancellation
+
+    async def cancel_async(_event):
+        raise cancellation
+
+    library = ToolLibrary("cancel-hooks", [complete])
+    library.register_lifecycle_hook(
+        "after_tool",
+        Hook(
+            event="after_tool",
+            handler=cancel_async if asynchronous else cancel_sync,
+        ),
+    )
+    events = []
+    intent = ToolIntent(id="call_1", name="complete")
+    with _capture_events(_EventSink(events.append)):
+        if asynchronous:
+            with pytest.raises(asyncio.CancelledError) as raised:
+                await library.arun("complete", {})
+            assert raised.value is cancellation
+        else:
+            with pytest.raises(asyncio.CancelledError):
+                library.execute_intents((intent,))
+
+    assert effects == ["completed"]
+    assert [event.type for event in events] == ["tool.start", "tool.end"]
+    assert events[-1].data["result"] is None
+    assert events[-1].data["error"] == "hook interrupted"
+    assert events[-1].data["error_info"] is None
+
+
 def test_deferred_tools_install_tool_search_as_an_extension():
     def lookup(query: str) -> str:
         """Look up a value."""
@@ -413,3 +499,182 @@ def test_before_dispatch_cannot_promote_foreground_to_detached():
         "before_dispatch hook failed closed: before_dispatch may only keep the "
         "selected mode or reduce `background`/`detached` dispatch to `foreground`"
     )
+
+
+def test_loading_tools_emits_only_successful_new_additions():
+    from msgflux.chat_messages import ChatMessages
+    from msgflux.runtime.events import _capture_events, _EventSink
+
+    def lookup(query: str) -> str:
+        """Look up a value."""
+        return query
+
+    lookup.tool_config = {"defer_loading": True}
+    library = ToolLibrary("search", [lookup])
+    messages = ChatMessages(thread_id="discovery")
+    events = []
+    with _capture_events(_EventSink(events.append)):
+        with pytest.raises(ValueError):
+            library.load_tools(messages, ["missing"])
+        assert library.load_tools(messages, ["lookup"]) == ["lookup"]
+        assert library.load_tools(messages, ["lookup"]) == ["lookup"]
+    assert [(event.type, event.data) for event in events] == [
+        (
+            "tools.updated",
+            {
+                "catalog_id": library.name,
+                "loaded_tools": ["lookup"],
+                "execution": "client",
+            },
+        )
+    ]
+    assert messages.get_loaded_tools(library.name) == {"lookup"}
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_portable_search_loading_and_execution_event_order(asynchronous):
+    from msgflux.chat_messages import ChatMessages
+    from msgflux.runtime.events import _capture_events, _EventSink
+    from msgflux.tools.runtime import ToolIntent
+
+    def lookup(query: str) -> str:
+        """Look up a value."""
+        return query.upper()
+
+    lookup.tool_config = {"defer_loading": True}
+    library = ToolLibrary("search", [lookup])
+    messages = ChatMessages(thread_id="discovery")
+    events = []
+    execute = library.aexecute_intents if asynchronous else library.execute_intents
+
+    async def run(name, arguments, call_id):
+        result = execute(
+            [ToolIntent(id=call_id, name=name, arguments=arguments)], messages=messages
+        )
+        return await result if asynchronous else result
+
+    with _capture_events(_EventSink(events.append)):
+        searched = await run("tool_search", {"query": "lookup"}, "find")
+        assert searched[0].result["matches"] == ["lookup"]
+        assert not messages.get_loaded_tools(library.name)
+        loaded = await run("tool_search", {"select": ["lookup"]}, "load")
+        assert loaded[0].result["loaded"] == ["lookup"]
+        assert "lookup" in {
+            entry.name
+            for entry in library.get_tool_catalog_view(messages).visible_entries()
+        }
+        assert (await run("lookup", {"query": "value"}, "use"))[0].result == "VALUE"
+    assert [event.type for event in events] == [
+        "tool.start",
+        "tool.end",
+        "tool.start",
+        "tools.updated",
+        "tool.end",
+        "tool.start",
+        "tool.end",
+    ]
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("empty_message", ["", "   "])
+@pytest.mark.asyncio
+async def test_dispatch_task_errors_keep_structured_details(
+    asynchronous, empty_message, tmp_path
+):
+    from msgflux.runtime import AgentWorkspace, ExecutionScope, execution_context
+    from msgflux.runtime.events import _EventSink, _capture_events
+    from msgflux.tools.builtin import ReadFileTool
+    from msgflux.tools.runtime import ToolIntent
+
+    def empty_failure() -> None:
+        raise RuntimeError(empty_message)
+
+    library = ToolLibrary("workspace-errors", [ReadFileTool(), empty_failure])
+    workspace = AgentWorkspace.local(tmp_path)
+    intents = (
+        ToolIntent(id="missing-file", name="read", arguments={"path": "absent.txt"}),
+        ToolIntent(id="empty-failure", name="empty_failure"),
+    )
+    events = []
+    try:
+        with execution_context(scope=ExecutionScope(workspace=workspace)):
+            with _capture_events(_EventSink(events.append)):
+                outcomes = (
+                    await library.aexecute_intents(intents)
+                    if asynchronous
+                    else library.execute_intents(intents)
+                )
+
+        assert [outcome.status for outcome in outcomes] == [
+            "execution_failed",
+            "execution_failed",
+        ]
+        read_error, empty_error = (outcome.error for outcome in outcomes)
+        assert read_error.code == empty_error.code == "tool_execution_failed"
+        assert "absent.txt" in read_error.message
+        assert "Task " not in read_error.message
+        assert empty_error.message == "RuntimeError"
+        assert read_error.details["exception_type"] == "FileNotFoundError"
+        assert empty_error.details["exception_type"] == "RuntimeError"
+
+        ends = {
+            event.data["tool_call_id"]: event.data
+            for event in events
+            if event.type == "tool.end"
+        }
+        assert "absent.txt" in ends["missing-file"]["error_info"]["message"]
+        assert (
+            ends["missing-file"]["error"]
+            == ends["missing-file"]["error_info"]["message"]
+        )
+        assert ends["missing-file"]["error_info"]["code"] == read_error.code
+        assert ends["missing-file"]["error_info"]["details"] == dict(read_error.details)
+        assert ends["missing-file"]["error"] == read_error.message
+        assert ends["empty-failure"]["error"] == empty_error.message
+        assert ends["empty-failure"]["error_info"]["message"] == empty_error.message
+        assert ends["empty-failure"]["error_info"]["details"] == dict(
+            empty_error.details
+        )
+    finally:
+        await workspace.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("control", ["abort", "interrupt", "pause", "cancel"])
+async def test_tool_error_normalization_preserves_control_exceptions(
+    asynchronous, control
+):
+    from msgflux.exceptions import (
+        AbortRequestedError,
+        TaskInterruptRequestedError,
+        TaskPauseRequestedError,
+    )
+    from msgflux.runtime.events import _EventSink, _capture_events
+    from msgflux.tools.runtime import ToolIntent
+
+    errors = {
+        "abort": AbortRequestedError("stop"),
+        "interrupt": TaskInterruptRequestedError("task", "stop"),
+        "pause": TaskPauseRequestedError("task", "stop"),
+        "cancel": asyncio.CancelledError("stop"),
+    }
+    error = errors[control]
+
+    def stop() -> None:
+        raise error
+
+    library = ToolLibrary("control-errors", [stop])
+    events = []
+    with _capture_events(_EventSink(events.append)):
+        with pytest.raises(type(error)) as raised:
+            if asynchronous:
+                await library.aexecute_intents((ToolIntent(id="stop", name="stop"),))
+            else:
+                library.execute_intents((ToolIntent(id="stop", name="stop"),))
+    if control != "cancel":
+        assert raised.value is error
+    end = next(event for event in events if event.type == "tool.end")
+    assert end.data["error_info"] is None
+    assert end.data["error"] == "stop"

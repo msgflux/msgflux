@@ -6,7 +6,7 @@ comparison and live permissions follow the write/edit path without new guards.
 
 Implementation order: add the tool and builtin export; cover deletion on both
 backends and approval/restart; document usage in the runtime guide. Files:
-`tools/builtin/workspace.py`, `tools/builtin/__init__.py`,
+`tools/builtin/workspace_tools.py`, `tools/builtin/__init__.py`,
 `tests/test_workspace_delete.py`, `tests/test_agent_workspace_edits.py`, and
 `docs/learn/nn/agent/runtime.md`.
 

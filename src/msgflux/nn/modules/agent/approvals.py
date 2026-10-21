@@ -26,7 +26,7 @@ from msgflux.runtime.approvals.reconciliation import inspect_batch, reconcile_ba
 from msgflux.runtime.approvals.records import _digest
 from msgflux.runtime.context import ExecutionScope
 from msgflux.runtime.events import EventType, _hub_event_sink
-from msgflux.runtime.workspace_changes import PreparedFileChange
+from msgflux.runtime.workspace.changes import PreparedFileChange
 from msgflux.utils.msgspec import msgspec_dumps
 
 _KEY = "pending_approvals"
@@ -77,15 +77,37 @@ class AgentApprovalMixin:
 
     def _get_effective_approvals(self, approvals=_UNSET):
         if approvals is _UNSET:
-            approvals = (_APPROVAL_POLICIES.get() or {}).get(id(self), self.approvals)
+            policies = _APPROVAL_POLICIES.get() or {}
+            if id(self) in policies:
+                approvals = policies[id(self)]
+            elif self.approvals is not None:
+                approvals = self.approvals
+            else:
+                return self._get_workspace_approvals()
         if approvals is not None and not isinstance(approvals, AgentApprovals):
             raise TypeError("approvals must be AgentApprovals or None")
         return approvals
 
+    def _get_workspace_approvals(self, *, force=False, _policy_version=None):
+        from msgflux.runtime.approvals.workspace import (  # noqa: PLC0415
+            get_workspace_approvals,
+        )
+
+        return get_workspace_approvals(
+            self, force=force, _policy_version=_policy_version
+        )
+
     @contextmanager
     def _approval_context(self, approvals):
+        if approvals is _UNSET:
+            # Automatically selected Workspace policy is live and may change
+            # during a run. Explicit overrides are captured for this call.
+            yield
+            return
         policies = dict(_APPROVAL_POLICIES.get() or {})
-        policies[id(self)] = self._get_effective_approvals(approvals)
+        if approvals is not None and not isinstance(approvals, AgentApprovals):
+            raise TypeError("approvals must be AgentApprovals or None")
+        policies[id(self)] = approvals
         token = _APPROVAL_POLICIES.set(policies)
         try:
             yield
@@ -95,7 +117,7 @@ class AgentApprovalMixin:
     def inspect_approval_batch(self, thread_id: str, run_id: str):
         """Return a detached checkpoint for authenticated host reconciliation."""
         return inspect_batch(
-            self._get_effective_checkpoint_store(),
+            self._get_effective_checkpoint_store(thread_id),
             self.get_module_name(),
             thread_id,
             run_id,
@@ -104,7 +126,7 @@ class AgentApprovalMixin:
     def reconcile_approval_batch(self, thread_id: str, run_id: str, **decision):
         """Resolve an uncertain batch after the host has stopped its worker."""
         return reconcile_batch(
-            self._get_effective_checkpoint_store(),
+            self._get_effective_checkpoint_store(thread_id),
             self.get_module_name(),
             thread_id,
             run_id,
@@ -124,14 +146,24 @@ class AgentApprovalMixin:
             raise ValueError("Approval policies require canonical Agent tool calls")
 
     def decide_approval(
-        self, request_id: str, *, approved: bool, decided_by: str, approvals=_UNSET
+        self,
+        request_id: str,
+        *,
+        approved: bool,
+        decided_by: str,
+        approvals=_UNSET,
+        expected_revision: int | None = None,
     ):
         """Record an authenticated host decision without automatically resuming."""
         policy = self._get_effective_approvals(approvals)
         if policy is None:
             raise ValueError("Agent has no approval configuration")
         record = policy.store.decide(
-            self.get_module_name(), request_id, approved=approved, decided_by=decided_by
+            self.get_module_name(),
+            request_id,
+            approved=approved,
+            decided_by=decided_by,
+            expected_revision=expected_revision,
         )
         _hub_event_sink().emit(
             EventType.TOOL_APPROVAL_RESOLVED,
@@ -150,7 +182,13 @@ class AgentApprovalMixin:
         return record
 
     async def adecide_approval(
-        self, request_id: str, *, approved: bool, decided_by: str, approvals=_UNSET
+        self,
+        request_id: str,
+        *,
+        approved: bool,
+        decided_by: str,
+        approvals=_UNSET,
+        expected_revision: int | None = None,
     ):
         return await asyncio.to_thread(
             self.decide_approval,
@@ -158,6 +196,7 @@ class AgentApprovalMixin:
             approved=approved,
             decided_by=decided_by,
             approvals=approvals,
+            expected_revision=expected_revision,
         )
 
     def _load_approval_snapshot(self, thread_id, *, approvals=_UNSET):
@@ -203,7 +242,8 @@ class AgentApprovalMixin:
         return response
 
     def _approval_pending(self, model_response, intents, messages):
-        if self._get_effective_approvals() is None:
+        policy = self._get_effective_approvals()
+        if policy is None:
             return None
         run = get_agent_run()
         if run is None:
@@ -233,6 +273,7 @@ class AgentApprovalMixin:
                 "native_calls": deepcopy(model_response.data.native_calls),
                 "intents": current,
                 "requests": {},
+                "policy_version": policy.policy_version,
             }
             run.set_extension(_KEY, pending)
             pending = run.get_extension(_KEY)

@@ -1,0 +1,236 @@
+"""Background Agent streams are finalized before their results are persisted."""
+
+from __future__ import annotations
+
+import asyncio
+from dataclasses import replace
+import threading
+from unittest.mock import Mock
+
+import msgflux as mf
+import pytest
+from msgflux.data.stores import InMemoryCheckpointStore
+from msgflux.exceptions import AbortRequestedError
+from msgflux.models.response import ModelStreamResponse
+from msgflux.nn import Agent
+from msgflux.nn.hooks import Hook, OutputContext
+from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.runtime.context import execution_context
+from msgflux.tasks import InMemoryTaskStore, SQLiteTaskStore
+from msgflux.tools.builtin import AgentTool
+
+
+@pytest.fixture(params=["memory", "sqlite"])
+def background_task_store(request, tmp_path):
+    if request.param == "memory":
+        yield "memory", InMemoryTaskStore(), None
+        return
+    path = tmp_path / "tasks.sqlite3"
+    store = SQLiteTaskStore(str(path))
+    try:
+        yield "sqlite", store, path
+    finally:
+        store.close()
+
+
+def _tool_result(library, tool_name, call_id, parameters):
+    return library([(call_id, tool_name, parameters)]).tool_calls[0].result
+
+
+@pytest.mark.parametrize(
+    "failure_stage", [None, "transform", "provider", "abort", "abort_before_stream"]
+)
+@pytest.mark.asyncio
+async def test_background_agent_stream_task_waits_and_persists_final_output(  # noqa: C901
+    background_task_store, failure_stage
+):
+    store_kind, task_store, database_path = background_task_store
+    checkpoint_store = InMemoryCheckpointStore()
+    stream_ready = threading.Event()
+    release_stream = threading.Event()
+    produced_streams = []
+    producer_errors = []
+    producer_threads = []
+    task_id = None
+    transform_inputs = []
+    raw_output = "sha256=abc123 bytes=42"
+    expected_output = f"normalized:{raw_output}"
+
+    def transform_output(context: OutputContext):
+        transform_inputs.append(context.output)
+        if failure_stage == "transform":
+            raise RuntimeError("stream output transform failed")
+        return replace(context, output=f"normalized:{context.output}")
+
+    async def produce_stream(**_kwargs):
+        if failure_stage == "abort_before_stream":
+            stream_ready.set()
+            assert await asyncio.to_thread(release_stream.wait, 5)
+            raise AbortRequestedError("Service run interrupted")
+        stream = ModelStreamResponse(mode="sync")
+        stream.set_response_type("text_generation")
+        produced_streams.append(stream)
+
+        def finish_when_released():
+            if not release_stream.wait(timeout=5):
+                producer_errors.append(TimeoutError("stream release timed out"))
+                return
+            try:
+                if failure_stage in {"provider", "abort"}:
+                    stream.add("partial provider output")
+                    stream.finish(
+                        status="interrupted" if failure_stage == "abort" else "failed",
+                        error=(
+                            AbortRequestedError("Service run interrupted")
+                            if failure_stage == "abort"
+                            else RuntimeError("provider stream failed")
+                        ),
+                    )
+                else:
+                    stream.add("sha256=abc")
+                    stream.add("123 bytes=42")
+                    stream.finish()
+            except BaseException as error:
+                producer_errors.append(error)
+
+        producer = threading.Thread(target=finish_when_released, daemon=True)
+        producer_threads.append(producer)
+        producer.start()
+        stream_ready.set()
+        return stream
+
+    model = Mock(model_type="chat_completion")
+    worker = Agent(
+        name="stream_worker",
+        model=model,
+        config={"stream": True},
+        hooks=[Hook(event="transform_output", handler=transform_output)],
+    )
+    worker.generator.aforward = produce_stream
+    library = ToolLibrary(
+        name="stream_tasks",
+        tools=[mf.tool_config(allow_background=True)(AgentTool()), worker],
+        task_store=task_store,
+    )
+
+    try:
+        with execution_context(
+            thread_id="stream-root-thread",
+            namespace="stream-root",
+            run_id="stream-root-run",
+            root_run_id="stream-root-run",
+            checkpoint_store=checkpoint_store,
+        ):
+            launch = _tool_result(
+                library,
+                "agent",
+                "launch-stream",
+                {
+                    "name": "stream_worker",
+                    "message": "Produce the digest summary",
+                    "run_in_background": True,
+                },
+            )
+
+        assert "task_id='" in launch
+        task_id = launch.split("task_id='")[1].split("'")[0]
+        assert await asyncio.to_thread(stream_ready.wait, 2)
+        assert task_store.get(task_id).status == "running"
+
+        timed_out = await asyncio.to_thread(
+            _tool_result,
+            library,
+            "task_wait",
+            "wait-before-stream-finish",
+            {"task_id": task_id, "timeout": 0.02},
+        )
+        assert timed_out["status"] == "timeout"
+        assert timed_out["task_status"] == "running"
+
+        release_stream.set()
+        settled = await asyncio.to_thread(
+            _tool_result,
+            library,
+            "task_wait",
+            "wait-for-stream-finish",
+            {"task_id": task_id, "timeout": 2.0},
+        )
+        output = await asyncio.to_thread(
+            _tool_result,
+            library,
+            "task_output",
+            "read-stream-output",
+            {"task_id": task_id},
+        )
+        record = task_store.get(task_id)
+
+        if failure_stage is not None:
+            interrupted = failure_stage in {"abort", "abort_before_stream"}
+            expected_status = "interrupted" if interrupted else "failed"
+            expected_error = {
+                "abort": "Service run interrupted",
+                "abort_before_stream": "Service run interrupted",
+                "transform": "stream output transform failed",
+                "provider": "provider stream failed",
+            }[failure_stage]
+            assert settled["status"] == expected_status
+            assert output["status"] == expected_status
+            reason_field = "reason" if interrupted else "error"
+            assert expected_error in settled[reason_field]
+            assert expected_error in output[reason_field]
+            assert record.status == expected_status
+            if interrupted:
+                assert record.error is None
+                assert record.metadata["interrupt_reason"] == expected_error
+            else:
+                assert expected_error in record.error
+                assert "ModelStreamResponse" not in record.error
+            if failure_stage == "provider" or interrupted:
+                assert transform_inputs == []
+                metadata = record.metadata
+                checkpoint = checkpoint_store.load_state(
+                    metadata["checkpoint_namespace"],
+                    metadata["checkpoint_thread_id"],
+                    metadata["checkpoint_run_id"],
+                )
+                assert checkpoint["status"] == expected_status
+            else:
+                assert transform_inputs == [raw_output]
+        else:
+            assert settled == expected_output
+            assert output == expected_output
+            assert record.status == "completed"
+            assert record.result == expected_output
+            assert transform_inputs == [raw_output]
+
+        assert len(produced_streams) == (
+            0 if failure_stage == "abort_before_stream" else 1
+        )
+        assert not producer_errors
+        if store_kind == "sqlite":
+            reopened = SQLiteTaskStore(str(database_path))
+            try:
+                persisted = reopened.get(task_id)
+                assert persisted.status == record.status
+                assert persisted.result == record.result
+                assert persisted.error == record.error
+                assert persisted.metadata.get(
+                    "interrupt_reason"
+                ) == record.metadata.get("interrupt_reason")
+            finally:
+                reopened.close()
+    finally:
+        release_stream.set()
+        for producer in producer_threads:
+            await asyncio.to_thread(producer.join, 2)
+        if task_id is not None:
+            try:
+                await asyncio.to_thread(
+                    _tool_result,
+                    library,
+                    "task_wait",
+                    "cleanup-wait",
+                    {"task_id": task_id, "timeout": 2.0},
+                )
+            except Exception as error:
+                producer_errors.append(error)

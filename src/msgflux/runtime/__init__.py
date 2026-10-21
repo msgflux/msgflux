@@ -2,6 +2,7 @@ from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.agent_inbox import (
     AgentControlMessage,
     AgentInbox,
+    AgentInboxClosedError,
     AgentInboxStore,
     AgentNotification,
     InMemoryAgentInboxStore,
@@ -28,6 +29,11 @@ from msgflux.runtime.approvals.agent import (
     AgentApprovals,
     ApprovalReconciliationRequiredError,
 )
+from msgflux.runtime.compaction import (
+    CompactionBusyError,
+    CompactionRecoveryRequiredError,
+    CompactionResult,
+)
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -47,18 +53,6 @@ from msgflux.runtime.context_scopes import (
     ContextScopeController,
     ScopeTransition,
 )
-from msgflux.runtime.docker_executor import (
-    DockerLimits,
-    DockerProcessExecutor,
-    DockerWorkspaceBackend,
-)
-from msgflux.runtime.environment import (
-    ExecutionEnvironment,
-    ProcessExecutor,
-    ProcessOutputCallback,
-    ProcessRequest,
-    ProcessResult,
-)
 from msgflux.runtime.event_hub import (
     BackgroundTaskSnapshot,
     LiveRunSnapshot,
@@ -69,8 +63,18 @@ from msgflux.runtime.event_hub import (
 from msgflux.runtime.events import EventType, ExecutionEvent
 from msgflux.runtime.isolation import SandboxCapabilities, SandboxRequirements
 from msgflux.runtime.permissions import PermissionSet, ResourcePermission
-from msgflux.runtime.process_capture import ProcessOutputLimitError, drain_subprocess
+from msgflux.runtime.recovery import AgentTaskRecovery, TaskRecoveryReport
 from msgflux.runtime.resources import RuntimeResources
+from msgflux.runtime.service import (
+    AdmissionReceipt,
+    AgentService,
+    AgentSession,
+    ServiceBusyError,
+    ServiceConflictError,
+    ServiceRecoveryRequiredError,
+    ServiceThread,
+    SQLiteServiceStore,
+)
 from msgflux.runtime.skills import (
     AgentSkill,
     AgentSkillManager,
@@ -82,6 +86,7 @@ from msgflux.runtime.skills import (
 )
 from msgflux.runtime.tool_results import (
     LocalToolResultStore,
+    ToolOutputOffloadConfig,
     ToolResultIntegrityError,
     ToolResultQuotaError,
     ToolResultRef,
@@ -90,37 +95,78 @@ from msgflux.runtime.tool_results import (
     ToolResultUsage,
     get_tool_result_reference,
 )
-from msgflux.runtime.workspace import (
-    InMemoryWorkspace,
-    WorkspaceConflictError,
-    WorkspaceFilesystem,
-)
-from msgflux.runtime.workspace_backend import (
+from msgflux.runtime.workspace.api import AgentWorkspace
+from msgflux.runtime.workspace.backend import (
     InMemoryWorkspaceBackend,
     WorkspaceBackend,
     WorkspaceBinding,
 )
-from msgflux.runtime.workspace_changes import PreparedFileChange, WorkspaceEditor
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.changes import PreparedFileChange, WorkspaceEditor
+from msgflux.runtime.workspace.command_inspection import CommandInspection
+from msgflux.runtime.workspace.contracts import (
     WorkspaceEntry,
     WorkspaceIdentity,
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
     WriteGuarantee,
 )
-from msgflux.runtime.workspace_local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.docker_executor import (
+    DockerLimits,
+    DockerProcessExecutor,
+    DockerWorkspaceBackend,
+)
+from msgflux.runtime.workspace.environment import (
+    ExecutionEnvironment,
+    ProcessExecutor,
+    ProcessOutputCallback,
+    ProcessRequest,
+    ProcessResult,
+)
+from msgflux.runtime.workspace.errors import WorkspaceIdentityError
+from msgflux.runtime.workspace.filesystem import (
+    InMemoryWorkspace,
+    WorkspaceConflictError,
+    WorkspaceFilesystem,
+)
+from msgflux.runtime.workspace.local import LocalWorkspace, LocalWorkspaceBackend
+from msgflux.runtime.workspace.local_executor import LocalProcessExecutor
+from msgflux.runtime.workspace.policy import WorkspacePolicy
+from msgflux.runtime.workspace.process_capture import (
+    ProcessOutputLimitError,
+    drain_subprocess,
+)
+from msgflux.runtime.workspace.receipts import CommandReceipt
+from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
 __all__ = [
+    "CompactionResult",
+    "CompactionBusyError",
+    "CompactionRecoveryRequiredError",
+    "AgentService",
+    "AgentSession",
+    "AdmissionReceipt",
+    "ServiceThread",
+    "SQLiteServiceStore",
+    "ServiceBusyError",
+    "ServiceConflictError",
+    "ServiceRecoveryRequiredError",
+    "AgentWorkspace",
+    "WorkspacePolicy",
+    "CommandInspection",
+    "CommandReceipt",
     "DockerLimits",
     "DockerProcessExecutor",
     "DockerWorkspaceBackend",
     "ToolResultQuotaError",
     "ToolResultUsage",
+    "ToolOutputOffloadConfig",
     "WorkspaceEntry",
     "ProcessOutputCallback",
     "ProcessOutputLimitError",
     "drain_subprocess",
     "RuntimeResources",
+    "AgentTaskRecovery",
+    "TaskRecoveryReport",
     "LocalToolResultStore",
     "ToolResultIntegrityError",
     "ToolResultRef",
@@ -129,7 +175,9 @@ __all__ = [
     "get_tool_result_reference",
     "WorkspacePromptInfo",
     "LocalWorkspace",
+    "LocalProcessExecutor",
     "LocalWorkspaceBackend",
+    "SQLiteWorkspaceRegistry",
     "InMemoryWorkspaceBackend",
     "WorkspaceBackend",
     "WorkspaceBinding",
@@ -139,6 +187,7 @@ __all__ = [
     "PreparedFileChange",
     "WorkspaceEditor",
     "WorkspaceConflictError",
+    "WorkspaceIdentityError",
     "ExecutionEnvironment",
     "ProcessExecutor",
     "ProcessRequest",
@@ -165,6 +214,7 @@ __all__ = [
     "ContextScopeConflictError",
     "ContextScopeController",
     "AgentInbox",
+    "AgentInboxClosedError",
     "AgentInboxStore",
     "AgentNotification",
     "AgentSkill",

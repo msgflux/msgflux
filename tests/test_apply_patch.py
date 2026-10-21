@@ -1,3 +1,4 @@
+from msgflux.runtime import AgentWorkspace
 from copy import deepcopy
 from unittest.mock import AsyncMock, Mock
 
@@ -8,6 +9,7 @@ from msgflux.data.stores import InMemoryCheckpointStore, SQLiteCheckpointStore
 from msgflux.exceptions import TaskPauseRequestedError
 from msgflux.models.providers.openai import OpenAIChatCompletion
 from msgflux.models.response import ModelResponse, ModelStreamResponse
+from msgflux.models.tool_call_agg import ToolCallAggregator
 from msgflux.models.tool_transport import render_native_output, transport_adapter
 from msgflux.nn import Agent, ToolLibrary
 from msgflux.runtime import (
@@ -76,12 +78,14 @@ def scope(fs):
         thread_id="t",
         run_id="r",
         principal="user",
-        environment=ExecutionEnvironment(fs),
-        permissions=PermissionSet(
-            resources=[
-                fs.permission("/a", f"filesystem.{action}")
-                for action in ("read", "write", "delete")
-            ]
+        workspace=AgentWorkspace.from_environment(
+            ExecutionEnvironment(fs),
+            permissions=PermissionSet(
+                resources=[
+                    fs.permission("/a", f"filesystem.{action}")
+                    for action in ("read", "write", "delete")
+                ]
+            ),
         ),
     )
 
@@ -146,6 +150,68 @@ def test_native_selection_and_portable_schema(model):
         "apply_patch",
         "shell",
     }
+
+
+def _local_scope(workspace):
+    return ExecutionScope(
+        namespace="patcher",
+        thread_id="t",
+        run_id="r",
+        principal="user",
+        workspace=workspace,
+        permissions=workspace.permissions,
+    )
+
+
+@pytest.mark.parametrize(
+    ("path", "expected"),
+    [("relative.txt", "/relative.txt"), ("/virtual.txt", "/virtual.txt")],
+)
+@pytest.mark.asyncio
+async def test_local_apply_patch_preserves_relative_and_virtual_absolute_paths(
+    tmp_path, path, expected
+):
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace = AgentWorkspace.local(root)
+    tool = ApplyPatchTool()
+    scope = _local_scope(workspace)
+
+    with execution_context(scope=scope):
+        assert await tool.acall("create", path, "+content", workspace=workspace) == {
+            "status": "completed"
+        }
+        assert workspace.resolve(path) == expected
+        assert workspace.read_text(expected) == "content"
+
+
+def test_local_workspace_host_path_alias_requires_root_boundary(tmp_path):
+    root = tmp_path / "project"
+    root.mkdir()
+    workspace = AgentWorkspace.local(root)
+    host_path = str(root / "hello.txt")
+    sibling_path = str(root.with_name("project-sibling") / "hello.txt")
+
+    assert workspace.resolve(host_path) == host_path
+    assert workspace.resolve(host_path, host_paths=True) == "/hello.txt"
+    assert workspace.resolve(sibling_path, host_paths=True) == sibling_path
+
+
+@pytest.mark.asyncio
+async def test_local_apply_patch_host_alias_does_not_rewrite_virtual_rootname_again(
+    tmp_path,
+):
+    root = tmp_path / "project"
+    nested = root / root.relative_to(root.anchor)
+    nested.mkdir(parents=True)
+    workspace = AgentWorkspace.local(root)
+    scope = _local_scope(workspace)
+    tool = ApplyPatchTool()
+    host_path = str(nested / "hello.txt")
+
+    with execution_context(scope=scope):
+        await tool.acall("create", host_path, "+content", workspace=workspace)
+        assert workspace.read_text(str(root / "hello.txt")) == "content"
 
 
 @pytest.mark.parametrize("operation", ["create_file", "update_file", "delete_file"])
@@ -248,6 +314,74 @@ async def test_stream_only_dispatches_complete_patch_once(model, asynchronous):
         model._stream_responses_generate(stream_response=stream, _tool_routes=routes)
     assert len(stream.data.get_intents()) == 1
     assert stream.data.get_intents()[0].arguments["diff"] == "@@\n-old\n+new"
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("native", [False, True])
+async def test_create_existing_file_returns_clear_reason_to_model(
+    model, tmp_path, native
+):
+    tool = ApplyPatchTool()
+    tool.name = "modify"
+    filesystem = InMemoryWorkspace("files", {"/a": b"original"})
+    checkpoints = InMemoryCheckpointStore()
+    journal = SQLiteApprovalStore(tmp_path / "approvals.sqlite3")
+    model.native_tools = native
+    if native:
+        requested = parse(model, tool, call("create_file"))
+    else:
+        calls = ToolCallAggregator(api_mode="responses")
+        calls.process(
+            0, "call_1", "modify", '{"operation":"create","path":"a","diff":"+new"}'
+        )
+        requested = ModelResponse()
+        requested.set_response_type("tool_call")
+        requested.add(calls)
+    final = ModelResponse()
+    final.set_response_type("text_generation")
+    final.add("could not create")
+    agent = Agent(
+        name="patcher",
+        model=model,
+        tools=[tool],
+        checkpoint_store=checkpoints,
+        approvals=AgentApprovals(journal, {"modify": "v1"}, "p1"),
+    )
+    received = []
+
+    async def respond(**kwargs):
+        if not received:
+            received.append(None)
+            return requested
+        received.append(kwargs["messages"].to_responses_input(native_tools=native))
+        return final
+
+    agent.generator.aforward = AsyncMock(side_effect=respond)
+    try:
+        assert (
+            await agent.acall("create a", scope=scope(filesystem)) == "could not create"
+        )
+        items = checkpoints.load_state("patcher", "t", "r")["messages"]["items"]
+        output = next(
+            item
+            for item in items
+            if item.get("type")
+            == ("apply_patch_call_output" if native else "function_call_output")
+        )
+        assert "File already exists: /a" in output["output"]
+        assert "Cannot prepare workspace change:" in output["output"]
+        assert output["call_id"] == "call_1"
+        model_output = next(
+            item for item in received[1] if item.get("type") == output["type"]
+        )
+        assert "File already exists: /a" in model_output["output"]
+        # Preparation fails before an approval is requested or any write occurs.
+        assert not journal.pending("patcher", "t", "r")
+        with execution_context(scope=scope(filesystem)):
+            assert filesystem.read_text("/a") == "original"
+        assert agent.generator.aforward.await_count == 2
+    finally:
+        journal.close()
 
 
 def test_history_interruption_projection_and_unknown_codec(model):

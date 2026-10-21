@@ -5,11 +5,11 @@ from msgflux.nn.extensions.prompt import _append_section
 from msgflux.nn.hooks import Hook, ModelContext
 from msgflux.runtime.context import get_execution_scope
 from msgflux.runtime.permissions import PermissionSet
-from msgflux.runtime.workspace import workspace_path
-from msgflux.runtime.workspace_contracts import (
+from msgflux.runtime.workspace.contracts import (
     WorkspacePromptInfo,
     WorkspaceWriteCapabilities,
 )
+from msgflux.runtime.workspace.filesystem import workspace_path
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -69,10 +69,13 @@ class WorkspacePromptExtension(AgentExtension):
 
     def _add_workspace(self, ctx: ModelContext) -> ModelContext:
         scope = get_execution_scope()
-        environment = scope.environment
-        if environment is None:
+        workspace = scope.workspace
+        if workspace is None:
             return ctx
-        environment.require_active()
+        # The prompt includes backend presentation metadata which AgentWorkspace
+        # does not expose directly. This trusted extension can use its driver.
+        environment = workspace._environment
+        workspace.require_active()
         filesystem = environment.filesystem
         info, capabilities = filesystem.prompt_info, filesystem.write_capabilities
         if not isinstance(info, WorkspacePromptInfo):
@@ -89,8 +92,9 @@ class WorkspacePromptExtension(AgentExtension):
             "guidance": info.guidance,
             "paths": (
                 "Virtual absolute POSIX paths rooted at /. "
-                "Relative paths use each tool's configured cwd."
+                "Relative paths use the injected workspace cwd."
             ),
+            "cwd": scope.workspace.cwd,
             "write_guarantee": environment.write_guarantee,
             "write_capabilities": capabilities,
             "resources": resources[: self.max_resources],

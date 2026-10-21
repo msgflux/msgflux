@@ -216,8 +216,10 @@ class ToolLibraryHandle:
             raise ValueError(f"Task `{task_id}` is not a background agent.")
         return task
 
-    def recover_background_agent_task(self, task_id: str, *, message: str) -> str:
-        """Claim an expired worker lease and resume an existing checkpoint."""
+    def recover_background_agent_task(
+        self, task_id: str, *, message: str, worker_stopped: bool = False
+    ) -> str:
+        """Resume an expired worker after its external work is confirmed stopped."""
         task = self._get_background_agent_task(task_id)
         with execution_context(
             task_store=self.get_task_store(),
@@ -227,6 +229,7 @@ class ToolLibraryHandle:
                 task=task,
                 message=message,
                 recover_expired=True,
+                worker_stopped=worker_stopped,
             )
 
     def reconcile_background_agent_task(self, task_id: str) -> str:

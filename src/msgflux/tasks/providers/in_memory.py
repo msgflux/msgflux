@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import time
 from copy import deepcopy
+from dataclasses import replace
 from threading import RLock
 from typing import Any, Dict, List, Mapping
 from uuid import uuid4
@@ -9,8 +10,10 @@ from uuid import uuid4
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskRecord
 from msgflux.tasks.lease import TaskLease
+from msgflux.tasks.records import TaskSummary
 from msgflux.tasks.registry import register_task_store
 from msgflux.tasks.types import InMemoryTaskStoreType
+from msgflux.utils.errors import exception_message
 from msgflux.utils.time import utc_now_isoformat
 
 
@@ -93,6 +96,16 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
             return True
 
+    def release_worker(self, task_id: str, owner_id: str) -> bool:
+        with self._lock:
+            lease = self._worker_leases.get(task_id)
+            if lease is None or lease.owner_id != owner_id:
+                return False
+            self._worker_leases[task_id] = TaskLease(
+                task_id, owner_id, min(lease.expires_at, self._clock() - 1)
+            )
+            return True
+
     def _owns_worker_locked(self, task_id: str, owner_id: str | None) -> bool:
         if owner_id is None:
             return task_id not in self._worker_leases
@@ -159,17 +172,54 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             )
         return self.get(task.task_id)  # type: ignore[return-value]
 
-    def get(self, task_id: str) -> TaskRecord | None:
+    def get(self, task_id: str, *, include_result: bool = True) -> TaskRecord | None:
         with self._lock:
             task = self._tasks.get(task_id)
-            return deepcopy(task) if task is not None else None
+            if task is None:
+                return None
+            snapshot = task if include_result else replace(task, result=None)
+            return deepcopy(snapshot)
 
-    def list(self, *, status: str | None = None) -> List[TaskRecord]:
+    def list(
+        self, *, status: str | None = None, include_result: bool = True
+    ) -> List[TaskRecord]:
         with self._lock:
             tasks = list(self._tasks.values())
             if status is not None:
                 tasks = [task for task in tasks if task.status == status]
+            if not include_result:
+                tasks = [replace(task, result=None) for task in tasks]
             return deepcopy(tasks)
+
+    def list_summaries(self, *, thread_id: str, run_id: str) -> List[TaskSummary]:
+        with self._lock:
+            summaries = [
+                TaskSummary(
+                    task_id=task.task_id,
+                    tool_name=task.tool_name,
+                    status=task.status,
+                    updated_at=task.updated_at,
+                    error=task.error,
+                )
+                for task in self._tasks.values()
+                if task.metadata.get("thread_id") == thread_id
+                and (
+                    task.metadata.get("root_run_id") == run_id
+                    or task.metadata.get("parent_run_id") == run_id
+                )
+            ]
+        return sorted(
+            summaries, key=lambda item: (item.updated_at, item.task_id), reverse=True
+        )
+
+    def has_unfinished_for_thread(self, *, thread_id: str) -> bool:
+        """Check active task metadata without copying task payloads or results."""
+        with self._lock:
+            return any(
+                task.status in {"queued", "running", "paused"}
+                and task.metadata.get("thread_id") == thread_id
+                for task in self._tasks.values()
+            )
 
     def list_activity(
         self, task_id: str, *, limit: int | None = None
@@ -316,6 +366,7 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.completed_at = now
             task.result = result
             task.error = None
+            task.metadata["interrupt_requested"] = False
             self._worker_leases.pop(task_id, None)
             if task.progress.percent is None and task.progress.total:
                 task.progress.percent = 100.0
@@ -341,7 +392,12 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task.status = "failed"
             task.updated_at = now
             task.completed_at = now
-            task.error = str(error)
+            task.error = (
+                exception_message(error)
+                if isinstance(error, BaseException)
+                else str(error)
+            )
+            task.metadata["interrupt_requested"] = False
             self._worker_leases.pop(task_id, None)
             self._activities.setdefault(task_id, []).append(
                 TaskActivity(
@@ -418,14 +474,22 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
             task = self._tasks.get(task_id)
             if task is None:
                 return None
-            task.updated_at = utc_now_isoformat()
+            if task.status in {"completed", "failed", "interrupted"}:
+                return deepcopy(task)
+            if task.status == "queued" and task_id not in self._worker_leases:
+                return self.interrupt(
+                    task_id,
+                    reason="Task was cancelled before it started running.",
+                )
+            now = utc_now_isoformat()
+            task.updated_at = now
             task.metadata["interrupt_requested"] = True
             self._activities.setdefault(task_id, []).append(
                 TaskActivity(
                     task_id=task_id,
                     kind="status",
                     summary="Interrupt requested.",
-                    created_at=task.updated_at,
+                    created_at=now,
                     metadata={"status": task.status},
                 )
             )
@@ -460,6 +524,15 @@ class InMemoryTaskStore(InMemoryTaskStoreType):
                     return None
                 task.metadata["resume_generation"] = expected_generation + 1
             if run_id is not None:
+                previous_run_id = task.metadata.get("checkpoint_run_id")
+                if (
+                    run_id != previous_run_id
+                    and isinstance(previous_run_id, str)
+                    and previous_run_id
+                ):
+                    task.metadata["checkpoint_origin_run_id"] = previous_run_id
+                elif run_id != previous_run_id:
+                    task.metadata.pop("checkpoint_origin_run_id", None)
                 task.metadata["checkpoint_run_id"] = run_id
             now = utc_now_isoformat()
             task.status = "queued"

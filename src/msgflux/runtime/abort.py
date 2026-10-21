@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import asyncio
 import threading
-from contextlib import suppress
 from typing import Awaitable, TypeVar
 
 from msgflux.exceptions import AbortRequestedError
@@ -73,9 +72,7 @@ async def await_with_abort(
         return await awaitable
     operation = asyncio.ensure_future(awaitable)
     if abort_signal.aborted:
-        operation.cancel()
-        with suppress(asyncio.CancelledError):
-            await operation
+        await _cancel_and_wait(operation)
         abort_signal.raise_if_aborted()
     abort_waiter = asyncio.create_task(abort_signal.wait())
     try:
@@ -84,18 +81,29 @@ async def await_with_abort(
             return_when=asyncio.FIRST_COMPLETED,
         )
         if abort_waiter in done:
-            operation.cancel()
-            with suppress(asyncio.CancelledError):
-                await operation
+            await _cancel_and_wait(operation)
             abort_signal.raise_if_aborted()
         result = await operation
         abort_signal.raise_if_aborted()
         return result
     finally:
-        if not operation.done():
-            operation.cancel()
-            with suppress(asyncio.CancelledError):
-                await operation
-        abort_waiter.cancel()
-        with suppress(asyncio.CancelledError):
-            await abort_waiter
+        try:
+            if not operation.done():
+                await _cancel_and_wait(operation)
+        finally:
+            await _cancel_and_wait(abort_waiter)
+
+
+async def _cancel_and_wait(operation: asyncio.Future) -> None:
+    """Cancel once and join through repeated cancellation of the caller."""
+    if not operation.done():
+        operation.cancel()
+    while not operation.done():
+        try:
+            await asyncio.wait((operation,))
+        except asyncio.CancelledError:
+            continue
+    try:
+        operation.result()
+    except asyncio.CancelledError:
+        pass

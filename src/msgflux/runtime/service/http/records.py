@@ -1,0 +1,135 @@
+"""Versioned native JSON/SSE contracts for AgentService clients."""
+
+from typing import Annotated, Literal
+
+import msgspec
+
+from msgflux.runtime.permissions import ResourcePermission
+from msgflux.runtime.service.http.config import ServiceHTTPConfig
+from msgflux.runtime.service.records import (
+    AdmissionReceipt,
+    ApprovalReview,
+    EventRecord,
+    RunResult,
+    RunSummary,
+    ServiceThread,
+    SnapshotRecord,
+)
+
+__all__ = [
+    "ActiveRunsResponse",
+    "AgentsResponse",
+    "ApprovalDecisionRequest",
+    "ApprovalReview",
+    "ApprovalReviewsResponse",
+    "ErrorResponse",
+    "EventRecord",
+    "HealthRecord",
+    "Identifier",
+    "InterruptResponse",
+    "OpenThreadRequest",
+    "PromptRequest",
+    "ResourcePermission",
+    "ResumeRequest",
+    "RunSummary",
+    "RunResult",
+    "RunsResponse",
+    "ServiceThread",
+    "ServiceInspection",
+    "ShutdownRequest",
+    "ShutdownResponse",
+    "SnapshotRecord",
+    "SteerRequest",
+    "ThreadsResponse",
+    "WorkspacePolicyRequest",
+]
+
+Identifier = Annotated[str, msgspec.Meta(min_length=1, max_length=512)]
+
+
+class OpenThreadRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    agent_id: Identifier | None = None
+    thread_id: Identifier | None = None
+    cwd: str | None = None
+    interactive: bool | None = None
+
+
+class PromptRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    prompt: str
+    request_id: Identifier
+    account_name: Identifier | None = None
+
+
+class SteerRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    content: str
+
+
+class CompactRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    run_id: Identifier | None = None
+
+
+class ResumeRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    pass
+
+
+class ShutdownRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    expected_instance_id: Identifier
+
+
+class ShutdownResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    instance_id: str
+    accepted: bool = True
+
+
+class ApprovalDecisionRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    approved: bool
+    expected_revision: Annotated[int, msgspec.Meta(gt=0)]
+
+
+class WorkspacePolicyRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    permissions: tuple[str, ...] | Literal["read-only", "full-access"] | None = None
+    resources: tuple[ResourcePermission, ...] | None = None
+    approval_policy: Literal["on-request", "never"] | None = None
+    expected_revision: Annotated[int, msgspec.Meta(ge=0)] | None = None
+
+
+class AgentsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    agents: tuple[str, ...]
+
+
+class ThreadsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    threads: tuple[ServiceThread, ...]
+
+
+class RunsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    runs: tuple[RunSummary, ...]
+
+
+class ApprovalReviewsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    approvals: tuple[ApprovalReview, ...]
+
+
+class ActiveRunsResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    runs: tuple[AdmissionReceipt, ...]
+
+
+class InterruptResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    interrupted: bool
+
+
+class ErrorResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    code: Annotated[str, msgspec.Meta(min_length=1)]
+    message: Annotated[str, msgspec.Meta(min_length=1)]
+
+
+class HealthRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    instance_id: str
+    version: Literal[1] = 1
+    default_agent: Identifier | None = None
+
+
+class ServiceInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Runtime identity and the HTTP policy loaded by this instance."""
+
+    instance_id: str
+    http: ServiceHTTPConfig

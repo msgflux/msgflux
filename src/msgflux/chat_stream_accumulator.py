@@ -79,6 +79,13 @@ class ChatStreamAccumulator:
             else:
                 content.append({"type": "output_text", "text": delta})
 
+    def mark_response_message_visibility(self, index: int, visibility: str) -> None:
+        """Tag presentation without changing the provider message or phase."""
+        with self._lock:
+            item = self._response_messages.get(index)
+            if item is not None:
+                item["visibility"] = visibility
+
     def finish_response_message(
         self,
         index: int,
@@ -218,6 +225,29 @@ class ChatStreamAccumulator:
     def add_item(self, item: Mapping[str, Any]) -> None:
         with self._lock:
             self._items.append(deepcopy(dict(item)))
+
+    def add_tool_commentary(self, content: str) -> None:
+        """Retain Chat Completions content before its tool calls for replay."""
+        if not content:
+            return
+        with self._lock:
+            index = next(
+                (
+                    index
+                    for index, item in enumerate(self._items)
+                    if item.get("type") == "function_call"
+                ),
+                len(self._items),
+            )
+            self._items.insert(
+                index,
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": content,
+                    "visibility": "commentary",
+                },
+            )
 
     def snapshot(
         self,

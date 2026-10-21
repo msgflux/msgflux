@@ -42,6 +42,7 @@ from msgflux.nn.extensions import (
 from msgflux.runtime import (
     AgentApprovals,
     AgentInbox,
+    AgentWorkspace,
     ExecutionEnvironment,
     ExecutionScope,
     InMemoryAgentInboxStore,
@@ -54,7 +55,7 @@ from msgflux.runtime import (
     execution_context,
 )
 from msgflux.runtime.isolation import SandboxRequirements
-from msgflux.runtime.workspace import WorkspaceFilesystem
+from msgflux.runtime.workspace.filesystem import WorkspaceFilesystem
 from msgflux.tools.builtin import (
     ApplyPatchTool,
     BashTool,
@@ -168,9 +169,11 @@ def _scope(fs, *, thread: str, run: str, full: bool = True) -> ExecutionScope:
         thread_id=thread,
         run_id=run,
         principal="offline-harness",
-        environment=ExecutionEnvironment(fs, FakeProcessExecutor()),
-        permissions=PermissionSet(
-            ["process.execute"] if full else [], resources=resources
+        workspace=AgentWorkspace(
+            ExecutionEnvironment(fs, FakeProcessExecutor()),
+            permissions=PermissionSet(
+                ["process.execute"] if full else [], resources=resources
+            ),
         ),
     )
 
@@ -650,7 +653,7 @@ async def run_live(
             ),
         )
         resources = list(
-            _scope(fs, thread="unused", run="unused").permissions.resources
+            _scope(fs, thread="unused", run="unused").workspace.permissions.resources
         )
         thread = uuid4().hex
         prompt = (
@@ -666,8 +669,10 @@ async def run_live(
                 thread_id=thread,
                 run_id=uuid4().hex,
                 principal="local-user",
-                environment=ExecutionEnvironment(fs),
-                permissions=PermissionSet(resources=resources),
+                workspace=AgentWorkspace(
+                    ExecutionEnvironment(fs),
+                    permissions=PermissionSet(resources=resources),
+                ),
             )
             await drive_agent(
                 agent,

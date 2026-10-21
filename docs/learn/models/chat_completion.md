@@ -120,7 +120,8 @@ response = model(
 providers default to `"chat_completions"`. The concrete OpenAI provider defaults
 to `"responses"`, following OpenAI's current recommendation for reasoning,
 tool-calling, and multi-turn workflows. Groq and vLLM also support Responses
-behind the same `Model.chat_completion` frontend:
+behind the same `Model.chat_completion` frontend. OpenRouter also supports
+Responses explicitly; its default remains Chat Completions:
 
 ```python
 import msgflux as mf
@@ -141,7 +142,19 @@ response = responses_model(
     system_prompt="Answer in one sentence.",
 )
 print(response.consume())
+
+openrouter_responses = mf.Model.chat_completion(
+    "openrouter/meta/muse-spark-1.3-contributor",
+    api_mode="responses",
+)
+print(openrouter_responses("What is 2 + 2?").consume())
 ```
+
+The last call uses [OpenRouter's `/responses` endpoint](https://openrouter.ai/docs/api/api-reference/responses/create-responses).
+Its model catalog spans multiple underlying providers, so a Responses item with
+`phase="commentary"` is not automatically trusted as a user-visible update.
+OpenRouter reasoning items, including encrypted content when returned, remain
+separate from answer text and retain their native fields for replay.
 
 To use an OpenAI feature that remains specific to Chat Completions, select it
 explicitly:
@@ -194,6 +207,201 @@ final-answer phase while `ToolFlowControl` selects commentary as the actionable
 trajectory. Both native messages remain in `ChatMessages`, including their
 `phase`, so subsequent manual-history requests can replay every Responses output
 item without synthesizing or duplicating the selected answer.
+
+`commentary` is a user-visible progress message, separate from `reasoning` and
+the final answer. A non-streaming OpenAI Responses call exposes these updates in
+`response.commentary` (a list of messages); `response.consume()` still returns
+the final answer. Streaming calls emit `LMStreamEvent(type="commentary.delta")`,
+while final text emits `output.delta` and reasoning emits `reasoning.delta`.
+
+In Chat Completions, an assistant message may contain `content`, a separate
+reasoning field, and `tool_calls` in the same response. When `tool_calls` are
+present, msgFlux publishes the message's `content` as commentary and keeps
+reasoning separate. A stream waits for the tool decision before classifying
+that text. The local non-streaming response cache retains commentary and
+re-emits its event on a cache hit. For replay, assistant content, reasoning,
+and tool calls are reconstructed in one Chat Completions message.
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion("openai/gpt-5.6-luna", api_mode="responses")
+response = model("Check the inventory and report the result")
+for update in response.commentary:
+    print("Progress:", update)
+print("Answer:", response.consume())
+```
+
+This example reads intermediate progress independently of the final result.
+Structured `ToolFlowControl` commentary remains an internal trajectory payload
+and is not published as a user progress update. Only OpenAI Responses currently
+declares its `commentary` phase as user-visible. Groq, vLLM, and OpenRouter
+Responses compatibility does not imply that guarantee. For all Responses
+providers, msgFlux treats an assistant message before a function call as
+commentary when its content was not marked as a reasoning item. It waits for
+the tool decision in streams. An unphased message without a following tool
+call remains answer output; an untrusted `phase="commentary"` message without
+a following tool call is kept in history but not published. This classification
+is stored as local `visibility` metadata. Replay retains the provider's
+original message and `phase`, preserving the prompt prefix. Applications can
+disable the inference for a model whose behavior requires it:
+
+```python
+import msgflux as mf
+from msgflux.models import ChatModelCapabilities
+
+model = mf.Model.chat_completion(
+    "openrouter/custom-model",
+    api_mode="responses",
+    model_capabilities=ChatModelCapabilities(unphased_tool_commentary=False),
+)
+```
+
+The example disables pre-tool commentary classification for that model instance.
+
+OpenRouter uses a stable conversation session to keep successive requests on a
+provider endpoint with a warm prompt cache. When an Agent or `ChatMessages`
+has a thread ID, msgFlux sends it as `x-session-id` for both Chat Completions
+and Responses. For direct calls without a thread ID, pass the same `session_id`
+on each turn:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "openrouter/z-ai/glm-5.3-flash", api_mode="responses"
+)
+response = model(
+    "Continue the inventory check",
+    extra_body={"session_id": "inventory-thread-42"},
+)
+print(response.metadata.usage.cache_hit_percentage)
+```
+
+This example gives OpenRouter one routing key for subsequent turns and reads
+the provider's reported cached-token percentage. The first turn warms the
+cache; a later turn can reuse its unchanged prefix when the model and provider
+support prompt caching. The cache hit percentage depends on prompt length,
+provider routing, and cache lifetime. See [OpenRouter's prompt caching guide](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
+
+### OpenAI Codex subscription (experimental)
+
+The `openai-codex` provider reads an existing OAuth login from the Codex CLI or
+Tau and sends Responses requests through the Codex backend. The backend protocol
+is not a public provider API and may change without notice. This integration is
+experimental; it does not start a login, refresh tokens, or manage credential
+files. Use an explicit model ID because the models available to a subscription
+can differ from the OpenAI API catalog. The subscription endpoint supports a
+smaller set of request options than the public Responses API; for example,
+`max_tokens` is currently rejected because this backend does not accept an
+output-token limit.
+
+By default, the provider checks `MSGFLUX_CODEX_AUTH_FILE`, then
+`~/.codex/auth.json`. You can also pass `auth_file` explicitly. For example,
+use an existing Codex CLI login:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion(
+    "openai-codex/gpt-5.5",
+    auth_file="~/.codex/auth.json",
+    reasoning_effort="medium",
+)
+
+response = model("Summarize the deployment plan.")
+print(response.consume())
+```
+
+This creates a normal msgFlux chat model, so it can be passed to an Agent and
+used with the usual tool flow. To read a Tau login instead, point `auth_file`
+at `~/.tau/credentials.json`:
+
+```python
+tau_model = mf.Model.chat_completion(
+    "openai-codex/gpt-5.5",
+    auth_file="~/.tau/credentials.json",
+)
+```
+
+In Responses mode, providers whose names contain `openai`, or models whose IDs
+start with `openai/` (regardless of provider), send system-role history messages
+as `developer` messages at their original positions. This includes notifications
+added after background tool execution. Codex keeps the main prompt in top-level `instructions`; OpenAI
+and OpenRouter retain its existing position in the input. Token counting and
+compaction use the same conversion where supported. Canonical msgFlux history
+retains the system role. Chat Completions and other routed models keep their
+existing role handling.
+
+For calls in an Agent thread, the provider sends the stable thread ID as
+`prompt_cache_key`, `session-id`, and `x-client-request-id`, matching the Codex
+session routing used by Pi. Direct multi-turn calls can carry the same identity
+with `ChatMessages(thread_id=...)`. Keep the system prompt and tools stable
+across turns so their shared prefix can be cached. Inspect
+`response.metadata.usage.input_tokens_details.cached_tokens` to measure hits;
+the backend may still report zero when its cache has expired or the prefix has
+changed.
+
+To set the cache identity explicitly for a direct call, pass a stable key in
+`extra_body` on every turn:
+
+```python
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Review this change."}],
+    thread_id="review-thread-42",
+)
+response = model(
+    messages,
+    extra_body={"prompt_cache_key": "workspace-42-review"},
+)
+print(response.metadata.usage.input_tokens_details.cached_tokens)
+```
+
+This also sends the key in both Codex session headers. Reuse the key for
+related requests that share a prefix; the key alone does not guarantee a hit.
+
+Codex supports native conversation compaction through the same SSE endpoint as
+generation. The context adapter appends a `compaction_trigger` request control,
+validates the returned encrypted compaction item, and retains the original user
+and developer messages in the next context view. It does not call the public
+`/responses/compact` or `/responses/input_tokens` routes. Token counting uses the
+shared local heuristic; native compaction does not require an exact counter.
+
+For a paused or failed durable Agent, call:
+
+```python
+result = await agent.acompact(
+    scope=mf.ExecutionScope(thread_id="review-thread-42")
+)
+print(result.status, result.run_id)
+```
+
+This loads the saved conversation and commits a native view without resuming
+execution or changing approval decisions. The same selected OAuth account is
+used for compaction and subsequent model calls. Failures remain visible and do
+not trigger an API-key or portable-summary fallback. See
+[Conversation Compaction](../nn/agent/compaction.md) for lifecycle and recovery
+requirements. This subscription protocol follows the current
+[Codex compaction implementation](https://github.com/openai/codex/blob/main/codex-rs/core/src/compact_remote_v2_attempt.rs);
+the public API documents its separate
+[compaction protocol](https://developers.openai.com/api/docs/guides/compaction).
+
+The provider reads the selected file before each request. It does not copy or
+modify the file, store credentials in serialized model state, fall back to
+`OPENAI_API_KEY`, or silently select another account. If the login expires or
+is revoked, sign in again with the tool that owns it (Codex CLI or Tau), then
+retry. The Codex CLI credential layout is not a stable public interface, so
+keep the provider updated if that format changes. Only credentials stored in
+these files are supported; keyring and in-memory Codex logins are not visible
+to msgFlux.
+
+Codex HTTP failures other than authentication errors preserve the shared
+`ModelProviderHTTPError`: status, provider description, error code/type/parameter
+and request ID when supplied. This makes unavailable-model and account-limit
+errors visible through AgentService receipts and CLI results. Error text uses
+the shared bounded structured-message extraction; it does not include raw
+non-JSON response bodies. The existing `401` credential refresh/retry behavior
+and login guidance remain unchanged.
 
 ### 1.3 **Storage and ZDR preference**
 
@@ -632,6 +840,20 @@ Async version for concurrent operations:
 ## 6. **Streaming**
 
 Stream tokens as they're generated:
+
+If an OpenAI-compatible Chat Completions or Responses stream disconnects, consuming
+it raises the original transport exception. Text already received remains in the
+stream events and canonical history, including text buffered while its role as
+commentary or an answer was being determined. The response remains failed;
+partial text is not a completed answer.
+
+If a stream failure and its finalizer both raise ordinary exceptions, consuming
+the stream raises an `ExceptionGroup` containing both errors so neither is lost.
+
+An Agent preserves received messages and reasoning in its failure checkpoint.
+An incomplete tool call is not executed or converted into an executable history
+entry. Tools that completed before the disconnection retain their recorded
+results; a failed stream does not automatically restart the Agent execution.
 
 ???+ example
 
@@ -1434,6 +1656,33 @@ not insert a configuration update into an existing conversation.
         print(response.consume_reasoning())  # The full chain of thought
         ```
 
+#### Persisted reasoning configuration
+
+The shared OpenAI-compatible Responses and Chat Completions paths record the
+prepared request's reasoning configuration in response metadata, including
+streaming responses:
+
+```python
+configuration = response.metadata.model
+print(configuration.request_reasoning_effort)
+print(configuration.conversation_reasoning_effort)
+print(configuration.reasoning_effort)
+```
+
+Here `response` is a completed model response. With an initial request effort
+`low` and a later native conversation update to `high`, these values are `low`,
+`high`, and `high`. When the adapter instead changes the top-level request field,
+they are `high`, `None`, and `high`. Capture occurs after request extensions are
+applied. Cached responses retain their recorded request configuration.
+
+Agent checkpoints expose the same settings through
+`agent.get_model_configuration(scope=...)` and
+`store.get_model_configuration(namespace, thread_id, run_id=None)`. Fields not
+captured by older adapters remain `msgspec.UNSET`, distinct from a known absent
+setting (`None`). See
+[Recovering Model Configuration](../nn/agent/task-and-context.md#recovering-model-configuration)
+for complete persistence and recovery examples.
+
 ### 12.5 **Inspecting the Reasoning Trace**
 
 When `return_reasoning=True` (the default) and the provider exposes the reasoning trace, it is available as a separate field on the response object:
@@ -1976,6 +2225,8 @@ cross-thread connection because synchronous model streams finish in a background
 worker. The safety net `_response_type_event.set()` in
 the `finally` block ensures the event is always fired, even if the stream errors
 out or the model returns no content chunks (e.g., a pure tool call response).
+Cancelling an async model stream finalizes it with `interrupted`, preserves
+received text, and leaves incomplete tool calls out of dispatchable response data.
 
 `reasoning_summary_event` supports summary-specific discovery. It is set on the
 first summary chunk, or when the summary channel closes without producing one.
@@ -2094,10 +2345,39 @@ print(response.metadata.model)
 ```
 
 `reasoning_effort` is present only when that LM transport uses the setting.
+When an Agent changes effort through its inbox, this field reports the effective
+conversation value. For GPT-6 Responses requests using `configuration_update`,
+the request-level value remains at its original setting to preserve the cacheable
+prefix; it may therefore differ from the effective value recorded here.
 Speed fields are present only when requested or reported by the provider. The
-other three fields are always produced by OpenAI-compatible chat LMs. An
-Agent can persist this small audit record with the generated timeline item
+other three fields are always produced by OpenAI-compatible chat LMs.
+An Agent can persist this small audit record with the generated timeline item
 without reconstructing provider details itself.
+
+Built-in model rules enable hosted tool search for recognized GPT-5.4 and later
+IDs and reasoning updates for recognized GPT-6 and later IDs in Responses mode.
+The rules also recognize routed IDs such as `openai/gpt-6-astra`, regardless of
+which compatible provider serves the model. Unknown variants are left disabled.
+When a deployment has different capabilities, override only the known fields:
+
+```python
+import msgflux as mf
+from msgflux.models import ChatModelCapabilities
+
+model = mf.Model.chat_completion(
+    "openai/custom-model",
+    api_mode="responses",
+    model_capabilities=ChatModelCapabilities(
+        reasoning_updates=True,
+        hosted_tool_search=False,
+    ),
+)
+```
+
+This tells the Responses adapter to emit `configuration_update` items for
+reasoning changes and to use ordinary function tools instead of hosted tool
+search. These overrides describe transport support; they do not alter model
+profiles or guarantee a prompt cache hit.
 
 The same response metadata includes operational request timing:
 
@@ -2577,6 +2857,14 @@ implements OpenAI-compatible `POST /responses/input_tokens` and
 generation omits it and keeps the provider-neutral token estimate and portable
 summary fallback.
 
+Native compaction and remote token counting are independent. A context adapter
+can set `supports_token_count = False` to keep the shared local estimator while
+implementing its native compaction protocol, as Codex does. Its
+`decode_compaction(owner, payload, *, messages=None)` receives the original
+source messages: protocols that return only an encrypted checkpoint can use
+that source to reconstruct a complete model-visible window. The standalone
+OpenAI endpoint already returns a complete window and does not need the source.
+
 `Model.chat_completion("myprovider/model-name")` remains the frontend after the
 provider class is registered. A genuinely new protocol, such as Google
 Interactions, implements the same `ChatAPIAdapter` methods instead of adding
@@ -2684,9 +2972,10 @@ in `repr()`.
 
 ### 18.7 **Inspecting provider HTTP errors**
 
-Direct transports raise `ModelProviderHTTPError` after retries are exhausted or
-for a non-retryable response. The exception always contains the HTTP status and
-a provider description. Structured provider fields remain available for quota,
+Model HTTP transports raise `ModelProviderHTTPError` after retries are exhausted
+or for a non-retryable response, including the legacy HTTPX transport used by
+JinaAI and vLLM models. The exception always contains the HTTP status and a
+provider description. Structured provider fields remain available for quota,
 context-window, authentication, routing, and data-policy handling:
 
 ```python

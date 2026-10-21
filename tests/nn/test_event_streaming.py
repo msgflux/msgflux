@@ -75,6 +75,113 @@ class StreamingModule(Module):
         return response
 
 
+class CommentaryModule(Module):
+    def forward(self):
+        response = ModelStreamResponse()
+        response.add_commentary("Checking inventory.")
+        response.set_response_type("text_generation")
+        response.add("In stock.")
+        response.finish()
+        return response
+
+
+@pytest.mark.asyncio
+async def test_commentary_stream_event_is_distinct_from_answer_and_reasoning():
+    events = [event async for event in CommentaryModule().stream_events()]
+    assert [
+        event.data["delta"]
+        for event in events
+        if event.type == EventType.COMMENTARY_DELTA
+    ] == ["Checking inventory."]
+    assert [
+        event.data["delta"] for event in events if event.type == EventType.MESSAGE_DELTA
+    ] == ["In stock."]
+    assert not any(event.type == EventType.REASONING_DELTA for event in events)
+
+
+def test_send_user_message_requires_an_event_stream():
+    from msgflux.tools.builtin import SendUserMessageTool
+
+    with pytest.raises(RuntimeError, match="active event stream"):
+        SendUserMessageTool()("Checking inventory.")
+
+
+def test_send_user_message_emits_commentary_event():
+    from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
+    from msgflux.tools.builtin import SendUserMessageTool
+
+    events = []
+    token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
+    try:
+        assert SendUserMessageTool()("Checking inventory.").startswith("Message sent")
+    finally:
+        _CURRENT_EVENT_SINK.reset(token)
+    assert [
+        (event.type, event.data["delta"])
+        for event in events
+        if event.type == EventType.COMMENTARY_DELTA
+    ] == [(EventType.COMMENTARY_DELTA, "Checking inventory.")]
+
+
+def test_send_user_message_tool_library_schema_and_execution():
+    from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
+    from msgflux.tools.builtin import SendUserMessageTool
+    from msgflux.tools.runtime import ToolIntent
+
+    library = ToolLibrary(name="progress", tools=[SendUserMessageTool()])
+    schema = library.get_tool_json_schemas()[0]["function"]
+    assert schema["name"] == "send_user_message"
+    assert schema["parameters"]["required"] == ["message"]
+    assert schema["parameters"]["properties"]["message"]["type"] == "string"
+    message_description = schema["parameters"]["properties"]["message"]["description"]
+    assert "user-visible" in message_description
+    assert "private reasoning" in message_description
+
+    events = []
+    token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
+    try:
+        outcome = library.execute_intents(
+            [
+                ToolIntent(
+                    id="call_1",
+                    name="send_user_message",
+                    arguments={"message": "Checking inventory."},
+                )
+            ]
+        )[0]
+    finally:
+        _CURRENT_EVENT_SINK.reset(token)
+
+    assert outcome.status == "completed"
+    assert outcome.result.startswith("Message sent")
+    assert [
+        (event.type, event.data["delta"])
+        for event in events
+        if event.type == EventType.COMMENTARY_DELTA
+    ] == [(EventType.COMMENTARY_DELTA, "Checking inventory.")]
+
+
+def test_nonstream_model_commentary_emits_separate_runtime_event():
+    from msgflux.nn.events import emit_model_response_events
+    from msgflux.runtime.events import _CURRENT_EVENT_SINK, _EventSink
+
+    response = ModelResponse()
+    response.set_response_type("text_generation")
+    response.add("In stock.")
+    response.commentary = ["Checking inventory."]
+    events = []
+    token = _CURRENT_EVENT_SINK.set(_EventSink(events.append))
+    try:
+        emit_model_response_events(response)
+    finally:
+        _CURRENT_EVENT_SINK.reset(token)
+
+    assert [(event.type, event.data.get("delta")) for event in events] == [
+        (EventType.COMMENTARY_DELTA, "Checking inventory."),
+        (EventType.MODEL_RESPONSE, None),
+    ]
+
+
 class FailingModule(Module):
     def forward(self):
         raise RuntimeError("boom")
@@ -106,6 +213,112 @@ def make_agent(*, hooks=None):
     model.return_value = response
     model.acall = AsyncMock(return_value=response)
     return Agent(name="agent", model=model, hooks=hooks), model
+
+
+@pytest.mark.parametrize("marker", ["phase", "visibility"])
+def test_tool_turn_replays_visible_commentary_before_function_call(marker):
+    agent, _ = make_agent()
+    messages = ChatMessages()
+    response = ModelResponse()
+    response.commentary = ["Checking inventory."]
+    response.history_items = [
+        {
+            "type": "message",
+            "role": "assistant",
+            marker: "commentary",
+            "content": [{"type": "output_text", "text": "Checking inventory."}],
+        },
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "lookup_inventory",
+            "arguments": "{}",
+        },
+    ]
+
+    agent._append_tool_model_history(messages, response)
+
+    assert [item["type"] for item in messages] == ["message", "function_call"]
+    assert messages[0][marker] == "commentary"
+
+
+@pytest.mark.parametrize("native_tool", ["apply_patch", "shell"])
+@pytest.mark.parametrize("streaming", [False, True])
+def test_agent_history_keeps_native_tool_call_paired_with_native_output(
+    native_tool, streaming
+):
+    from msgflux.models.tool_adapters.openai_patch import OpenAIApplyPatchAdapter
+    from msgflux.models.tool_adapters.openai_shell import OpenAIShellAdapter
+    from msgflux.tools.runtime import ToolOutcome
+    from msgflux.tools.shell import ShellCommandResult, ShellResult
+
+    if native_tool == "apply_patch":
+        adapter = OpenAIApplyPatchAdapter()
+        item = {
+            "type": "apply_patch_call",
+            "id": "apc_1",
+            "call_id": "call_native",
+            "status": "completed",
+            "operation": {
+                "type": "create_file",
+                "path": "new.txt",
+                "diff": "+hello",
+            },
+        }
+        name = "apply_patch"
+        result = {"status": "completed"}
+    else:
+        adapter = OpenAIShellAdapter()
+        item = {
+            "type": "shell_call",
+            "id": "sh_1",
+            "call_id": "call_native",
+            "status": "completed",
+            "action": {"commands": ["echo hello"]},
+        }
+        name = "bash"
+        result = ShellResult(
+            results=(
+                ShellCommandResult(status="exited", returncode=0, stdout="hello\n"),
+            )
+        )
+
+    calls = ToolCallAggregator(api_mode="responses")
+    calls.process_native(0, item, adapter, name)
+    response = ModelStreamResponse() if streaming else ModelResponse()
+    response.set_response_type("tool_call")
+    response.data = calls
+    if streaming:
+        response.chat_accumulator.add_item(item)
+    else:
+        response.history_items = [item]
+
+    agent, _ = make_agent()
+    messages = ChatMessages()
+    agent._append_tool_model_history(messages, response)
+    intent = calls.get_intents()[0]
+    outputs = response.render_tool_outcomes([ToolOutcome.completed(intent, result)])
+    agent._extend_tool_response_history(
+        messages,
+        [
+            *outputs,
+            {
+                "type": "function_call",
+                "call_id": intent.id,
+                "name": intent.name,
+                "arguments": "{}",
+            },
+        ],
+    )
+
+    assert [entry["type"] for entry in messages] == [
+        adapter.item_type,
+        adapter.output_type,
+    ]
+    assert [entry["type"] for entry in messages.to_responses_input()] == [
+        adapter.item_type,
+        adapter.output_type,
+    ]
 
 
 @pytest.mark.asyncio
@@ -947,6 +1160,231 @@ async def test_agent_streams_reasoning_from_intermediate_tool_model_response():
     assert events.index(summaries[1]) < events.index(model_responses[1])
 
 
+def _assert_two_tool_outputs(items):
+    call_ids = {
+        item["call_id"] for item in items if item.get("type") == "function_call"
+    }
+    outputs = {
+        item["call_id"]: item.get("output")
+        for item in items
+        if item.get("type") == "function_call_output"
+    }
+    assert call_ids == set(outputs) == {"call_first", "call_second"}
+    assert outputs["call_first"] == "first result"
+    assert outputs["call_second"] == "second result"
+
+
+@pytest.mark.asyncio
+async def test_agent_tool_loop_classifies_stream_response_after_return():
+    calls = []
+    tool_stream_returned = asyncio.Event()
+    release_tool_stream = asyncio.Event()
+    tool_response = ModelResponse()
+    tool_response.set_response_type("tool_call")
+    first_calls = ToolCallAggregator()
+    first_calls.process(0, "call_first", "first_tool", "{}")
+    tool_response.data = first_calls
+
+    second_calls = ToolCallAggregator()
+    second_calls.process(0, "call_second", "second_tool", "{}")
+    delayed_response = ModelStreamResponse(mode="async")
+    returned_response_types = []
+
+    async def produce_delayed_tool_response():
+        await release_tool_stream.wait()
+        delayed_response.set_response_type("tool_call")
+        delayed_response.data = second_calls
+        delayed_response.finish()
+
+    final_response = ModelStreamResponse(mode="async")
+    final_response.set_response_type("text_generation")
+    final_response.add("both tools complete")
+    final_response.finish()
+    model_inputs = []
+    model_call_count = 0
+    producer_tasks = []
+
+    async def model_call(**kwargs):
+        nonlocal model_call_count
+        model_call_count += 1
+        if model_call_count == 1:
+            return tool_response
+        if model_call_count == 2:
+            producer_tasks.append(asyncio.create_task(produce_delayed_tool_response()))
+            return delayed_response
+        model_inputs.append(kwargs["messages"].to_items())
+        return final_response
+
+    def first_tool() -> str:
+        """Return the first tool result."""
+        calls.append("first")
+        return "first result"
+
+    def second_tool() -> str:
+        """Return the second tool result."""
+        calls.append("second")
+        return "second result"
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    model.acall = AsyncMock(side_effect=model_call)
+    agent = Agent(
+        name="delayed_tool_classification",
+        model=model,
+        tools=[first_tool, second_tool],
+        config={"stream": True},
+    )
+    execute_model = agent._aexecute_model
+
+    async def observe_model_response(*args, **kwargs):
+        response = await execute_model(*args, **kwargs)
+        if response is delayed_response:
+            returned_response_types.append(response.response_type)
+            tool_stream_returned.set()
+        return response
+
+    agent._aexecute_model = observe_model_response
+    stream_task = asyncio.create_task(_collect_events(agent.stream_events("Run both")))
+    try:
+        await asyncio.wait_for(tool_stream_returned.wait(), 2)
+        assert returned_response_types == [None]
+        assert calls == ["first"]
+        assert not stream_task.done()
+
+        release_tool_stream.set()
+        events = await asyncio.wait_for(stream_task, 2)
+
+        assert calls == ["first", "second"]
+        assert model_call_count == 3
+        assert len(model_inputs) == 1
+        _assert_two_tool_outputs(model_inputs[0])
+
+        tool_ends = [event for event in events if event.type == EventType.TOOL_END]
+        assert [event.data["tool_name"] for event in tool_ends] == [
+            "first_tool",
+            "second_tool",
+        ]
+        model_responses = [
+            event for event in events if event.type == EventType.MODEL_RESPONSE
+        ]
+        assert model_responses[-1].data["response_type"] == "text_generation"
+        assert events.index(tool_ends[-1]) < events.index(model_responses[-1])
+        run_end = next(event for event in events if event.type == EventType.RUN_END)
+        assert events.index(model_responses[-1]) < events.index(run_end)
+    finally:
+        release_tool_stream.set()
+        await asyncio.gather(*producer_tasks, return_exceptions=True)
+        if not stream_task.done():
+            stream_task.cancel()
+            await asyncio.gather(stream_task, return_exceptions=True)
+        await agent.aclose()
+
+
+def _observe_sync_stream_return(agent, target, response_types, returned):
+    execute_model = agent._execute_model
+
+    def observe(*args, **kwargs):
+        response = execute_model(*args, **kwargs)
+        if response is target:
+            response_types.append(response.response_type)
+            returned.set()
+        return response
+
+    agent._execute_model = observe
+
+
+@pytest.mark.asyncio
+async def test_sync_agent_tool_loop_classifies_stream_response_after_return():
+    calls = []
+    tool_stream_returned = threading.Event()
+    release_tool_stream = threading.Event()
+    tool_response = ModelResponse()
+    tool_response.set_response_type("tool_call")
+    first_calls = ToolCallAggregator()
+    first_calls.process(0, "call_first", "first_tool", "{}")
+    tool_response.data = first_calls
+
+    second_calls = ToolCallAggregator()
+    second_calls.process(0, "call_second", "second_tool", "{}")
+    delayed_response = ModelStreamResponse(mode="sync")
+    returned_response_types = []
+
+    def produce_delayed_tool_response():
+        release_tool_stream.wait()
+        delayed_response.set_response_type("tool_call")
+        delayed_response.data = second_calls
+        delayed_response.finish()
+
+    final_response = ModelStreamResponse(mode="sync")
+    final_response.set_response_type("text_generation")
+    final_response.add("both tools complete")
+    final_response.finish()
+    model_inputs = []
+    model_call_count = 0
+    producer_threads = []
+
+    def model_call(**kwargs):
+        nonlocal model_call_count
+        model_call_count += 1
+        if model_call_count == 1:
+            return tool_response
+        if model_call_count == 2:
+            producer = threading.Thread(target=produce_delayed_tool_response)
+            producer.start()
+            producer_threads.append(producer)
+            return delayed_response
+        model_inputs.append(list(kwargs["messages"]))
+        return final_response
+
+    def first_tool() -> str:
+        """Return the first tool result."""
+        calls.append("first")
+        return "first result"
+
+    def second_tool() -> str:
+        """Return the second tool result."""
+        calls.append("second")
+        return "second result"
+
+    model = Mock()
+    model.model_type = "chat_completion"
+    model.return_value = None
+    model.side_effect = model_call
+    agent = Agent(
+        name="delayed_sync_tool_classification",
+        model=model,
+        tools=[first_tool, second_tool],
+        config={"stream": True},
+    )
+    _observe_sync_stream_return(
+        agent, delayed_response, returned_response_types, tool_stream_returned
+    )
+    run_task = asyncio.create_task(asyncio.to_thread(agent, "Run both"))
+    try:
+        await asyncio.wait_for(asyncio.to_thread(tool_stream_returned.wait, 2), 3)
+        assert returned_response_types == [None]
+        assert calls == ["first"]
+        assert not run_task.done()
+
+        release_tool_stream.set()
+        response = await asyncio.wait_for(run_task, 2)
+
+        assert calls == ["first", "second"]
+        assert model_call_count == 3
+        assert len(model_inputs) == 1
+        _assert_two_tool_outputs(model_inputs[0])
+        assert response.response_type == "text_generation"
+        assert final_response.data == "both tools complete"
+    finally:
+        release_tool_stream.set()
+        for producer in producer_threads:
+            producer.join(timeout=2)
+        if not run_task.done():
+            run_task.cancel()
+            await asyncio.gather(run_task, return_exceptions=True)
+        await agent.aclose()
+
+
 def test_before_run_can_replace_fresh_agent_input():
     agent, model = make_agent(
         hooks=[
@@ -1046,3 +1484,53 @@ def test_before_tool_hook_failure_blocks_execution():
 
     assert calls == []
     assert "failed closed" in response.tool_calls[0].error
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("mode", ["sync", "async", "stream"])
+@pytest.mark.parametrize("kind", ["blank", "abort", "interrupt", "pause", "cancel"])
+async def test_terminal_event_agrees_with_exception_kind(mode, kind):
+    from msgflux.exceptions import (
+        AbortRequestedError,
+        TaskInterruptRequestedError,
+        TaskPauseRequestedError,
+    )
+    from msgflux.runtime.events import _EventSink, _capture_events
+
+    error, expected_type = {
+        "blank": (RuntimeError(), EventType.RUN_ERROR),
+        "abort": (AbortRequestedError("stop"), EventType.RUN_INTERRUPTED),
+        "interrupt": (
+            TaskInterruptRequestedError("task", "stop"),
+            EventType.RUN_INTERRUPTED,
+        ),
+        "pause": (TaskPauseRequestedError("task", "stop"), EventType.RUN_PAUSED),
+        "cancel": (asyncio.CancelledError(), EventType.RUN_INTERRUPTED),
+    }[kind]
+
+    class FailingControlModule(Module):
+        _emit_nested_run_events = True
+
+        def forward(self):
+            raise error
+
+        async def aforward(self):
+            raise error
+
+    module = FailingControlModule()
+    events = []
+    with pytest.raises(type(error)) as raised:
+        if mode == "stream":
+            async for event in module.stream_events():
+                events.append(event)
+        else:
+            with _capture_events(_EventSink(events.append)):
+                if mode == "sync":
+                    module()
+                else:
+                    await module.acall()
+    assert raised.value is error
+    assert events[-1].type == expected_type
+    assert events[-1].data["error"] == (
+        "stop" if kind not in {"blank", "cancel"} else type(error).__name__
+    )

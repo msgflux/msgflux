@@ -1,7 +1,221 @@
 # Durable Runtime Resources
 
-`RuntimeResources` provides an explicit local application layout. Its minimum
-directories keep immutable tool results separate from per-thread checkpoints:
+## Managed Agent Setup
+
+For factory-backed `AgentService` applications, the default cache policy keeps
+at most 64 live bindings loaded and releases safely idle bindings after 300
+seconds. Configure those limits when creating the service:
+
+```python
+import asyncio
+
+from msgflux.runtime.service import AgentService, SessionCachePolicy, SQLiteServiceStore
+
+
+async def main():
+    journal = SQLiteServiceStore("service.sqlite3")
+    service = AgentService(
+        store=journal,
+        cache_policy=SessionCachePolicy(max_loaded=64, idle_timeout=300.0),
+    )
+    try:
+        print(service.agents())
+    finally:
+        await service.aclose()
+        journal.close()
+
+
+asyncio.run(main())
+```
+
+Set either policy field to `None` to disable only that limit, or pass
+`cache_policy=None` to turn off both automatic release mechanisms. A zero
+timeout releases a binding as soon as it is safely idle. Unfinished stream
+finalizers prevent release. Cache release preserves the thread's persisted
+data; model and workspace objects remain host-owned
+unless the factory explicitly releases resources it owns in the session cleanup
+callback. An embedded `CodingSession(agent)` keeps its supplied Agent and does
+not use automatic cache release.
+
+For the usual durable Agent setup, pass one stable `agent_dir` and reuse the
+same Agent name and thread ID across restarts. Creating the Agent and session is
+lazy; the first admitted prompt creates the private runtime directories:
+
+```text
+~/.msgflux/
+  runtime/service.sqlite3
+  threads/project-thread-1/
+    checkpoints.sqlite3
+    tasks.sqlite3
+    inbox.sqlite3
+    approvals.sqlite3
+    tool-results/                  # created only when a result is offloaded
+      res_<id>/content
+      res_<id>/metadata.json
+```
+
+```python
+import asyncio
+from pathlib import Path
+
+import msgflux as mf
+from msgflux.coding import CodingSession
+from msgflux.nn import Agent
+from msgflux.runtime import AgentWorkspace, ToolOutputOffloadConfig
+from msgflux.nn.extensions import ManagedToolOutputOffloadExtension
+from msgflux.tools.builtin import ReadFileTool
+
+
+async def main():
+    model = mf.Model.chat_completion("openai-codex/gpt-6-luna")
+    workspace = AgentWorkspace.local(
+        Path.cwd(),
+        read_only=True,
+        approval_policy="on-request",
+    )
+    agent = Agent(
+        name="assistant",
+        model=model,
+        agent_dir=Path.home() / ".msgflux",
+        workspace=workspace,
+        extensions=[ManagedToolOutputOffloadExtension()],
+        tools=[ReadFileTool()],
+    )
+    session = CodingSession(agent, thread_id="project-thread-1")
+    try:
+        async with session.watch() as observer:
+            print(observer.snapshot.messages)
+            receipt = await session.prompt("Remember the marker silver fern. Reply only ok.")
+            async for event in observer:
+                print(event.type)
+                if event.type in {"run.end", "run.error"}:
+                    break
+        settled = await session.wait(receipt.request_id)
+        print(settled.status)
+    finally:
+        await session.aclose()
+        model.close()
+
+
+asyncio.run(main())
+```
+
+This creates per-thread checkpoint, background task, inbox, and approval stores
+under `agent_dir/threads/<thread_id>/`. An embedded `CodingSession` also stores
+its admission journal at `agent_dir/runtime/service.sqlite3` on the first
+prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
+history and receipts. `session.aclose()` settles managed background work and
+closes its owned handles without deleting persisted data.
+
+Cancelling the coroutine awaiting `session.aclose()` leaves shutdown running.
+Await it again before closing borrowed models or workspaces. Managed journals
+and thread stores stay open while admitted work and its cleanup drain.
+An abrupt process exit bypasses cleanup entirely; reopening the same thread
+recovers committed state, and unfinished commands still require host
+reconciliation before replay.
+
+If a factory cleanup callback fails, `AgentService` continues closing its
+other session bindings and reports an aggregated error. The affected binding's
+thread stores remain open for host diagnosis and safe cleanup. Its borrowed
+journal and model are not closed by the service. Resolve the failed cleanup
+before releasing those resources.
+
+Register `ManagedToolOutputOffloadExtension()` through `Agent.extensions` to
+opt into durable storage
+for large supported tool outputs. The per-thread `tool-results/` directory is
+created only when an output crosses the inline threshold. Offloaded text and
+JSON references include the real `content` file path; use the existing `read`
+tool with `offset` and `limit` to page through that path. Shell references can
+be read under the same thread directory using their result ID. The preview is
+only an excerpt. The default inline threshold is 32 KiB, preview is 2 KiB, and
+these limits can be changed through `ToolOutputOffloadConfig`. Include
+`ReadFileTool` in the Agent's tools to let the model retrieve saved content.
+Its bounded excerpts stay inline, and existing references are preserved when
+background results are retrieved. Subagents inherit the parent's offload limits
+and thread store; they cannot replace that configuration.
+
+Offload also bounds shell capture and has per-result and total store quotas.
+Other tools produce their full result before transformation, so offload does
+not bound their own allocations. `ReadFileTool` rejects pages above its configurable `max_text_bytes` budget
+(default 32 KiB) with pagination instructions and no content. A single text
+line above that budget requires another available tool, such as Bash, to
+extract a smaller portion; `read` does not offer byte pagination. Storage failures
+report an output-processing error and warn against automatically retrying a
+tool whose effects may already have happened.
+
+`AgentWorkspace.local` defaults to `approval_policy="never"`. Use
+`approval_policy="on-request"` to review protected workspace changes; this
+derived policy requires the managed approval store provided by `agent_dir`.
+The policy's selected permissions cannot exceed `workspace.permissions`, and
+read-only child scopes remain limited by their inherited permissions. A host
+can update a live thread's selected policy and persist the change:
+
+```python
+from msgflux.runtime import PermissionSet
+
+current = await session.workspace_policy()
+updated = await session.update_workspace_policy(
+    permissions=PermissionSet({"filesystem.read", "filesystem.list"}),
+    approval_policy="never",
+    expected_revision=current.revision,
+)
+```
+
+The `read-only` and `full-access` presets are also accepted. `full-access` means
+the workspace's existing host ceiling; it does not add permissions to that
+ceiling. Independent tool capabilities remain controlled by the host's execution
+scope; a workspace override cannot grant them. Updates take effect at permission
+checks during a live operation and are stored with a new revision. Supplying `expected_revision` rejects stale
+concurrent updates. `workspace.policy_updated` reports the selected policy and
+whether a safe pending approval batch resumed; `resume_error` explains why a
+batch remained paused. If the change occurs while approval preparation is still
+running, reevaluation waits until that worker has durably paused and released its
+Agent context.
+
+When a managed service changes from `on-request` to `never`, it may automatically
+resume only an approval batch owned by that live service instance after checking
+the current tool implementation, invocation, workspace identity, and
+permissions. An expired, claimed, uncertain, changed, or otherwise unverifiable
+request remains paused for explicit recovery. `AgentWorkspace.local()` creates
+a fresh workspace identity when reconstructed, so do not expect pending approval
+resume across process restarts when rebuilding it with that factory. Use a
+backend reconnect with the saved workspace identity when approval recovery must
+survive restarts.
+
+Generic `AgentService` applications also get per-thread stores automatically
+when their trusted session factory returns an Agent configured with `agent_dir`.
+The service owns those loaded thread handles and closes them during shutdown.
+For a shared long-lived service, the host can release one idle live binding with
+`await service.release_session(thread_id)`. This closes its SQLite connections
+and invokes the factory cleanup callback while preserving the thread directory,
+checkpoints, tasks, inbox, approvals, tool results, and admission journal. A
+later prompt or cold snapshot reloads a fresh Agent for the same durable thread.
+Watch attachment briefly loads the binding to capture history and subscribe
+atomically, then drops its Agent and store references. An open watcher can drain
+queued events and continue receiving events after the thread reloads; it does
+not prevent release. Release is refused while a foreground worker, acquired
+session lease, or delegated task still uses the resources; cleanup failure
+leaves the binding quarantined for diagnosis. A generic service's admission
+journal remains separately configured by its host; the embedded `CodingSession`
+setup above places its journal under `agent_dir`.
+
+`agent_dir` is private host state, not a workspace mount. Managed offload gives
+the existing `read` tool a narrow read path to published `content` files in the
+active thread's result store; it does not expose the rest of `agent_dir`, other
+threads, metadata, or staging files. This read checks the live
+`filesystem.read` permission and works with Local and Docker project workspaces
+without mounting the host result directory into a container. Project files
+still require a separately configured `AgentWorkspace`. Offload is opt-in and
+requires `agent_dir` unless the Agent inherits managed resources from its
+parent. The approval journal provides storage; workspace review is enabled by
+the workspace's `approval_policy`, and the reviewer identity remains
+host-configured. Do not combine `agent_dir` with manually supplied checkpoint,
+task, inbox, or approval stores.
+
+## Advanced: Explicit Resource Helpers
+
+`RuntimeResources` is for hosts that need to manage individual stores or tool
+result storage directly. Constructing it does not create directories:
 
 ```text
 ~/.msgflux/
@@ -14,11 +228,11 @@ directories keep immutable tool results separate from per-thread checkpoints:
       checkpoint.sqlite
 ```
 
-The root is configurable. Constructing an Agent or `RuntimeResources` does not
-automatically create this layout or enable disk persistence. This is host-side
-infrastructure, not a filesystem mount or permission grant to a model.
+This explicit layout is host-side infrastructure, not a filesystem mount or
+permission grant to a model. For a standard Agent, prefer the managed setup
+above, which owns stores together under `agent_dir/threads/<thread_id>/`.
 
-## Configure the Local Layout
+### Configure the Local Layout
 
 ```python
 from msgflux.runtime import RuntimeResources
@@ -216,7 +430,8 @@ descriptor = response.tool_calls[0].result
 This extension runs after ordinary `after_tool` handlers, before `tool.end` and
 normal tool feedback serialization. Register it on an existing Agent with
 `agent.tool_library.register_extension(extension.name, extension)`; remove it
-with the returned handle. No offload runs without explicit registration.
+with the returned handle. For managed Agents, `ManagedToolOutputOffloadExtension()` in `Agent.extensions`
+installs this behavior automatically; do not combine both configurations.
 
 Successful large results become a JSON-compatible dictionary:
 
@@ -307,7 +522,7 @@ from msgflux.nn.extensions import ToolOutputOffloadExtension
 from msgflux.tools.builtin import BashTool
 
 library = ToolLibrary(
-    "workspace", [BashTool(cwd="/")],
+    "workspace", [BashTool()],
     extensions=[ToolOutputOffloadExtension(
         results,
         max_inline_bytes=32 * 1024,

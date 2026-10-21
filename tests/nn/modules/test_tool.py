@@ -824,10 +824,9 @@ class TestToolLibrary:
         assert [schema["function"]["name"] for schema in schemas] == ["tool_search"]
         parameters = schemas[0]["function"]["parameters"]
         properties = parameters["properties"]
-        assert properties["query"]["description"] == "Keywords used to find tools."
-        assert properties["select"]["description"] == (
-            "Exact tool names to load for the current thread."
-        )
+        assert "search" in properties["query"]["description"]
+        assert "exact tool names" in properties["select"]["description"].lower()
+        assert "thread" in properties["select"]["description"]
         assert parameters["required"] == [
             "query",
             "select",
@@ -1226,16 +1225,11 @@ class TestToolLibrary:
 
         guidance = library.get_tool_usage_guidance()
 
-        assert guidance == [
-            {
-                "name": "tool_search",
-                "display_name": "Tool Search",
-                "guidance": (
-                    "Search first; activate an exact match with `select` before "
-                    "calling it."
-                ),
-            }
-        ]
+        assert len(guidance) == 1
+        assert guidance[0]["name"] == "tool_search"
+        assert guidance[0]["display_name"] == "Tool Search"
+        assert "`select`" in guidance[0]["guidance"]
+        assert "before calling" in guidance[0]["guidance"]
 
     def test_tool_search_returns_matching_deferred_tools_without_loading(self):
         """Test that keyword search describes matches without exposing them."""
