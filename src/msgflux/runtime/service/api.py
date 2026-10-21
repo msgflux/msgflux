@@ -1054,8 +1054,9 @@ class AgentService:
 
     async def wait(self, thread_id: str, request_id: str) -> AdmissionReceipt:
         """Wait for this attempt; cancelling the waiter leaves work running."""
-        worker = self._workers.get((thread_id, request_id))
-        if worker is not None:
+        key = (thread_id, request_id)
+        worker = self._workers.get(key)
+        while worker is not None:
             # Completion of a cancelled worker is not cancellation of its observer.
             await asyncio.wait((worker.task,))
             if worker.task.cancelled():
@@ -1064,6 +1065,10 @@ class AgentService:
                     return receipt
             # Preserve execution/settlement errors when no terminal receipt exists.
             worker.task.result()
+            replacement = self._workers.get(key)
+            if replacement is worker:
+                break
+            worker = replacement
         return self._wait_receipt(thread_id, request_id)
 
     @asynccontextmanager
