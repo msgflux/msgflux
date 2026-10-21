@@ -241,7 +241,10 @@ class LocalTool(Tool):
         )
         kwargs = self._prepare_call_kwargs(kwargs)
         if inspect.iscoroutinefunction(self.impl):
-            return F.wait_for(self.impl, **kwargs)
+            result = F.wait_for(self.impl, **kwargs)
+            if isinstance(result, TaskError):
+                raise result.exception
+            return result
         return self.impl(**kwargs)
 
     @aset_tool_attributes(execution_type="local")
