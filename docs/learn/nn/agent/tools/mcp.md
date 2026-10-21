@@ -237,3 +237,7 @@ exception note. The client does not retry a transport whose cleanup failed.
 
 Explicit `disconnect()` also clears local session state and caches when transport
 cleanup raises; the cleanup exception still propagates to the caller.
+
+For stdio servers, closing stdout fails pending requests with
+`MCPConnectionError`. Canceling a request removes its local tracking; it does not
+confirm that a remote tool stopped executing.
