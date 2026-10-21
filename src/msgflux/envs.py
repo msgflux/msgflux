@@ -26,7 +26,9 @@ def set_envs(**kwargs: Any):
 class EnvironmentVariables(BaseSettings):
     model_config = SettingsConfigDict(
         env_file=".env",
-        env_prefix="msgflux_",
+        # msgspec-ext does not normalize the prefix, so it must already be
+        # uppercase to match the documented MSGFLUX_* process variables.
+        env_prefix="MSGFLUX_",
     )
 
     # Max objects in cache to functions
@@ -40,7 +42,7 @@ class EnvironmentVariables(BaseSettings):
     # If set to False, msgflux will not configure logging
     # If set to True, msgflux will configure logging using
     #    the default configuration or the configuration
-    #    file specified by msgflux_LOGGING_CONFIG_PATH
+    #    file specified by MSGFLUX_LOGGING_CONFIG_PATH
     configure_logging: bool = True
     logging_config_path: str = None
 
