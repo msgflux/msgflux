@@ -127,6 +127,57 @@ def test_from_env_stores_unmodified_value_without_echoing_it(
     assert Accounts(root=tmp_path).get("openai").value == secret
 
 
+def test_from_env_for_imagerouter_uses_provider_key_when_both_are_set(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-openai-key")
+    monkeypatch.setenv("IMAGEROUTER_API_KEY", "ir-fake-imagerouter-key")
+
+    accounts_cli.main(
+        [
+            "login",
+            "imagerouter",
+            "--from-env",
+            "--accounts-dir",
+            str(tmp_path),
+            "--json",
+        ]
+    )
+
+    output = capsys.readouterr().out
+    credential = Accounts(root=tmp_path).get("imagerouter")
+    assert credential.value == "ir-fake-imagerouter-key"
+    assert credential.env_name == "IMAGEROUTER_API_KEY"
+    assert "ir-fake-imagerouter-key" not in output
+    assert "sk-fake-openai-key" not in output
+
+
+def test_from_env_for_imagerouter_does_not_fall_back_to_openai_key(
+    monkeypatch, tmp_path, capsys
+):
+    monkeypatch.setenv("OPENAI_API_KEY", "sk-fake-openai-key")
+    monkeypatch.delenv("IMAGEROUTER_API_KEY", raising=False)
+
+    with pytest.raises(SystemExit, match="1"):
+        accounts_cli.main(
+            [
+                "login",
+                "imagerouter",
+                "--from-env",
+                "--accounts-dir",
+                str(tmp_path),
+                "--json",
+            ]
+        )
+
+    output = capsys.readouterr().out
+    result = json.loads(output)
+    assert result["status"] == "failed"
+    assert "IMAGEROUTER_API_KEY" in result["error"]
+    assert "sk-fake-openai-key" not in output
+    assert not Accounts(root=tmp_path).credential_path("imagerouter").exists()
+
+
 @pytest.mark.parametrize("source_flag", ["--stdin", "--from-env"])
 def test_oauth_provider_rejects_api_key_source_flags(
     monkeypatch, tmp_path, capsys, source_flag
