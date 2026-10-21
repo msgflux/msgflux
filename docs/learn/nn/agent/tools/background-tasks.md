@@ -452,6 +452,10 @@ that cannot be encoded as JSON still run normally but cannot use the
 pre-checkpoint replay path. Tool calls and other external effects made
 immediately before a crash may still be repeated after recovery; leases are
 not an exactly-once guarantee.
+After an initial worker claim, failures in its start event or heartbeat setup
+use the same failure handling as tool execution. They preserve the original
+error and record the task as failed when the task store is writable; the tool
+is not invoked.
 If a recovery observer or worker-claim setup fails before dispatch, the runtime
 releases its acquired lease and preserves the original error. Once the cause is
 resolved, the host can retry recovery without waiting for that lease to expire.

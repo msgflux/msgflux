@@ -406,16 +406,17 @@ class BackgroundTaskDispatcher:
             capture,
             event_source(tool_name, "background"),
         ):
-            if not task_handle.has_worker_lease:
-                task_handle.start_worker(
-                    lease_seconds=self.lease_seconds,
-                    recover_expired=recover_expired,
-                )
-            elif not task_handle.renew_worker(lease_seconds=self.lease_seconds):
-                TaskLeaseHeartbeats.unregister(task_handle)
-                raise TaskLeaseLostError(task_handle.task_id)
-            TaskLeaseHeartbeats.register(task_handle, lease_seconds=self.lease_seconds)
             try:
+                if not task_handle.has_worker_lease:
+                    task_handle.start_worker(
+                        lease_seconds=self.lease_seconds,
+                        recover_expired=recover_expired,
+                    )
+                elif not task_handle.renew_worker(lease_seconds=self.lease_seconds):
+                    raise TaskLeaseLostError(task_handle.task_id)
+                TaskLeaseHeartbeats.register(
+                    task_handle, lease_seconds=self.lease_seconds
+                )
                 with _task_history_origin_context(task_handle.task_id, metadata):
                     require_permissions(required_permissions, required_resources)
                     result = tool(**call_params)
