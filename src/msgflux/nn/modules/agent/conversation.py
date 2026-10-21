@@ -53,7 +53,7 @@ from msgflux.runtime.context import (
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.tools.runtime import ToolOutcome
 from msgflux.utils.console import cprint
-from msgflux.utils.msgspec import lossless_json_roundtrip
+from msgflux.utils.msgspec import lossless_json_roundtrip, msgspec_dumps
 from msgflux.utils.time import utc_now_isoformat
 from msgflux.utils.xml import apply_xml_tags
 
@@ -868,9 +868,12 @@ class AgentConversationMixin:
             return
 
         if history_items:
-            messages.extend(history_items)
             if any(item.get("type") == "reasoning" for item in history_items):
                 reasoning = None
+            elif reasoning:
+                messages.add_reasoning(reasoning, role="assistant")
+                reasoning = None
+            messages.extend(history_items)
             if any(
                 item.get("type") == "message" and item.get("role") == "assistant"
                 for item in history_items
@@ -885,9 +888,12 @@ class AgentConversationMixin:
             answer = raw_response.get("answer")
             if answer is None and "answer" not in raw_response:
                 answer = raw_response.get("text")
-            reasoning_content = (
-                self._extract_reasoning_content(raw_response) or reasoning_content
-            )
+            if answer is None and "structured" in response_type:
+                answer = msgspec_dumps(raw_response)
+            else:
+                reasoning_content = (
+                    self._extract_reasoning_content(raw_response) or reasoning_content
+                )
         elif raw_response is not None:
             answer = str(raw_response)
 
