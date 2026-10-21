@@ -160,7 +160,9 @@ Policies run sequentially in registration order. The phases are:
 
 The first blocked outcome stops later policies for that phase and affects only
 that tool call. An exception in `before_tool` or `before_dispatch` fails closed.
-An exception in `after_tool` preserves the outcome already produced.
+An exception in `after_tool` preserves the outcome already produced and emits a
+`handler.error` event with the tool name, call ID, and failure reason. The tool is
+not executed again.
 
 Existing lifecycle hooks remain supported. Their order is: policy
 `before_tool`, legacy `before_tool`, legacy `before_dispatch`, policy
