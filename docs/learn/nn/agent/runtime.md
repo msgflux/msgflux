@@ -2201,6 +2201,10 @@ rather than constructing another one inside a tool.
 
 `await binding.aclose()` releases the connection through the backend's `_release`
 hook. Successful close is idempotent and also runs on async context-manager exit.
+If the context body fails and release also raises an ordinary exception, the
+body's exception propagates with the release failure attached as an exception
+note. With no body failure, the release error propagates directly. A new
+cancellation during release still propagates rather than becoming a note.
 The `ownership` label (`owned` or `borrowed`) records provenance only: neither
 mode implicitly deletes files, terminates a sandbox or authorizes destruction.
 No destroy/pause/snapshot capability is implemented in this increment.
