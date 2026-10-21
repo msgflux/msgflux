@@ -9,6 +9,7 @@ from contextlib import contextmanager, nullcontext
 from typing import TYPE_CHECKING, Any, Dict, List, Mapping, Union
 
 from msgflux.chat_messages import ChatMessages
+from msgflux.nn.extensions.base import _extension_state_context
 from msgflux.nn.hooks.events import BeforeResume
 from msgflux.runtime.agent_run import AgentRun, agent_run_context
 from msgflux.runtime.context import ExecutionScope
@@ -138,7 +139,7 @@ def _agent_context(agent: Agent, *, scope, vars):
         else nullcontext()
     )
     try:
-        with agent_run_context(run), receipt_context:
+        with _extension_state_context(agent), agent_run_context(run), receipt_context:
             yield state
     finally:
         _CURRENT_AGENT_CONTEXT.reset(token)

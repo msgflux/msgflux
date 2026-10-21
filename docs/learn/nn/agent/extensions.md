@@ -357,6 +357,8 @@ class ContextAnalysis(nn.AgentExtension):
         return event
 ```
 
-The state is namespaced by Agent and extension, inherited by nested work in the
-same execution context, and discarded when the run ends. It is not persisted in
-checkpoints and must not hold durable conversation state.
+The state is namespaced by Agent and extension and shared by hooks and tools
+within one invocation. Nested or concurrent Agent calls with different execution
+scopes receive independent state, even when they use the same Agent instance.
+Returning from a nested call restores the parent's state. Temporary state is
+not persisted in checkpoints and must not hold durable conversation state.
