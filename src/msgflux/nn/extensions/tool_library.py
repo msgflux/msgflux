@@ -6,6 +6,7 @@ import weakref
 from typing import TYPE_CHECKING, Any, Iterable, Mapping
 
 import msgflux.nn.functional as F
+from msgflux.exceptions import TaskError
 from msgflux.logger import logger
 from msgflux.nn.hooks import Hook
 from msgflux.nn.modules.module import Module
@@ -284,8 +285,14 @@ class MCPServersExtension(ToolLibraryExtension):
 
             added_names: list[str] = []
             try:
-                F.wait_for(client.connect)
+                connect_result = F.wait_for(client.connect)
+                if isinstance(connect_result, TaskError):
+                    raise connect_result.exception
+
                 all_tools = F.wait_for(client.list_tools, use_cache=False)
+                if isinstance(all_tools, TaskError):
+                    raise all_tools.exception
+
                 filtered_tools = filter_tools(
                     all_tools,
                     server_config.get("include_tools"),
