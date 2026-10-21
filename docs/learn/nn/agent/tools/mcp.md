@@ -227,7 +227,9 @@ result is never treated as a completed tool call.
 
 ### Connection failures
 
-`max_retries` and `retry_delay` control connection attempts. Each failed attempt
+`max_retries` and `retry_delay` control connection attempts. A timeout or
+connection failure during protocol discovery follows this retry policy instead
+of triggering a legacy handshake. Each failed attempt
 clears local session state and closes the transport before retrying. If transport
 cleanup also fails, connection attempts stop: `MCPConnectionError.__cause__`
 preserves the connection failure, with the cleanup failure attached as an

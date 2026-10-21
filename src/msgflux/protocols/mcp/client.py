@@ -12,6 +12,7 @@ from msgflux.protocols.mcp.exceptions import (
     MCPConnectionError,
     MCPError,
     MCPInputRequiredError,
+    MCPTimeoutError,
 )
 from msgflux.protocols.mcp.loglevels import LogLevel
 from msgflux.protocols.mcp.transports import (
@@ -332,6 +333,8 @@ class MCPClient:
             response = await self.transport.send_request(
                 "server/discover", self._modern_params()
             )
+        except (MCPTimeoutError, MCPConnectionError):
+            raise
         except MCPError:
             response = {}
 
