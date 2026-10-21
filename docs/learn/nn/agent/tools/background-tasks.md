@@ -452,6 +452,11 @@ that cannot be encoded as JSON still run normally but cannot use the
 pre-checkpoint replay path. Tool calls and other external effects made
 immediately before a crash may still be repeated after recovery; leases are
 not an exactly-once guarantee.
+If a recovery observer or worker-claim setup fails before dispatch, the runtime
+releases its acquired lease and preserves the original error. Once the cause is
+resolved, the host can retry recovery without waiting for that lease to expire.
+If releasing the lease also fails, its remaining expiry still applies.
+
 If the Agent committed a `completed` checkpoint but the process exited before
 recording the task result, call `reconcile_agent_task` instead:
 
