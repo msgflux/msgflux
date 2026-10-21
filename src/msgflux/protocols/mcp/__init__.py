@@ -12,6 +12,7 @@ from msgflux.protocols.mcp.client import MCPClient
 from msgflux.protocols.mcp.exceptions import (
     MCPConnectionError,
     MCPError,
+    MCPInputRequiredError,
     MCPTimeoutError,
     MCPToolError,
 )
@@ -47,6 +48,7 @@ __all__ = [
     "MCPConnectionError",
     "MCPContent",
     "MCPError",
+    "MCPInputRequiredError",
     "MCPPrompt",
     "MCPResource",
     "MCPTimeoutError",

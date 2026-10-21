@@ -1,9 +1,11 @@
 """MCP transport implementations."""
 
 import asyncio
+import base64
 import json
+import re
 from abc import ABC, abstractmethod
-from typing import TYPE_CHECKING, Any, Dict, Optional
+from typing import TYPE_CHECKING, Any, Callable, Dict, Optional
 
 import httpx2
 
@@ -48,7 +50,11 @@ class BaseTransport(ABC):
 
     @abstractmethod
     async def send_request(
-        self, method: str, params: Optional[Dict[str, Any]] = None
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Send a JSON-RPC request and wait for response."""
         pass
@@ -95,6 +101,7 @@ class HTTPTransport(BaseTransport):
         self.auth = auth
         self._http_client: Optional[httpx2.AsyncClient] = None
         self._session_id: Optional[str] = None
+        self._tool_schemas: Dict[str, Dict[str, Any]] = {}
         super().__init__()
 
     async def connect(self):
@@ -120,10 +127,146 @@ class HTTPTransport(BaseTransport):
         if self._http_client:
             await self._http_client.aclose()
             self._http_client = None
+        self._session_id = None
+        self._tool_schemas.clear()
 
     def set_session_id(self, session_id: str):
         """Set session ID for subsequent requests."""
         self._session_id = session_id
+
+    @staticmethod
+    def _header_value(value: str) -> str:
+        """Encode a name or parameter value according to the MCP HTTP binding."""
+        safe = all(32 <= ord(char) <= 126 for char in value)
+        if (
+            not safe
+            or value != value.strip()
+            or (value.startswith("=?base64?") and value.endswith("?="))
+        ):
+            encoded = base64.b64encode(value.encode("utf-8")).decode("ascii")
+            return f"=?base64?{encoded}?="
+        return value
+
+    @staticmethod
+    def _tool_header_paths(  # noqa: C901
+        schema: Dict[str, Any],
+    ) -> Dict[str, tuple[str, ...]]:
+        """Find valid header annotations along plain object property paths."""
+        headers: Dict[str, tuple[str, ...]] = {}
+
+        def contains_header(value: Any) -> bool:
+            if isinstance(value, dict):
+                return "x-mcp-header" in value or any(
+                    contains_header(item) for item in value.values()
+                )
+            if isinstance(value, list):
+                return any(contains_header(item) for item in value)
+            return False
+
+        def visit(node: Any, path: tuple[str, ...]) -> None:
+            if not isinstance(node, dict):
+                return
+            if "x-mcp-header" in node:
+                header = node["x-mcp-header"]
+                if (
+                    not path
+                    or not isinstance(header, str)
+                    or not re.fullmatch(r"[!#$%&'*+.^_`|~0-9A-Za-z-]+", header)
+                    or not isinstance(node.get("type"), str)
+                    or node["type"] not in {"string", "integer", "boolean"}
+                    or header.lower() in headers
+                ):
+                    raise ValueError("Invalid x-mcp-header annotation")
+                headers[header.lower()] = path
+            for name, property_schema in node.get("properties", {}).items():
+                visit(property_schema, (*path, name))
+            for key, value in node.items():
+                if key not in {"properties", "x-mcp-header"} and isinstance(
+                    value, (dict, list)
+                ):
+                    if contains_header(value):
+                        raise ValueError("x-mcp-header must be on a property path")
+
+        visit(schema, ())
+        return headers
+
+    def register_tool_schemas(self, tools: list) -> list:
+        """Keep HTTP-valid tools for parameter header mirroring."""
+        valid = []
+        self._tool_schemas.clear()
+        for tool in tools:
+            try:
+                self._tool_header_paths(tool.inputSchema)
+            except ValueError:
+                logger.warning(
+                    f"Ignoring MCP tool with invalid x-mcp-header: {tool.name}"
+                )
+                continue
+            self._tool_schemas[tool.name] = tool.inputSchema
+            valid.append(tool)
+        return valid
+
+    def _request_headers(  # noqa: C901
+        self, method: str, params: Optional[Dict[str, Any]], headers: Dict[str, str]
+    ) -> Dict[str, str]:
+        """Mirror modern request metadata into required HTTP headers."""
+        meta = (params or {}).get("_meta", {})
+        version = meta.get("io.modelcontextprotocol/protocolVersion")
+        if not version:
+            return headers
+        headers["MCP-Protocol-Version"] = version
+        headers["Mcp-Method"] = method
+        name = (params or {}).get("name") or (params or {}).get("uri")
+        if (
+            method in {"tools/call", "resources/read", "prompts/get"}
+            and name is not None
+        ):
+            headers["Mcp-Name"] = self._header_value(str(name))
+        if method == "tools/call" and name in self._tool_schemas:
+            arguments = (params or {}).get("arguments", {})
+            for header, path in self._tool_header_paths(
+                self._tool_schemas[name]
+            ).items():
+                value = arguments
+                for part in path:
+                    if not isinstance(value, dict) or part not in value:
+                        value = None
+                        break
+                    value = value[part]
+                if value is None:
+                    continue
+                if isinstance(value, int) and not isinstance(value, bool):
+                    if abs(value) > 2**53 - 1:
+                        raise MCPError(
+                            "MCP parameter header integer exceeds safe range"
+                        )
+                if isinstance(value, bool):
+                    value = str(value).lower()
+                headers[f"Mcp-Param-{header}"] = self._header_value(str(value))
+        return headers
+
+    @staticmethod
+    def _parse_sse(
+        body: str,
+        request_id: str,
+        on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> Dict[str, Any]:
+        """Return the final JSON-RPC response after request-scoped events."""
+        data_lines: list[str] = []
+        for line in [*body.splitlines(), ""]:
+            if not line:
+                if data_lines:
+                    message = json.loads("\n".join(data_lines))
+                    if message.get("id") == request_id and (
+                        "result" in message or "error" in message
+                    ):
+                        return message
+                    if on_notification and message.get("method"):
+                        on_notification(message)
+                    data_lines = []
+            elif line.startswith("data:"):
+                data_lines.append(line[5:].lstrip(" "))
+        raise MCPError("No matching JSON-RPC response in SSE stream")
 
     async def _get_headers(self, *, include_session_id: bool = True) -> Dict[str, str]:
         """Get headers with authentication applied.
@@ -155,7 +298,11 @@ class HTTPTransport(BaseTransport):
         return headers
 
     async def send_request(  # noqa: C901
-        self, method: str, params: Optional[Dict[str, Any]] = None
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Send HTTP POST request with JSON-RPC.
 
@@ -175,13 +322,33 @@ class HTTPTransport(BaseTransport):
 
         try:
             # Don't send session ID on initialize - server will create it
-            headers = await self._get_headers(
-                include_session_id=(method != "initialize")
+            modern_request = bool(
+                (params or {})
+                .get("_meta", {})
+                .get("io.modelcontextprotocol/protocolVersion")
             )
+            headers = await self._get_headers(
+                include_session_id=(method != "initialize" and not modern_request)
+            )
+            headers = self._request_headers(method, params, headers)
+
+            if on_notification is not None:
+                return await self._stream_request(
+                    request_data, headers, on_notification
+                )
 
             response = await self._http_client.post(
                 self.base_url, json=request_data, headers=headers
             )
+            if isinstance(response.status_code, int) and response.status_code >= 400:
+                try:
+                    error_body = response.json()
+                except (ValueError, json.JSONDecodeError):
+                    response.raise_for_status()
+                else:
+                    if isinstance(error_body, dict) and "error" in error_body:
+                        return error_body
+                    response.raise_for_status()
             response.raise_for_status()
 
             # Capture session ID from response headers if present
@@ -206,12 +373,7 @@ class HTTPTransport(BaseTransport):
 
             if "text/event-stream" in content_type:
                 # Parse SSE format: data: {...}\n\n
-                text = response.text
-                for line in text.split("\n"):
-                    if line.startswith("data: "):
-                        data_str = line[6:]  # Remove "data: " prefix
-                        return json.loads(data_str)
-                raise MCPError("No data found in SSE response")
+                return self._parse_sse(response.text, request_data["id"])
             else:
                 # Regular JSON response
                 return response.json()
@@ -223,6 +385,45 @@ class HTTPTransport(BaseTransport):
             raise MCPError(f"HTTP error {status_code}: {error_text}") from e
         except json.JSONDecodeError as e:
             raise MCPError(f"Failed to decode JSON response: {e}") from e
+
+    async def _stream_request(  # noqa: C901
+        self,
+        request_data: Dict[str, Any],
+        headers: Dict[str, str],
+        on_notification: Callable[[Dict[str, Any]], None],
+    ) -> Dict[str, Any]:
+        """Read request-scoped notifications before the final response."""
+        async with self._http_client.stream(
+            "POST", self.base_url, json=request_data, headers=headers
+        ) as response:
+            if response.status_code >= 400:
+                await response.aread()
+                try:
+                    error_body = response.json()
+                except ValueError:
+                    response.raise_for_status()
+                if isinstance(error_body, dict) and "error" in error_body:
+                    return error_body
+            response.raise_for_status()
+            if "text/event-stream" not in response.headers.get("content-type", ""):
+                await response.aread()
+                return response.json()
+            event_lines: list[str] = []
+            async for line in response.aiter_lines():
+                if line:
+                    if line.startswith("data:"):
+                        event_lines.append(line[5:].lstrip(" "))
+                    continue
+                if event_lines:
+                    message = json.loads("\n".join(event_lines))
+                    event_lines = []
+                    if message.get("id") == request_data["id"] and (
+                        "result" in message or "error" in message
+                    ):
+                        return message
+                    if message.get("method"):
+                        on_notification(message)
+            raise MCPError("No matching JSON-RPC response in SSE stream")
 
     async def send_notification(
         self, method: str, params: Optional[Dict[str, Any]] = None
@@ -274,6 +475,7 @@ class StdioTransport(BaseTransport):
         self.timeout = timeout
         self._process: Optional[asyncio.subprocess.Process] = None
         self._pending_requests: Dict[str, asyncio.Future] = {}
+        self._notification_callbacks: Dict[Any, Callable[[Dict[str, Any]], None]] = {}
         self._read_task: Optional[asyncio.Task] = None
         super().__init__()
 
@@ -325,8 +527,9 @@ class StdioTransport(BaseTransport):
             if not future.done():
                 future.cancel()
         self._pending_requests.clear()
+        self._notification_callbacks.clear()
 
-    async def _read_responses(self):
+    async def _read_responses(self):  # noqa: C901
         """Background task to read JSON-RPC responses from stdout."""
         if not self._process or not self._process.stdout:
             return
@@ -346,8 +549,13 @@ class StdioTransport(BaseTransport):
                         if not future.done():
                             future.set_result(response)
 
-                    # Handle notifications from server (ignore for now)
-                    # Could be extended to handle server notifications
+                    if response.get("method") == "notifications/progress":
+                        params = response.get("params", {})
+                        callback = self._notification_callbacks.get(
+                            params.get("progressToken")
+                        )
+                        if callback:
+                            callback(response)
 
                 except json.JSONDecodeError as e:
                     # Invalid JSON, skip
@@ -364,7 +572,11 @@ class StdioTransport(BaseTransport):
             pass
 
     async def send_request(
-        self, method: str, params: Optional[Dict[str, Any]] = None
+        self,
+        method: str,
+        params: Optional[Dict[str, Any]] = None,
+        *,
+        on_notification: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> Dict[str, Any]:
         """Send JSON-RPC request via stdin and wait for response."""
         if not self._process or not self._process.stdin:
@@ -383,6 +595,9 @@ class StdioTransport(BaseTransport):
         # Create future for response
         future: asyncio.Future = asyncio.Future()
         self._pending_requests[request_id] = future
+        progress_token = (params or {}).get("_meta", {}).get("progressToken")
+        if on_notification is not None and progress_token is not None:
+            self._notification_callbacks[progress_token] = on_notification
 
         try:
             # Send request (newline-delimited JSON)
@@ -400,6 +615,9 @@ class StdioTransport(BaseTransport):
         except Exception as e:
             self._pending_requests.pop(request_id, None)
             raise MCPError(f"Failed to send request: {e}") from e
+        finally:
+            if progress_token is not None:
+                self._notification_callbacks.pop(progress_token, None)
 
     async def send_notification(
         self, method: str, params: Optional[Dict[str, Any]] = None
