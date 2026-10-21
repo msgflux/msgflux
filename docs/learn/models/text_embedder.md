@@ -139,6 +139,11 @@ Providers with native batch support (OpenAI, JinaAI, Together AI, vLLM, Ollama) 
 !!! note
     The `Embedder` nn module (from `msgflux.nn`) handles this automatically — it uses native batch when `batch_support=True` and falls back to `F.map_gather` otherwise. When using `mf.Model.text_embedder()` directly, you control the strategy yourself.
 
+When an `nn.Embedder` request fails, synchronous and asynchronous calls raise
+the original model exception, including failures in the non-batch fanout. When
+using [functional gather operations](../nn/functional.md) directly, inspect
+`TaskError` items before consuming the successful responses.
+
 ## 3. **Response Caching**
 
 Cache embeddings to avoid redundant API calls:

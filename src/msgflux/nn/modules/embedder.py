@@ -5,6 +5,7 @@ import msgflux.nn.functional as F
 from msgflux.auto import AutoParams
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.exceptions import TaskError
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.types import (
     AudioEmbedderModel,
@@ -141,9 +142,7 @@ class Embedder(Module, metaclass=AutoParams):
                 args_list=args_list,
                 kwargs_list=distributed_params,
             )
-            embeddings = [
-                self._extract_raw_response(response) for response in responses
-            ]
+            embeddings = self._extract_gathered_embeddings(responses)
 
         # Return single embedding if input was single
         if is_single:
@@ -192,9 +191,7 @@ class Embedder(Module, metaclass=AutoParams):
                 args_list=args_list,
                 kwargs_list=distributed_params,
             )
-            embeddings = [
-                self._extract_raw_response(response) for response in responses
-            ]
+            embeddings = self._extract_gathered_embeddings(responses)
 
         # Return single embedding if input was single
         if is_single:
@@ -203,6 +200,15 @@ class Embedder(Module, metaclass=AutoParams):
             if len(embeddings) > 0 and isinstance(embeddings[0], list):
                 return embeddings[0]
             return embeddings
+        return embeddings
+
+    def _extract_gathered_embeddings(self, responses):
+        """Extract successful responses and re-raise fanout task failures."""
+        embeddings = []
+        for response in responses:
+            if isinstance(response, TaskError):
+                raise response.exception
+            embeddings.append(self._extract_raw_response(response))
         return embeddings
 
     def _prepare_model_execution(
