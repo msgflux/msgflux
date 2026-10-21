@@ -339,6 +339,8 @@ A common use case with Agents is analyzing one document from multiple perspectiv
 
         When a task fails, the gather functions **do not raise** — instead, the failed position contains a `TaskError` object with the original exception. This lets the other tasks complete successfully and gives you fine-grained control over error handling:
 
+        Async gathers also capture ordinary exceptions raised synchronously while invoking a callable, and return a `TaskError` if its result cannot be awaited. Abort, pause, interrupt, and cancellation signals raised during preparation propagate; previously prepared native coroutines that have not been submitted are closed. Tasks and futures returned by a callable remain caller-owned. Once gathering begins, async-body results keep the usual behavior, and each result stays at its input position.
+
         ```python
         import msgflux.nn.functional as F
         from msgflux import TaskError
