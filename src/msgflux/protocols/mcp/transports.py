@@ -369,7 +369,7 @@ class HTTPTransport(BaseTransport):
                     break
 
             # Check Content-Type to handle both JSON and SSE responses
-            content_type = response.headers.get("content-type", "")
+            content_type = response.headers.get("content-type", "").lower()
 
             if "text/event-stream" in content_type:
                 # Parse SSE format: data: {...}\n\n
@@ -405,7 +405,8 @@ class HTTPTransport(BaseTransport):
                 if isinstance(error_body, dict) and "error" in error_body:
                     return error_body
             response.raise_for_status()
-            if "text/event-stream" not in response.headers.get("content-type", ""):
+            content_type = response.headers.get("content-type", "").lower()
+            if "text/event-stream" not in content_type:
                 await response.aread()
                 return response.json()
             event_lines: list[str] = []
