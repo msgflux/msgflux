@@ -8,6 +8,7 @@ from typing import Any, Callable, Dict, Mapping, Optional, get_type_hints
 
 import msgflux.nn.functional as F
 from msgflux.core.dotdict import dotdict
+from msgflux.exceptions import TaskError
 from msgflux.nn.modules.module import Module
 from msgflux.nn.modules.tool.definitions import ContextSpec, ToolDeclaration
 from msgflux.protocols.mcp import (
@@ -123,6 +124,8 @@ class MCPTool(Tool):
         )
         # Call MCP tool (wrap async in sync)
         result = F.wait_for(self._mcp_client.call_tool, self._mcp_tool_name, kwargs)
+        if isinstance(result, TaskError):
+            raise result.exception
 
         # Handle errors
         if result.isError:
