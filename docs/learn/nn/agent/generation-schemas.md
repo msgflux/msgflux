@@ -31,6 +31,25 @@
     print(result.is_safe)  # True/False
     ```
 
+## Conversation History
+
+The Agent returns structured output as a mapping. When using `ChatMessages` or
+checkpoints, it also records the assistant response for subsequent turns. If the
+provider supplies a canonical assistant message, that message is retained. Otherwise,
+the Agent uses its existing `answer`/`text` projection when that yields a value,
+and serializes the complete mapping as JSON when it does not. An explicit
+`answer` field takes precedence over `text`, including when `answer` is null.
+
+For example, `{"label": "positive"}` remains a mapping in the returned result and
+is saved as `'{"label":"positive"}'` in the conversation. Fields such as
+`final_answer`, nested values, and empty results therefore remain available after
+checkpoint recovery. Response templates format the returned result; they do not
+replace the stored model output.
+
+The JSON fallback keeps declared schema fields together, including schema-level
+reasoning, without copying them into separate reasoning items. Native provider
+reasoning retains its own reasoning item and is not added to the JSON payload.
+
 ## Reasoning Schemas
 
 msgFlux provides built-in generation schemas that implement common reasoning strategies. These schemas guide the model through structured thinking patterns before producing a response.
