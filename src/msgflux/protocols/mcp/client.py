@@ -198,7 +198,13 @@ class MCPClient:
 
     async def disconnect(self):
         """Close connection to MCP server."""
-        await self.transport.disconnect()
+        try:
+            await self.transport.disconnect()
+        finally:
+            self._reset_session_state()
+
+    def _reset_session_state(self) -> None:
+        """Clear local state that is valid only for an active transport session."""
         self._initialized = False
         self.protocol_version = None
         self._modern = False
@@ -259,7 +265,17 @@ class MCPClient:
                 return
             except Exception as e:
                 self._last_error = e
-                await self.transport.disconnect()
+                self._reset_session_state()
+                try:
+                    await self.transport.disconnect()
+                except Exception as cleanup_error:
+                    e.add_note(
+                        "Transport cleanup after the connection failure also "
+                        f"failed: {cleanup_error!s}"
+                    )
+                    raise MCPConnectionError(
+                        f"Failed to clean up transport after connection failure: {e}"
+                    ) from e
 
                 if attempt < self.max_retries - 1:
                     # Exponential backoff
