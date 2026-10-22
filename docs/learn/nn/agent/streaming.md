@@ -91,10 +91,10 @@ When `stream=True`, the agent returns a `ModelStreamResponse` instead of a plain
 |---|---|
 | `response.consume()` | Async generator that yields `str` chunks until the stream ends. |
 | `response.consume_events()` | Async generator that preserves the provider order across output, reasoning, and reasoning-summary deltas. |
-| `response.data` | Full accumulated content after the stream completes (or `None` while streaming). |
-| `response.response_type` | `"text_generation"` or `"tool_call"` — set when the first content token arrives. |
+| `response.data` | Full accumulated content after the stream completes (or `None` while streaming); an empty successful text stream has `""`. |
+| `response.response_type` | `"text_generation"` or `"tool_call"` — set on first output, or to `"text_generation"` when an empty stream completes successfully. |
 | `response.metadata` | Usage and request timing — set when the stream finishes. `None` while streaming, useful as a completion signal. |
-| `response.first_chunk_event` | Event that fires on the very first token (reasoning or content). |
+| `response.first_chunk_event` | Signals the first reasoning/content output, or terminal completion/error if no output arrives. |
 
 ## Streaming with Reasoning
 

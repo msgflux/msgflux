@@ -399,7 +399,8 @@ class TestOpenRouterChatCompletion:
         )
         response.finish()
 
-        assert response.data is None
+        assert response.response_type == "text_generation"
+        assert response.data == ""
         assert response.commentary == []
         assert [event async for event in response.consume_events()] == []
         assert response.chat_accumulator.snapshot()[0]["phase"] == "commentary"
