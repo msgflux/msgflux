@@ -9,7 +9,7 @@ from concurrent.futures import Future
 from dataclasses import dataclass
 from typing import Any, AsyncGenerator, Literal, Optional, Union
 
-from msgflux.chat_stream_accumulator import ChatStreamAccumulator
+from msgflux._private.chat_stream_accumulator import ChatStreamAccumulator
 from msgflux.exceptions import AbortRequestedError
 from msgflux.logger import init_logger
 
