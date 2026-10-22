@@ -151,6 +151,7 @@ nav:
       - learn/retrievers/web.md
       - learn/retrievers/weather.md
     - ⎙ Parsers: learn/parsers.md
+    - ⛁ Storage: learn/storage.md
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
     - ✓ Verifiers: learn/verifiers.md
@@ -217,11 +218,6 @@ nav:
           - api-reference/models/model_gateway.md
           - Types:
               - ChatCompletion: api-reference/models/types/chat_completion.md
-      - DataBases:
-          - api-reference/databases/database.md
-          - Types:
-              - KV: api-reference/databases/types/kv.md
-              - Vector: api-reference/databases/types/vector.md
       - nn:
           - api-reference/nn/functional.md
           - api-reference/nn/modules/agent.md       
