@@ -62,6 +62,9 @@ from msgflux.runtime.service import AgentSession
 
 
 def create_session(thread):
+    from local_session_helper import confirm_import
+
+    confirm_import()
     root = Path(__file__).parent / thread.thread_id
     root.mkdir(exist_ok=True)
     checkpoints = SQLiteCheckpointStore(root / "checkpoints.sqlite3")
@@ -108,17 +111,15 @@ def create_session(thread):
 def _install_fixture_package(project: Path) -> Path:
     (project / "demo_extension.py").write_text(_PLUGIN)
     (project / "package_fixture.py").write_text(_FACTORY)
-    distribution = project / "msgflux_demo_extension-1.0.dist-info"
-    distribution.mkdir()
-    (distribution / "METADATA").write_text(
-        "Metadata-Version: 2.1\nName: msgflux-demo-extension\nVersion: 1.0\n"
-    )
-    (distribution / "entry_points.txt").write_text(
-        "[msgflux.agent_extensions]\ndemo_audit = demo_extension:AuditExtension\n"
+    (project / "local_session_helper.py").write_text(
+        "from pathlib import Path\n"
+        "Path(__file__).with_name('session-helper-imported').write_text('yes')\n"
+        "def confirm_import():\n    return None\n"
     )
     config = project / "config.toml"
     config.write_text(
         "[defaults]\nagent='main'\n"
+        "[extensions.demo_audit]\nfactory='demo_extension:AuditExtension'\n"
         "[extensions.demo_audit.options]\nlabel='demo'\n"
         "[agents.main]\nfactory='package_fixture:create_session'\nextensions=['demo_audit']\n"
         "[agents.plain]\nfactory='package_fixture:create_session'\n"
@@ -127,11 +128,10 @@ def _install_fixture_package(project: Path) -> Path:
 
 
 @pytest.mark.asyncio
-async def test_installed_package_is_lazy_isolated_and_resumes_durable_hook_state(
-    tmp_path, clean_manifest_runtime, monkeypatch
+async def test_explicit_cwd_factories_are_lazy_and_resume_durable_hook_state(
+    tmp_path, clean_manifest_runtime
 ):
     config = _install_fixture_package(tmp_path)
-    monkeypatch.syspath_prepend(str(tmp_path))
     runtime = clean_manifest_runtime
     client = await connect_local_service(
         config=config, runtime_dir=runtime, cwd=tmp_path
@@ -143,6 +143,7 @@ async def test_installed_package_is_lazy_isolated_and_resumes_durable_hook_state
         plain_admission = await client.prompt(
             plain.thread_id, "plain", request_id="plain"
         )
+        assert (tmp_path / "session-helper-imported").read_text() == "yes"
         assert (
             await _wait_completed(client, plain.thread_id, "plain")
         ).status == "completed"

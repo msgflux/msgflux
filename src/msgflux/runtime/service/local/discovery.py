@@ -449,6 +449,7 @@ def _start_child(
         # argv is passed directly; no shell interprets configured values.
         command = [
             sys.executable,
+            "-P",
             "-m",
             "msgflux.runtime.service.local.cli",
             "--runtime-dir",
