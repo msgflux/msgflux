@@ -43,6 +43,7 @@ from msgflux.tools.helpers import (
     RUNTIME_BACKGROUND_PARAM,
     coerce_tool_params,
 )
+from msgflux.tools.policy import get_tool_filter_policy
 from msgflux.tools.responses import ToolResponses
 from msgflux.tools.runtime import ToolError, ToolIntent, ToolOutcome
 from msgflux.tools.types import ToolBucket, ToolLibraryOperator
@@ -71,9 +72,11 @@ class _ToolBackgroundScheduler:
         plan = request.plan
         # Workers bypass the foreground execute() guard. Consume the approval
         # before any durable task can be admitted.
-        denied = library._permission_outcome(
-            plan.intent, plan.definition
-        ) or guard_approved_plan(plan, consume=True)
+        denied = (
+            library._tool_filter_outcome(plan.intent, plan.definition)
+            or library._permission_outcome(plan.intent, plan.definition)
+            or guard_approved_plan(plan, consume=True)
+        )
         if denied is not None:
             return denied
         call = library.get_background_dispatcher().dispatch(
@@ -1382,7 +1385,7 @@ class ToolLibraryExecutionMixin:
             )
 
         definition = self.get_tool_definition(intent.name)
-        denied = self._permission_outcome(intent, definition)
+        denied = self._intent_execution_denial(intent, definition)
         if denied is not None:
             return denied
         before_policy = F.wait_for(
@@ -1482,7 +1485,7 @@ class ToolLibraryExecutionMixin:
             )
 
         definition = self.get_tool_definition(intent.name)
-        denied = self._permission_outcome(intent, definition)
+        denied = self._intent_execution_denial(intent, definition)
         if denied is not None:
             return denied
         before_policy = await self._abefore_tool_policy(
@@ -1555,7 +1558,7 @@ class ToolLibraryExecutionMixin:
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome | Callable[[], Any]:
-        denied = self._permission_outcome(plan.intent, plan.definition)
+        denied = self._intent_execution_denial(plan.intent, plan.definition)
         if denied is not None:
             return denied
         feedback = plan.feedback
@@ -1580,7 +1583,7 @@ class ToolLibraryExecutionMixin:
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome | Callable[[], Any]:
-        denied = self._permission_outcome(plan.intent, plan.definition)
+        denied = self._intent_execution_denial(plan.intent, plan.definition)
         if denied is not None:
             return denied
         feedback = plan.feedback
@@ -1625,6 +1628,42 @@ class ToolLibraryExecutionMixin:
             )
         return None
 
+    def _tool_filter_outcome(
+        self,
+        intent: ToolIntent,
+        definition: RuntimeToolDefinition | None = None,
+    ) -> ToolOutcome | None:
+        policy = get_tool_filter_policy(self)
+        if policy is None or policy.allows(intent.name):
+            return None
+        definition = definition or self.get_tool_definition(intent.name)
+        message = f"Tool `{intent.name}` is blocked by the active tool_filter."
+        error = ToolError(code="tool_filtered", message=message)
+        payload = {
+            "tool_call_id": intent.id,
+            "tool_name": intent.name,
+            "code": error.code,
+            "error": error,
+            "reason": message,
+        }
+        emit_event(EventType.TOOL_BLOCKED, payload)
+        return self._failed_intent(
+            intent,
+            status="blocked",
+            code=error.code,
+            message=message,
+            feedback=definition.feedback,
+        )
+
+    def _intent_execution_denial(
+        self,
+        intent: ToolIntent,
+        definition: RuntimeToolDefinition,
+    ) -> ToolOutcome | None:
+        return self._tool_filter_outcome(
+            intent, definition
+        ) or self._permission_outcome(intent, definition)
+
     @staticmethod
     def _validate_dispatch_identity(plan, current):
         if (current.intent.id, current.intent.name) != (
@@ -1638,7 +1677,7 @@ class ToolLibraryExecutionMixin:
         plan: ToolExecutionPlan,
         context: ToolRuntimeContext,
     ) -> ToolOutcome:
-        denied = self._permission_outcome(
+        denied = self._intent_execution_denial(
             plan.intent, plan.definition
         ) or guard_approved_plan(plan)
         if denied is not None:
@@ -1653,7 +1692,7 @@ class ToolLibraryExecutionMixin:
                 return execution_denial
             current = selected_plan or plan
             self._validate_dispatch_identity(plan, current)
-            denied = self._permission_outcome(
+            denied = self._intent_execution_denial(
                 current.intent, current.definition
             ) or guard_approved_plan(current, consume=True)
             if denied is not None:

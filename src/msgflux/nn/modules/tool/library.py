@@ -56,6 +56,7 @@ from msgflux.runtime.events import EventType, emit_event
 from msgflux.tasks import InMemoryTaskStore
 from msgflux.tools.definitions import ToolCatalog
 from msgflux.tools.handles import ToolLibraryHandle
+from msgflux.tools.policy import ToolFilterPolicy, normalize_tool_filter
 from msgflux.tools.types import ToolBucket, ToolBucketEntry
 
 
@@ -769,6 +770,58 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             require_thread=True,
             thread_id=thread_id,
         )
+
+    def build_tool_filter_policy(self, tool_filter) -> ToolFilterPolicy | None:
+        """Compile a request filter against this library's logical registry."""
+        if tool_filter is None:
+            return None
+        mode, values = normalize_tool_filter(tool_filter)
+        names = {definition.name for definition in self.registry.definitions()}
+        grouped_members, parents = self._grouped_tool_filter_members()
+
+        if mode == "allow":
+            allowed = set()
+            for name in values & names:
+                allowed.add(name)
+                allowed.update(self._grouped_tool_descendants(name, grouped_members))
+                parent = parents.get(name)
+                while parent is not None:
+                    allowed.add(parent)
+                    parent = parents.get(parent)
+            return ToolFilterPolicy(allowed_names=frozenset(allowed))
+
+        if "*" in values:
+            return ToolFilterPolicy(allowed_names=frozenset())
+        blocked = set()
+        for name in values & names:
+            blocked.add(name)
+            blocked.update(self._grouped_tool_descendants(name, grouped_members))
+        return ToolFilterPolicy(allowed_names=frozenset(names - blocked))
+
+    def _grouped_tool_filter_members(self):
+        grouped_members = {}
+        parents = {}
+        for bucket_name, bucket_tool in self.library.items():
+            bucket = getattr(bucket_tool, "impl", None)
+            if not isinstance(bucket, ToolBucket) or bucket.expose_captured_names:
+                continue
+            members = set(self.get_bucket_tool_names(bucket_name))
+            grouped_members[bucket_name] = members
+            for member in members:
+                parents[member] = bucket_name
+        return grouped_members, parents
+
+    @staticmethod
+    def _grouped_tool_descendants(bucket_name, grouped_members):
+        found = set()
+        pending = list(grouped_members.get(bucket_name, ()))
+        while pending:
+            member = pending.pop()
+            if member in found:
+                continue
+            found.add(member)
+            pending.extend(grouped_members.get(member, ()))
+        return found
 
     @property
     def has_deferred_tools(self) -> bool:
