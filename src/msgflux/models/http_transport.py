@@ -289,9 +289,18 @@ class HTTPTransport:
     ) -> str:
         if endpoint.startswith(("https://", "http://")):
             return endpoint
-        base_url = credentials.base_url or owner.sampling_params.get("base_url")
-        if not base_url:
+        base_url = credentials.base_url
+        source = "credential"
+        if base_url is None:
+            base_url = owner.sampling_params.get("base_url")
+            source = "sampling"
+        if base_url is None:
             base_url = "https://api.openai.com/v1"
+        elif not base_url.strip():
+            raise ValueError(
+                f"{getattr(owner, 'provider', 'unknown')} {source} base_url "
+                "must not be empty"
+            )
         return f"{str(base_url).rstrip('/')}/{endpoint.lstrip('/')}"
 
     def _get_client(self):

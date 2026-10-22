@@ -88,6 +88,23 @@ Chat completion models are stateless - they don't maintain conversation history 
     )
     ```
 
+An explicitly configured provider base URL must contain non-whitespace text.
+If a provider's `*_BASE_URL` environment variable or a request-time credential
+override is empty, msgFlux raises `ValueError` instead of silently routing to
+the OpenAI default. Leave the URL unset (`None`) to use the provider's configured
+default, or pass a non-empty URL to select a custom endpoint:
+
+```python
+model = mf.Model.chat_completion(
+    "groq/openai/gpt-oss-20b",
+    base_url="https://gateway.example/v1",
+)
+```
+
+Validation happens during provider setup or before dispatch, depending on the
+URL source. Absolute HTTP endpoints are used directly without a base URL.
+This prevents empty URLs from silently changing the credential's destination.
+
 Use `extra_body` for provider-specific request body fields supported by
 OpenAI-compatible APIs but not modeled directly by msgFlux. The HTTP transport
 expands this container into the JSON request body.
