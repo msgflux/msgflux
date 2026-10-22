@@ -49,6 +49,15 @@ deep_result = agent(
 unavailable because of a time constraint, the Gateway tries another available
 deployment.
 
+Streaming calls follow the same rule until the stream starts producing output.
+If a deployment fails while setting up the stream, before emitting a response
+type, content, commentary, reasoning, a tool call, or any stream event, the
+Gateway treats that deployment as failed and tries the next one. Once any output
+or activity has been exposed, the Gateway returns that stream as-is; a later
+failure is reported by the Agent and is never retried, because retrying could
+duplicate visible output or tool effects. Control failures such as abort, pause,
+and interrupt are never routed to another deployment.
+
 Set `fallback=False` when the selected model must be the only attempted model:
 
 ```python

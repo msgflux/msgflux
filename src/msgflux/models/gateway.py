@@ -347,6 +347,33 @@ class ModelGateway:
             else False
         )
 
+    @staticmethod
+    def _raise_stream_setup_error(response: Any) -> None:
+        """Route a returned stream setup failure through the fallback loop.
+
+        Streaming providers may report setup failures by returning a
+        ``ModelStreamResponse`` with ``error`` set instead of raising. Treat
+        that as a failed attempt only while the stream has produced nothing.
+        A response type, content, commentary, reasoning, a reasoning summary,
+        or any stream event means output is already exposed or work has
+        started, so the stream must not be retried. The provider keeps ownership
+        of a discarded stream and remains responsible for finalizing it.
+        """
+        if not isinstance(response, ModelStreamResponse) or response.error is None:
+            return
+        if (
+            response.response_type is not None
+            or response.data is not None
+            or response.commentary
+            or response.reasoning is not None
+            or response.reasoning_summary is not None
+            or response.has_reasoning
+            or response.has_reasoning_summary
+            or getattr(response, "_events", ())
+        ):
+            return
+        raise response.error
+
     def _execute_model(
         self, model_preference: Optional[str] = None, **kwargs: Any
     ) -> Any:
@@ -365,6 +392,7 @@ class ModelGateway:
         for name, model in available:
             try:
                 response = model(**kwargs)
+                self._raise_stream_setup_error(response)
                 return response
             except _CONTROL_EXCEPTIONS:
                 raise
@@ -402,6 +430,7 @@ class ModelGateway:
         for name, model in available:
             try:
                 response = await model.acall(**kwargs)
+                self._raise_stream_setup_error(response)
                 return response
             except _CONTROL_EXCEPTIONS:
                 raise
