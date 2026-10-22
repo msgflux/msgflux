@@ -219,10 +219,12 @@ jobs:
       - name: Merge PR
         if: steps.wait_checks.outputs.checks_passed == 'true'
         uses: actions/github-script@v9
+        env:
+          PR_TITLE: ${{ steps.pr_info.outputs.title }}
         with:
           script: |
             const user = context.payload.comment.user.login;
-            const title = '${{ steps.pr_info.outputs.title }}';
+            const title = process.env.PR_TITLE;
 
             try {
               await github.rest.pulls.merge({
