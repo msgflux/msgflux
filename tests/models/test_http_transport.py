@@ -36,6 +36,19 @@ class _AsyncCredentials(_Credentials):
         )
 
 
+class _BaseURLCredentials(_Credentials):
+    def __init__(self, base_url):
+        super().__init__()
+        self.base_url = base_url
+
+    def resolve(self, owner):
+        self.calls += 1
+        return ResolvedModelCredentials(
+            headers={"Authorization": "Bearer fake-token"},
+            base_url=self.base_url,
+        )
+
+
 class _Owner:
     provider = "test"
     model_id = "test-model"
@@ -231,6 +244,99 @@ async def test_http_transport_supports_async_json_requests():
     await transport.aclose()
     assert client.is_closed is False
     await client.aclose()
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("streaming", [False, True])
+@pytest.mark.parametrize("source", ["credential", "sampling"])
+@pytest.mark.parametrize("base_url", ["", " \t"])
+@pytest.mark.asyncio
+async def test_empty_base_urls_fail_before_http_request(
+    asynchronous, streaming, source, base_url
+):
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return httpx2.Response(200, json={})
+
+    owner = _Owner(_BaseURLCredentials(base_url if source == "credential" else None))
+    if source == "sampling":
+        owner.sampling_params["base_url"] = base_url
+
+    if asynchronous:
+        async with httpx2.AsyncClient(
+            transport=httpx2.MockTransport(handler)
+        ) as client:
+            transport = HTTPTransport(async_client=client, max_retries=0)
+            with pytest.raises(ValueError, match=rf"test {source} base_url.*empty"):
+                if streaming:
+                    async for _ in transport.astream(
+                        owner,
+                        "/stream",
+                        iterate=lambda response: response.aiter_bytes(),
+                    ):
+                        pass
+                else:
+                    await transport.arequest(owner, "/request")
+    else:
+        with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+            transport = HTTPTransport(client=client, max_retries=0)
+            with pytest.raises(ValueError, match=rf"test {source} base_url.*empty"):
+                if streaming:
+                    list(
+                        transport.stream(
+                            owner,
+                            "/stream",
+                            iterate=lambda response: response.iter_bytes(),
+                        )
+                    )
+                else:
+                    transport.request(owner, "/request")
+
+    assert captured == []
+
+
+@pytest.mark.parametrize(
+    ("credential_url", "sampling_url", "expected"),
+    [
+        (None, None, "https://api.openai.com/v1/request"),
+        (None, "https://custom.example/v1", "https://custom.example/v1/request"),
+        (
+            "https://resolved.example/v1",
+            "https://custom.example/v1",
+            "https://resolved.example/v1/request",
+        ),
+    ],
+)
+def test_http_transport_base_url_defaults_and_precedence(
+    credential_url, sampling_url, expected
+):
+    owner = _Owner(_BaseURLCredentials(credential_url))
+    owner.sampling_params["base_url"] = sampling_url
+
+    assert (
+        HTTPTransport._url(
+            owner,
+            "/request",
+            owner.credential_resolver.resolve(owner),
+        )
+        == expected
+    )
+
+
+@pytest.mark.parametrize("source", ["credential", "sampling"])
+@pytest.mark.parametrize("base_url", ["", " \t"])
+def test_absolute_endpoint_does_not_use_base_url(source, base_url):
+    owner = _Owner(_BaseURLCredentials(base_url if source == "credential" else None))
+    if source == "sampling":
+        owner.sampling_params["base_url"] = base_url
+
+    endpoint = "https://explicit.example/v1/request"
+    assert (
+        HTTPTransport._url(owner, endpoint, owner.credential_resolver.resolve(owner))
+        == endpoint
+    )
 
 
 def test_owned_async_client_is_recreated_for_a_new_event_loop():

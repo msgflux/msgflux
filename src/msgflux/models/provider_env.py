@@ -21,11 +21,21 @@ class ProviderEnvBase:
 
     def _get_base_url(self):
         """Load base URL from environment variable."""
-        if self.base_url_env is None:
-            return self.base_url
-        base_url = getenv(self.base_url_env, self.base_url)
+        base_url_env = self.base_url_env
+        base_url = (
+            self.base_url
+            if base_url_env is None
+            else getenv(base_url_env, self.base_url)
+        )
         if base_url is None:
-            raise ValueError(f"Please set `{self.base_url_env}`")
+            if base_url_env is None:
+                return None
+            raise ValueError(f"Please set `{base_url_env}`")
+        if not base_url.strip():
+            field = base_url_env or "base_url"
+            raise ValueError(
+                f"{self.provider} base URL from `{field}` must not be empty"
+            )
         return base_url
 
     def _get_api_key(self):

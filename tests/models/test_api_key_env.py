@@ -100,6 +100,17 @@ def test_provider_base_urls_from_class_vars(monkeypatch):
     )
 
 
+@pytest.mark.parametrize("base_url", ["", "  \t"])
+def test_provider_base_url_env_rejects_empty_values(monkeypatch, base_url):
+    from msgflux.models.providers.groq import GroqChatCompletion
+
+    monkeypatch.setenv("GROQ_API_KEY", "fake-groq-key")
+    monkeypatch.setenv("GROQ_BASE_URL", base_url)
+
+    with pytest.raises(ValueError, match=r"groq.*GROQ_BASE_URL.*empty"):
+        GroqChatCompletion(model_id="openai/gpt-oss-20b")
+
+
 def test_cerebras_uses_corrected_env_name(monkeypatch):
     from msgflux.models.providers.cerebras import CerebrasChatCompletion
 
