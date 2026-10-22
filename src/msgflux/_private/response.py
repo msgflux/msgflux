@@ -550,20 +550,24 @@ class BaseStreamResponse(CoreResponse):
 
         return primary_error
 
-    def finish(
+    def _settled_content(self, status: str) -> tuple[str | None, Any]:
+        response_type = self.response_type
+        output = self.data
+        if (
+            status == "completed"
+            and self.error is None
+            and response_type is None
+            and (output is None or isinstance(output, str))
+        ):
+            response_type = "text_generation"
+            if output is None:
+                output = ""
+        return response_type, output
+
+    def _run_finish_finalizers(
         self,
-        *,
-        error: BaseException | None = None,
-        status: Literal["completed", "failed", "interrupted"] | None = None,
+        status: Literal["completed", "failed", "interrupted"],
     ) -> None:
-        if self._is_finalized():
-            return
-        if error is not None:
-            self.set_error(error)
-        if status is None:
-            status = "failed" if self.error is not None else "completed"
-        if not self.first_chunk_event.is_set():
-            self.first_chunk_event.set()
         try:
             self._run_finalizers(status=status)
         except Exception as finalizer_error:
@@ -580,8 +584,39 @@ class BaseStreamResponse(CoreResponse):
             if combined_error is finalizer_error:
                 raise
             raise combined_error from finalizer_error
+
+    def finish(
+        self,
+        *,
+        error: BaseException | None = None,
+        status: Literal["completed", "failed", "interrupted"] | None = None,
+    ) -> None:
+        if self._is_finalized():
+            return
+        if error is not None:
+            self.set_error(error)
+        if status is None:
+            status = "failed" if self.error is not None else "completed"
+        settled_response_type, settled_output = self._settled_content(status)
+        empty_text_completion = (
+            self.response_type is None and settled_response_type == "text_generation"
+        )
+        # Empty successful streams are text responses too. Pass that settled
+        # state to finalizers, but do not publish it on the response until they
+        # succeed. Untyped binary and structured payloads remain contract errors.
+        try:
+            self._run_finish_finalizers(status)
+            if empty_text_completion:
+                self.response_type = settled_response_type
+                self.data = settled_output
         finally:
-            self._close_stream_queues()
+            try:
+                self._close_stream_queues()
+            finally:
+                if not self.first_chunk_event.is_set():
+                    self.first_chunk_event.set()
+                if not self._response_type_event.is_set():
+                    self._response_type_event.set()
 
     def _build_final_state(
         self,
@@ -593,16 +628,17 @@ class BaseStreamResponse(CoreResponse):
             resolved_status = self._final_status
         if resolved_status is None:
             resolved_status = "failed" if self.error is not None else "completed"
+        final_response_type, final_output = self._settled_content(resolved_status)
         return StreamFinalState(
             status=resolved_status,
-            response_type=self.response_type,
-            output=self.data,
+            response_type=final_response_type,
+            output=final_output,
             reasoning=self.reasoning,
             reasoning_summary=self.reasoning_summary,
             metadata=self.metadata,
             error=self.error,
             items=self.chat_accumulator.snapshot(
-                fallback_output=self.data,
+                fallback_output=final_output,
                 fallback_reasoning=self.reasoning,
             ),
         )

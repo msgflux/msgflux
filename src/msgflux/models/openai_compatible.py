@@ -1985,10 +1985,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 stream_response, pending_content, aggregator
             )
         finally:
-            if not stream_response.first_chunk_event.is_set():
-                stream_response.first_chunk_event.set()
-            if not stream_response._response_type_event.is_set():
-                stream_response._response_type_event.set()
             metadata.timing = request_timer.finish()
             stream_response.set_metadata(metadata)
             stream_response.finish(status=final_status)
@@ -2140,10 +2136,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     stream_response.set_error(error)
                 if cancellation_error is None:
                     cleanup_cancellation = error
-            if not stream_response.first_chunk_event.is_set():
-                stream_response.first_chunk_event.set()
-            if not stream_response._response_type_event.is_set():
-                stream_response._response_type_event.set()
             metadata.timing = request_timer.finish()
             stream_response.set_metadata(metadata)
             stream_response.finish(status=final_status)
@@ -2519,8 +2511,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             stream_response.data = aggregator
             if not stream_response.first_chunk_event.is_set():
                 stream_response.first_chunk_event.set()
-        elif stream_response.response_type is None:
-            stream_response.set_response_type("text_generation")
         stream_response.reasoning = (
             state["reasoning"] or None if self.return_reasoning else None
         )
@@ -2569,10 +2559,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             stream_response.set_error(error)
             self._flush_responses_content(stream_response, aggregator, state)
         finally:
-            if not stream_response.first_chunk_event.is_set():
-                stream_response.first_chunk_event.set()
-            if not stream_response._response_type_event.is_set():
-                stream_response._response_type_event.set()
             for search_event in state["tool_search_events"].close(
                 str(stream_response.error or "Tool search ended without an output")
             ):
@@ -2640,10 +2626,6 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     stream_response.set_error(error)
                 if cancellation_error is None:
                     cleanup_cancellation = error
-            if not stream_response.first_chunk_event.is_set():
-                stream_response.first_chunk_event.set()
-            if not stream_response._response_type_event.is_set():
-                stream_response._response_type_event.set()
             for search_event in state["tool_search_events"].close(
                 str(stream_response.error or "Tool search ended without an output")
             ):
