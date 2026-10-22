@@ -632,12 +632,64 @@ that the runtime can derive internally.
 
 Use `tool_filter` when you need to change which tools are exposed on a **per-request** basis, without rebuilding the agent.
 
+The filter is enforced when tool calls execute, not only when their schemas are
+rendered. A model-emitted call to a filtered tool is denied and not executed,
+including calls made through approval replay or a deferred tool's guessed name.
+For a denied top-level call, the Agent returns a blocked tool result. The policy
+is snapshotted for the run and does not mutate the shared tool library.
+Catalog/prompt transformation hooks affect presentation and do not grant
+execution permission.
+
 **Rules:**
 
 - `tool_filter` must contain exactly one key: `"allow"` or `"block"`
 - The value can be a single tool name or a list of tool names
 - `{"block": "*"}` disables all tools for that request
 - Runtime `tool_filter=...` overrides the value loaded from `message_fields`
+
+Grouped tool buckets inherit their wrapper's authorization. Allowing a wrapper
+allows its captured operations; blocking it blocks those operations even when
+called by their captured names. An allow filter naming one captured operation
+allows only that operation through its wrapper. Blocking a captured operation
+also blocks it when selected through the wrapper.
+
+Deferred search buckets are discovery containers, not authorization groups.
+Allowing `tool_search` alone does not allow its deferred resources; to search or
+load a deferred resource, allow both `tool_search` and that resource. Blocking
+`tool_search` blocks discovery/loading through that bucket but does not block
+deferred resources that remain allowed by the filter from direct dispatch.
+
+The effective filter is saved with a checkpointed run. Resuming without a
+`tool_filter` inherits that policy; an explicit resume `tool_filter` replaces it,
+and explicitly passing `tool_filter=None` clears it. A new run does not inherit a
+previous run's filter.
+
+On resume, a filter in `message_fields` does not replace the saved policy; pass
+the `tool_filter` keyword to change it. Replacing the filter controls subsequent
+dispatches and does not revoke background tasks that were already admitted.
+
+For a checkpointed Agent, start the run with an explicit scope. This filter
+permits searching for and calling only `lookup_docs`:
+
+```python
+from msgflux.runtime import ExecutionScope
+
+scope = ExecutionScope(
+    namespace=agent.get_module_name(), thread_id="docs", run_id="lookup-1"
+)
+agent(
+    "Find the deployment guide",
+    scope=scope,
+    tool_filter={"allow": ["tool_search", "lookup_docs"]},
+)
+```
+
+If that run pauses or fails, resolve the cause and resume with the same scope.
+Omitting the filter preserves the saved allowlist:
+
+```python
+agent(scope=scope)
+```
 
 ???+ example
 

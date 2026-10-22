@@ -241,7 +241,14 @@ class AgentApprovalMixin:
         response.add(calls)
         return response
 
-    def _approval_pending(self, model_response, intents, messages):
+    def _approval_pending(
+        self,
+        model_response,
+        intents,
+        messages,
+        *,
+        approval_intents=None,
+    ):
         policy = self._get_effective_approvals()
         if policy is None:
             return None
@@ -249,8 +256,10 @@ class AgentApprovalMixin:
         if run is None:
             raise ValueError("Use Agent.__call__ or Agent.acall for approval execution")
         pending = run.get_extension(_KEY)
+        approval_intents = intents if approval_intents is None else approval_intents
         if pending is None and not any(
-            intent.name in self._get_effective_approvals().tools for intent in intents
+            intent.name in self._get_effective_approvals().tools
+            for intent in approval_intents
         ):
             return None
         store = self._get_effective_checkpoint_store()
@@ -284,7 +293,12 @@ class AgentApprovalMixin:
     def _process_approval_intents(
         self, model_response, intents, message, messages, vars
     ):
-        pending = self._approval_pending(model_response, intents, messages)
+        allowed, denied = self._partition_tool_filter_intents(intents)
+        if not allowed:
+            return self._order_tool_outcomes(intents, (), denied)
+        pending = self._approval_pending(
+            model_response, intents, messages, approval_intents=allowed
+        )
         if pending is None:
             with (
                 ApprovalBatch(
@@ -293,11 +307,12 @@ class AgentApprovalMixin:
                 if self._get_effective_approvals() is not None
                 else nullcontext()
             ):
-                return self._process_tool_intents(intents, message, messages, vars)
+                outcomes = self._process_tool_intents(allowed, message, messages, vars)
+            return self._order_tool_outcomes(intents, outcomes, denied)
         self._raise_if_background_task_interrupted()
         self._drain_inbox_into_messages(messages, vars=vars)
         batch = self._get_effective_approvals().prepare(
-            self.tool_library, intents, pending
+            self.tool_library, allowed, pending
         )
         pending["requests"].update(
             {key: record.request_id for key, record in batch.records.items()}
@@ -307,12 +322,18 @@ class AgentApprovalMixin:
         pending["phase"] = "executing"
         self._checkpoint_save(messages, vars)
         with batch.activate():
-            return self._process_tool_intents(intents, message, messages, vars)
+            outcomes = self._process_tool_intents(allowed, message, messages, vars)
+        return self._order_tool_outcomes(intents, outcomes, denied)
 
     async def _aprocess_approval_intents(
         self, model_response, intents, message, messages, vars
     ):
-        pending = self._approval_pending(model_response, intents, messages)
+        allowed, denied = self._partition_tool_filter_intents(intents)
+        if not allowed:
+            return self._order_tool_outcomes(intents, (), denied)
+        pending = self._approval_pending(
+            model_response, intents, messages, approval_intents=allowed
+        )
         if pending is None:
             with (
                 ApprovalBatch(
@@ -321,13 +342,17 @@ class AgentApprovalMixin:
                 if self._get_effective_approvals() is not None
                 else nullcontext()
             ):
-                return await self._aprocess_tool_intents(
-                    intents, message, messages, vars
+                outcomes = await self._aprocess_tool_intents(
+                    allowed, message, messages, vars
                 )
+            return self._order_tool_outcomes(intents, outcomes, denied)
         self._raise_if_background_task_interrupted()
         await self._adrain_inbox_into_messages(messages, vars=vars)
         batch = await asyncio.to_thread(
-            self._get_effective_approvals().prepare, self.tool_library, intents, pending
+            self._get_effective_approvals().prepare,
+            self.tool_library,
+            allowed,
+            pending,
         )
         pending["requests"].update(
             {key: record.request_id for key, record in batch.records.items()}
@@ -337,7 +362,32 @@ class AgentApprovalMixin:
         pending["phase"] = "executing"
         await self._acheckpoint_save(messages, vars)
         with batch.activate():
-            return await self._aprocess_tool_intents(intents, message, messages, vars)
+            outcomes = await self._aprocess_tool_intents(
+                allowed, message, messages, vars
+            )
+        return self._order_tool_outcomes(intents, outcomes, denied)
+
+    def _partition_tool_filter_intents(self, intents):
+        allowed = []
+        denied = {}
+        for intent in intents:
+            if not self.tool_library.registry.has(intent.name):
+                allowed.append(intent)
+                continue
+            outcome = self.tool_library._tool_filter_outcome(
+                intent, self.tool_library.get_tool_definition(intent.name)
+            )
+            if outcome is None:
+                allowed.append(intent)
+            else:
+                denied[intent.id] = outcome
+        return tuple(allowed), denied
+
+    @staticmethod
+    def _order_tool_outcomes(intents, outcomes, denied):
+        by_id = {outcome.intent_id: outcome for outcome in outcomes}
+        by_id.update(denied)
+        return tuple(by_id[intent.id] for intent in intents)
 
     @staticmethod
     def _clear_approval_batch():

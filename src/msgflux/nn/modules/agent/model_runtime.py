@@ -12,6 +12,8 @@ from typing import (
     Union,
 )
 
+import msgspec
+
 from msgflux._private.executor import Executor
 from msgflux._private.response_metadata import attach_response_metadata
 from msgflux.chat_messages import ChatMessages
@@ -43,6 +45,7 @@ from msgflux.runtime.context_scopes import ContextScopeController
 from msgflux.runtime.events import EventType, emit_event
 from msgflux.tools.catalog import ToolCatalogView
 from msgflux.tools.helpers import coerce_tool_params
+from msgflux.tools.policy import get_tool_filter_policy
 from msgflux.tools.runtime import ToolIntent, ToolOutcome
 from msgflux.utils.console import cprint
 from msgflux.utils.validation import is_subclass_of
@@ -587,10 +590,29 @@ class AgentModelRuntimeMixin:
 
         tool_choice = self.config.get("tool_choice")
 
-        if tool_filter is not None and tool_entries:
-            tool_entries = self._apply_tool_filter(tool_entries, tool_filter)
+        tool_filter_policy = get_tool_filter_policy(self.tool_library)
+        if tool_filter_policy is None and tool_filter is not None:
+            tool_filter_policy = self.tool_library.build_tool_filter_policy(tool_filter)
+        if tool_filter_policy is not None:
+            tool_entries = [
+                entry for entry in tool_entries if tool_filter_policy.allows(entry.name)
+            ]
 
         tool_catalog = tool_catalog.with_tools(entry.name for entry in tool_entries)
+        search_entry = tool_catalog.search_entry
+        if (
+            tool_filter_policy is not None
+            and search_entry is not None
+            and not tool_filter_policy.allows(search_entry.name)
+        ):
+            tool_catalog = msgspec.structs.replace(
+                tool_catalog,
+                entries=tuple(
+                    entry
+                    for entry in tool_catalog.entries
+                    if entry.catalog_role != "search"
+                ),
+            )
         tool_catalog = tool_catalog.with_choice(
             self._resolve_tool_choice(tool_choice, tool_entries)
         )
