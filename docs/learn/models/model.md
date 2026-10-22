@@ -43,6 +43,24 @@ response = model(messages=[{"role": "user", "content": "Hello!"}])
 print(response.consume())  # "Hello! How can I help you today?"
 ```
 
+### 1.3 **Environment and `.env` files**
+
+msgFlux reads settings from environment variables already exported to the
+process. Importing msgFlux does not read a project `.env` file. If you want to
+use one, load it explicitly before creating a model:
+
+```python
+import msgflux as mf
+
+mf.load_dotenv()  # Explicitly load .env from the current working directory.
+model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+```
+
+This example opts into loading `.env`; without the `load_dotenv()` call, the
+application must provide settings such as `OPENAI_API_KEY` through its normal
+process environment. Existing `MSGFLUX_*` environment variables continue to
+configure msgFlux.
+
 ## 2. **Model Types**
 
 The `Model` class supports multiple model types:

@@ -25,7 +25,7 @@ def set_envs(**kwargs: Any):
 
 class EnvironmentVariables(BaseSettings):
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Project .env files are opt-in via msgflux.load_dotenv().
         # msgspec-ext does not normalize the prefix, so it must already be
         # uppercase to match the documented MSGFLUX_* process variables.
         env_prefix="MSGFLUX_",
