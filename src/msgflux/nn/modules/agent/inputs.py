@@ -18,6 +18,10 @@ from msgflux.runtime.context import (
     ExecutionScope,
 )
 from msgflux.tools.catalog import ToolCatalogEntry, ToolChoice
+from msgflux.tools.policy import (
+    normalize_tool_filter,
+    normalize_tool_filter_values,
+)
 from msgflux.utils.chat import ChatBlock
 from msgflux.utils.common import has_format_placeholder, is_jinja_template
 from msgflux.utils.console import cprint
@@ -49,6 +53,10 @@ class AgentInputMixin:
         messages = kwargs.pop("messages", None)
         model_preference = kwargs.pop("model_preference", None)
         tool_filter = kwargs.pop("tool_filter", None)
+        if tool_filter is None and isinstance(message, dotdict):
+            tool_filter = self._get_tool_filter_from_message(message)
+        if tool_filter is not None:
+            tool_filter = self._snapshot_tool_filter(tool_filter)
         scope = kwargs.pop("scope", None)
         if scope is not None and not isinstance(scope, ExecutionScope):
             raise TypeError(
@@ -168,10 +176,6 @@ class AgentInputMixin:
         if model_preference is None and isinstance(message, dotdict):
             model_preference = self.get_model_preference_from_message(message)
 
-        # Runtime kwargs take precedence over message_fields mappings.
-        if tool_filter is None and isinstance(message, dotdict):
-            tool_filter = self._get_tool_filter_from_message(message)
-
         return {
             "messages": messages,
             "model_preference": model_preference,
@@ -196,6 +200,10 @@ class AgentInputMixin:
         messages = kwargs.pop("messages", None)
         model_preference = kwargs.pop("model_preference", None)
         tool_filter = kwargs.pop("tool_filter", None)
+        if tool_filter is None and isinstance(message, dotdict):
+            tool_filter = self._get_tool_filter_from_message(message)
+        if tool_filter is not None:
+            tool_filter = self._snapshot_tool_filter(tool_filter)
         scope = kwargs.pop("scope", None)
         if scope is not None and not isinstance(scope, ExecutionScope):
             raise TypeError(
@@ -314,10 +322,6 @@ class AgentInputMixin:
 
         if model_preference is None and isinstance(message, dotdict):
             model_preference = self.get_model_preference_from_message(message)
-
-        # Runtime kwargs take precedence over message_fields mappings.
-        if tool_filter is None and isinstance(message, dotdict):
-            tool_filter = self._get_tool_filter_from_message(message)
 
         return {
             "messages": messages,
@@ -671,41 +675,19 @@ class AgentInputMixin:
         tool_filter: ToolFilter,
     ) -> List[ToolCatalogEntry]:
         """Return only the logical tools allowed by the runtime filter."""
-        if not isinstance(tool_filter, dict):
-            raise ValueError(
-                f"`tool_filter` must be a dict, given `{type(tool_filter)}`"
-            )
-
-        keys = set(tool_filter.keys())
-        valid_keys = {"allow", "block"}
-
-        if not keys:
-            raise ValueError("`tool_filter` must contain 'allow' or 'block' key")
-
-        if keys - valid_keys:
-            raise ValueError(
-                f"`tool_filter` contains invalid keys: {keys - valid_keys}. "
-                f"Valid keys are: {valid_keys}"
-            )
-
-        if len(keys) > 1:
-            raise ValueError(
-                "`tool_filter` must contain only one key: 'allow' or 'block', "
-                f"got both: {keys}"
-            )
-
-        if "allow" in tool_filter:
-            allowed_tools = self._normalize_tool_filter_values(
-                tool_filter["allow"], key="allow"
-            )
+        mode, values = normalize_tool_filter(tool_filter)
+        if mode == "allow":
+            allowed_tools = values
             return [tool for tool in tool_specs if tool.name in allowed_tools]
 
-        blocked_tools = self._normalize_tool_filter_values(
-            tool_filter["block"], key="block"
-        )
-        if "*" in blocked_tools:
+        if "*" in values:
             return []
-        return [tool for tool in tool_specs if tool.name not in blocked_tools]
+        return [tool for tool in tool_specs if tool.name not in values]
+
+    @staticmethod
+    def _snapshot_tool_filter(tool_filter: ToolFilter) -> ToolFilter:
+        mode, values = normalize_tool_filter(tool_filter)
+        return {mode: sorted(values)}
 
     def _normalize_tool_filter_values(
         self,
@@ -714,24 +696,7 @@ class AgentInputMixin:
         key: str,
     ) -> set[str]:
         """Normalize string-or-list filter values into a validated set of names."""
-        if isinstance(values, str):
-            if not values:
-                raise ValueError(
-                    f"`tool_filter['{key}']` must be a non-empty string or list of strings"  # noqa: E501
-                )
-            return {values}
-
-        if isinstance(values, list):
-            if any(not isinstance(value, str) or not value for value in values):
-                raise ValueError(
-                    f"`tool_filter['{key}']` must contain only non-empty strings"
-                )
-            return set(values)
-
-        raise ValueError(
-            f"`tool_filter['{key}']` must be a string or list of strings, "
-            f"given `{type(values)}`"
-        )
+        return set(normalize_tool_filter_values(values, key=key))
 
     def _resolve_tool_choice(
         self,

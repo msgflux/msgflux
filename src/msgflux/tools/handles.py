@@ -4,6 +4,7 @@ from typing import TYPE_CHECKING, Any, Callable, Dict, List, Mapping
 
 from msgflux.runtime.agent_inbox import ToolNotificationHandle
 from msgflux.runtime.context import execution_context, get_execution_context
+from msgflux.tools.policy import get_tool_filter_policy
 
 if TYPE_CHECKING:
     from msgflux.chat_messages import ChatMessages
@@ -77,7 +78,12 @@ class ToolLibraryHandle:
         messages: ChatMessages,
         tool_names: List[str],
     ) -> List[str]:
-        return self._library.load_tools(messages, tool_names)
+        names = [name for name in tool_names if self._policy_allows(name)]
+        return self._library.load_tools(messages, names) if names else []
+
+    def _policy_allows(self, tool_name: str) -> bool:
+        policy = get_tool_filter_policy(self._library)
+        return policy is None or policy.allows(tool_name)
 
     def get_agent_inbox(self) -> AgentInbox:
         if self._agent_inbox is not None:
@@ -88,9 +94,13 @@ class ToolLibraryHandle:
         return self._library.get_task_store(self._task_store)
 
     def list_tools(self) -> List[str]:
-        return self._library.get_tool_names()
+        return [
+            name for name in self._library.get_tool_names() if self._policy_allows(name)
+        ]
 
     def get_tool(self, tool_name: str) -> Any:
+        if not self._policy_allows(tool_name):
+            raise ValueError(f"The tool `{tool_name}` is not available.")
         if tool_name not in self._library.library:
             raise ValueError(f"The tool `{tool_name}` is no longer available.")
         return self._library.library[tool_name]
@@ -100,6 +110,8 @@ class ToolLibraryHandle:
 
     def get_tool_definition(self, tool_name: str) -> Any:
         """Return the registered declaration, including execution requirements."""
+        if not self._policy_allows(tool_name):
+            raise ValueError(f"The tool `{tool_name}` is not available.")
         return self._library.get_tool_definition(tool_name)
 
     def __call__(
@@ -299,11 +311,19 @@ class ToolBucketHandle(ToolLibraryHandle):
         return self._library.bucket_has_tool(self._bucket_name, tool_name)
 
     def list_captured_tools(self) -> List[str]:
-        return self._library.get_bucket_tool_names(self._bucket_name)
+        return [
+            name
+            for name in self._library.get_bucket_tool_names(self._bucket_name)
+            if self._policy_allows(name)
+        ]
 
     def list_entries(self) -> tuple[ToolBucketEntry, ...]:
         """Return captured-tool presentation without exposing executors."""
-        return self._library.get_bucket_entries(self._bucket_name)
+        return tuple(
+            entry
+            for entry in self._library.get_bucket_entries(self._bucket_name)
+            if self._policy_allows(entry.name)
+        )
 
     def get_entry(self, tool_name: str) -> ToolBucketEntry:
         """Return one captured tool's execution-free presentation."""
