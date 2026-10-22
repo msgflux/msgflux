@@ -50,6 +50,7 @@ from msgflux.runtime.agent_inbox import (
     AgentInbox,
     InMemoryAgentInboxStore,
 )
+from msgflux.runtime.agent_run import get_agent_run
 from msgflux.runtime.approvals.agent import (
     AgentApprovals,
     ApprovalReconciliationRequiredError,
@@ -59,6 +60,7 @@ from msgflux.runtime.context import (
 )
 from msgflux.runtime.skills import SkillsConfig
 from msgflux.runtime.workspace.api import AgentWorkspace
+from msgflux.tools.policy import ToolFilterPolicy, bind_tool_filter_policy
 
 if TYPE_CHECKING:
     from msgflux.data.stores import CheckpointStore
@@ -578,10 +580,14 @@ class Agent(
             )
 
         self._update_agent_context(inputs)
+        tool_filter_policy = self._resolve_tool_filter_policy(
+            inputs, kwargs, resumed=resumed is not None
+        )
         effective_checkpoint_store = self._get_effective_checkpoint_store()
         effective_task_store = self._get_effective_task_store()
         effective_inbox = self._get_scoped_agent_inbox(inputs.get("scope"))
         with (
+            bind_tool_filter_policy(self.tool_library, tool_filter_policy),
             self._approval_context(approvals),
             execution_context(
                 scope=inputs.get("scope"),
@@ -634,10 +640,14 @@ class Agent(
             )
 
         self._update_agent_context(inputs)
+        tool_filter_policy = self._resolve_tool_filter_policy(
+            inputs, kwargs, resumed=resumed is not None
+        )
         effective_checkpoint_store = self._get_effective_checkpoint_store()
         effective_task_store = self._get_effective_task_store()
         effective_inbox = self._get_scoped_agent_inbox(inputs.get("scope"))
         with (
+            bind_tool_filter_policy(self.tool_library, tool_filter_policy),
             self._approval_context(approvals),
             execution_context(
                 scope=inputs.get("scope"),
@@ -648,6 +658,29 @@ class Agent(
         ):
             self._open_steering()
             return await self._aexecute_prepared_run(message, inputs)
+
+    def _resolve_tool_filter_policy(self, inputs, kwargs, *, resumed: bool):
+        run = get_agent_run()
+        if resumed and "tool_filter" not in kwargs:
+            policy = (
+                ToolFilterPolicy.from_state(run.get_extension("tool_filter_policy"))
+                if run is not None and "tool_filter_policy" in run.extension_state
+                else None
+            )
+        else:
+            filter_value = (
+                kwargs.get("tool_filter") if resumed else inputs.get("tool_filter")
+            )
+            policy = self.tool_library.build_tool_filter_policy(filter_value)
+            if resumed:
+                inputs["tool_filter"] = filter_value
+
+        if run is not None:
+            if policy is None:
+                run.extension_state.pop("tool_filter_policy", None)
+            else:
+                run.set_extension("tool_filter_policy", policy.to_state())
+        return policy
 
     def _execute_prepared_run(self, message, inputs, *, continuation=False):
         try:
