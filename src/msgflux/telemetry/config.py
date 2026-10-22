@@ -19,7 +19,7 @@ class MsgTraceSettings(BaseSettings):
     """
 
     model_config = SettingsConfigDict(
-        env_file=".env",
+        # Project .env files are opt-in via msgflux.load_dotenv().
         env_prefix="MSGTRACE_",
     )
 
