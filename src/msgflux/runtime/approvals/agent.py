@@ -14,6 +14,7 @@ from typing import Any, Mapping
 import msgspec
 
 from msgflux.exceptions import TaskPauseRequestedError
+from msgflux.runtime.agent_run import get_agent_run
 from msgflux.runtime.approvals.base import ApprovalConflictError, ApprovalStore
 from msgflux.runtime.approvals.records import (
     ApprovalBinding,
@@ -291,8 +292,39 @@ class ApprovalBatch:
 
 
 def guard_approved_plan(plan: Any, *, consume: bool = False):
+    outcome = _retired_tool_call_outcome(plan.intent)
+    if outcome is not None:
+        return outcome
     batch = _CURRENT_APPROVAL_BATCH.get()
     return batch.guard(plan, consume=consume) if batch is not None else None
+
+
+def _retired_tool_call_outcome(intent):
+    from msgflux.runtime.approvals.reconciliation import (  # noqa: PLC0415
+        _retired_tool_call_ids,
+    )
+
+    run = get_agent_run()
+    if run is None:
+        return None
+    retired_ids, fail_closed = _retired_tool_call_ids(run.extension_state)
+    if not fail_closed and intent.id not in retired_ids:
+        return None
+    outcome = ToolOutcome.failed(
+        intent,
+        status="blocked",
+        code=(
+            "tool_approval_state_invalid" if fail_closed else "tool_approval_retired"
+        ),
+        message=(
+            "Tool execution is blocked because approval retirement state "
+            "is malformed or ambiguous"
+            if fail_closed
+            else "Tool call ID was retired by host reconciliation"
+        ),
+    )
+    ApprovalBatch._emit_blocked_outcome(intent, outcome)
+    return outcome
 
 
 def approval_batch_active():
