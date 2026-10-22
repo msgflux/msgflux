@@ -238,6 +238,12 @@ exception note. The client does not retry a transport whose cleanup failed.
 Explicit `disconnect()` also clears local session state and caches when transport
 cleanup raises; the cleanup exception still propagates to the caller.
 
+Concurrent cold calls made on the client's event loop and explicit `connect()`
+calls share a single connection attempt. `disconnect()` waits for an in-progress
+connection negotiation before closing that transport. If a connection attempt is
+cancelled, the client clears its session state and closes the transport before
+propagating cancellation; stdio subprocesses are reaped as part of that cleanup.
+
 For stdio servers, closing stdout fails pending requests with
 `MCPConnectionError`. Canceling a request removes its local tracking; it does not
 confirm that a remote tool stopped executing.
