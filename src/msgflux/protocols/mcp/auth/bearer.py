@@ -49,7 +49,7 @@ class BearerTokenAuth(BaseAuth):
         self._token_type = token_type
         self._refresh_callback = refresh_callback
 
-        if expires_in:
+        if expires_in is not None:
             self.set_expiration(expires_in)
 
     def apply_auth(self, headers: Dict[str, str]) -> Dict[str, str]:
@@ -68,6 +68,11 @@ class BearerTokenAuth(BaseAuth):
     async def refresh(self) -> bool:
         """Refresh the bearer token using the callback.
 
+        A successful callback returns only the replacement token, so the previous
+        expiration is cleared: the new token's lifetime is unknown. Use
+        `update_token()` with an explicit `expires_in` when the new deadline is
+        known.
+
         Returns:
             True if refresh succeeded, False otherwise.
         """
@@ -78,6 +83,7 @@ class BearerTokenAuth(BaseAuth):
             new_token = await self._refresh_callback()
             if new_token:
                 self._token = new_token
+                self._expires_at = None
                 self._last_refresh = datetime.now()  # noqa: DTZ005
                 return True
         except Exception:  # noqa: S110
@@ -93,5 +99,5 @@ class BearerTokenAuth(BaseAuth):
             expires_in: New expiration time in seconds (optional).
         """
         self._token = token
-        if expires_in:
+        if expires_in is not None:
             self.set_expiration(expires_in)
