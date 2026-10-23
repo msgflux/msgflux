@@ -1,6 +1,7 @@
 # ruff: noqa: A002
 
 import asyncio
+from collections.abc import MutableMapping
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -1506,6 +1507,18 @@ class AgentModelRuntimeMixin:
             return dotdict(answer=raw_response, reasoning=reasoning)
         return raw_response
 
+    @staticmethod
+    def _include_return_messages(result: Any, messages: Any) -> Any:
+        """Attach the conversation to a tool result without assuming an object."""
+        if isinstance(result, MutableMapping):
+            result["messages"] = messages
+            return result
+        try:
+            result.messages = messages
+        except (AttributeError, TypeError):
+            return dotdict(response=result, messages=messages)
+        return result
+
     def _prepare_response(
         self,
         raw_response: Union[str, Mapping[str, Any], ModelStreamResponse],
@@ -1541,7 +1554,7 @@ class AgentModelRuntimeMixin:
         result = formatted_response or raw_response
         if self.config.get("return_messages", False):
             if response_type == "tool_responses":
-                result.messages = messages
+                result = self._include_return_messages(result, messages)
             else:
                 result = dotdict(response=result, messages=messages)
         return self._define_response_mode(result, message)
