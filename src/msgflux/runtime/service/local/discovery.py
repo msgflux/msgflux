@@ -102,6 +102,15 @@ async def _ensure_local_service(
     startup_timeout: float,
 ) -> LocalServiceRecord:
     """Return trusted metadata for a healthy matching owner, starting one if absent."""
+    # Reject an unusable deadline before default-config initialization or
+    # manifest reads can create or repair durable files.
+    if (
+        isinstance(startup_timeout, bool)
+        or not isinstance(startup_timeout, (int, float))
+        or not math.isfinite(startup_timeout)
+        or startup_timeout <= 0
+    ):
+        raise ValueError("startup_timeout must be a finite positive number")
     if (factory is None) == (config is None):
         if factory is None and config is None:
             config = initialize_service_config(default_service_config_path())
@@ -115,13 +124,6 @@ async def _ensure_local_service(
         manifest = load_service_manifest(config, cwd=selected_cwd)
     else:
         _validate_factory(factory)
-    if (
-        isinstance(startup_timeout, bool)
-        or not isinstance(startup_timeout, (int, float))
-        or not math.isfinite(startup_timeout)
-        or startup_timeout <= 0
-    ):
-        raise ValueError("startup_timeout must be a finite positive number")
     requested_runtime = (
         Path(runtime_dir).expanduser()
         if runtime_dir is not None
