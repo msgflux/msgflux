@@ -311,8 +311,14 @@ class EventHub:
     def _reduce(  # noqa: C901
         state: _ThreadLiveState, event: ExecutionEvent
     ) -> None:
-        run_key = (event.run_id, event.source_path)
         event_type = event.type
+        if event_type == "workspace.policy_updated":
+            # Thread-scoped policy events are observable configuration changes,
+            # not run activity. The emitter has no run identity, so the generic
+            # path below would otherwise create a phantom active run.
+            return
+
+        run_key = (event.run_id, event.source_path)
         if event_type == "run.start":
             state.runs[run_key] = _LiveRun(
                 run_id=event.run_id,
