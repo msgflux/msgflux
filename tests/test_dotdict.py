@@ -910,3 +910,243 @@ class TestHiddenKeys:
         assert d.get("age") == 30
         assert "name" in d
         assert d.to_dict() == {"name": "Alice", "age": 30}
+
+
+class TestPersistentStore:
+    """Test suite for optional persistent store support."""
+
+    def test_write_persists_to_store(self):
+        """Test that top-level key writes are stored in the store."""
+        store = {}
+        d = dotdict(store=store)
+        d.x = 42
+
+        assert store["x"] == 42
+
+    def test_bracket_write_persists_to_store(self):
+        """Test that bracket assignment also writes to store."""
+        store = {}
+        d = dotdict(store=store)
+        d["y"] = 99
+
+        assert store["y"] == 99
+
+    def test_hydration_from_store_on_init(self):
+        """Test that existing store keys are loaded on creation."""
+        store = {"x": 1, "y": 2}
+        d = dotdict(store=store)
+
+        assert d.x == 1
+        assert d.y == 2
+
+    def test_initial_data_overrides_store(self):
+        """Test that initial_data takes precedence over store values."""
+        store = {"x": 1, "y": 2}
+        d = dotdict({"x": 99}, store=store)
+
+        assert d.x == 99
+        assert d.y == 2
+
+    def test_initial_data_writes_override_back_to_store(self):
+        """Test that initial_data values that override store are re-persisted."""
+        store = {"x": 1}
+        dotdict({"x": 99}, store=store)
+
+        assert store["x"] == 99
+
+    def test_frozen_store_initial_data_keeps_nested_values_frozen(self):
+        """Test that store init preserves frozen behaviour for nested values."""
+        store = {}
+        d = dotdict({"user": {"name": "Maria"}}, store=store, frozen=True)
+
+        assert d.user._frozen is True
+        with pytest.raises(AttributeError, match="Cannot modify frozen dotdict"):
+            d.user.name = "Ana"
+
+    def test_frozen_store_hydration_keeps_nested_values_frozen(self):
+        """Test that store hydration preserves frozen behaviour for nested values."""
+        store = {"user": {"name": "Maria"}}
+        d = dotdict(store=store, frozen=True)
+
+        assert d.user._frozen is True
+        with pytest.raises(AttributeError, match="Cannot modify frozen dotdict"):
+            d.user.name = "Ana"
+
+    def test_delete_removes_from_store(self):
+        """Test that deleting a key removes it from the store."""
+        store = {}
+        d = dotdict(store=store)
+        d.x = 1
+        del d.x
+
+        assert "x" not in store
+
+    def test_delete_nonexistent_store_key_does_not_raise(self):
+        """Test deleting a key not in store does not raise."""
+        store = {}
+        d = dotdict(store=store)
+        super(dotdict, d).__setitem__("phantom", 1)  # bypass store write
+
+        del d["phantom"]  # should not raise even though "phantom" not in store
+
+    def test_two_instances_different_keys_no_conflict(self):
+        """Test that two instances writing different keys coexist correctly."""
+        store = {}
+        a = dotdict(store=store)
+        b = dotdict(store=store)
+
+        a.x = 1
+        b.y = 2
+
+        c = dotdict(store=store)
+        assert c.x == 1
+        assert c.y == 2
+
+    def test_store_prefix_namespaces_keys(self):
+        """Test that store_prefix scopes all keys."""
+        store = {}
+        d = dotdict(store=store, store_prefix="ns")
+        d.key = "val"
+
+        assert "ns.key" in store
+        assert "key" not in store
+
+    def test_store_prefix_isolates_namespaces(self):
+        """Test that two prefixes do not interfere with each other."""
+        store = {}
+        a = dotdict({"score": 1}, store=store, store_prefix="run_1")
+        b = dotdict({"score": 2}, store=store, store_prefix="run_2")
+
+        a2 = dotdict(store=store, store_prefix="run_1")
+        b2 = dotdict(store=store, store_prefix="run_2")
+
+        assert a2.score == 1
+        assert b2.score == 2
+
+    def test_hydration_with_prefix_only_loads_own_keys(self):
+        """Test that hydration skips keys from other namespaces."""
+        store = {"run_1.x": 10, "run_2.x": 20}
+        d = dotdict(store=store, store_prefix="run_1")
+
+        assert d.x == 10
+        assert d.get("run_2") is None
+
+    def test_store_hydrates_top_level_keys_containing_dots(self):
+        """Test that persisted top-level keys with dots are not dropped."""
+        store = {}
+        d = dotdict(store=store)
+        d["a.b"] = 1
+
+        restored = dotdict(store=store)
+
+        assert restored["a.b"] == 1
+
+    def test_nested_dict_serialized_to_plain_dict_in_store(self):
+        """Test that nested dotdict values are stored as plain dicts."""
+        store = {}
+        d = dotdict(store=store)
+        d.user = {"name": "Maria", "age": 30}
+
+        assert isinstance(store["user"], dict)
+        assert not isinstance(store["user"], dotdict)
+        assert store["user"] == {"name": "Maria", "age": 30}
+
+    def test_nested_value_rehydrates_as_dotdict(self):
+        """Test that a nested dict loaded from store becomes a dotdict."""
+        store = {"user": {"name": "Maria"}}
+        d = dotdict(store=store)
+
+        assert isinstance(d.user, dotdict)
+        assert d.user.name == "Maria"
+
+    def test_list_value_serialized_correctly(self):
+        """Test that list values are stored as plain lists in store."""
+        store = {}
+        d = dotdict(store=store)
+        d.scores = [0.9, 0.8, 0.7]
+
+        assert store["scores"] == [0.9, 0.8, 0.7]
+
+    def test_list_of_dicts_serialized_as_plain_dicts(self):
+        """Test that list of dotdicts is serialized as list of plain dicts."""
+        store = {}
+        d = dotdict(store=store)
+        d.items = [{"a": 1}, {"b": 2}]
+
+        assert store["items"] == [{"a": 1}, {"b": 2}]
+        assert not isinstance(store["items"][0], dotdict)
+
+    def test_set_nested_path_persists_top_level_value(self):
+        """Test set() persists the final top-level value to store."""
+        store = {}
+        d = dotdict(store=store)
+        d.set("user.name", "Maria")
+
+        assert store["user"] == {"name": "Maria"}
+        assert dotdict(store=store).user.name == "Maria"
+
+    def test_update_dotted_key_persists_top_level_value(self):
+        """Test update() with dotted keys persists the final top-level value."""
+        store = {}
+        d = dotdict(store=store)
+        d.update({"user.name": "Maria"})
+
+        assert store["user"] == {"name": "Maria"}
+        assert dotdict(store=store).user.name == "Maria"
+
+    def test_update_recursive_merge_persists_top_level_value(self):
+        """Test recursive update() persists the merged top-level value."""
+        store = {"config": {"debug": False, "timeout": 30}}
+        d = dotdict(store=store)
+        d.update({"config": {"debug": True}})
+
+        assert store["config"] == {"debug": True, "timeout": 30}
+        assert dotdict(store=store).config.timeout == 30
+
+    def test_no_store_original_behavior_preserved(self):
+        """Test that omitting store preserves original dotdict behavior."""
+        d = dotdict({"a": 1, "b": {"c": 2}})
+        d.d = 99
+
+        assert d.a == 1
+        assert d.b.c == 2
+        assert d.d == 99
+
+    def test_store_key_without_prefix(self):
+        """Test _store_key returns key as-is when no prefix is set."""
+        d = dotdict(store={})
+
+        assert d._store_key("foo") == "foo"
+
+    def test_store_key_with_prefix(self):
+        """Test _store_key prepends prefix correctly."""
+        d = dotdict(store={}, store_prefix="run_42")
+
+        assert d._store_key("foo") == "run_42.foo"
+
+    def test_serialize_dotdict(self):
+        """Test _serialize converts dotdict to plain dict."""
+        d = dotdict(store={})
+        nested = dotdict({"x": 1})
+
+        assert d._serialize(nested) == {"x": 1}
+        assert isinstance(d._serialize(nested), dict)
+        assert not isinstance(d._serialize(nested), dotdict)
+
+    def test_serialize_list_of_dotdicts(self):
+        """Test _serialize converts list of dotdicts to list of plain dicts."""
+        d = dotdict(store={})
+        items = [dotdict({"a": 1}), dotdict({"b": 2})]
+
+        result = d._serialize(items)
+
+        assert result == [{"a": 1}, {"b": 2}]
+        assert not isinstance(result[0], dotdict)
+
+    def test_serialize_primitive(self):
+        """Test _serialize returns primitives unchanged."""
+        d = dotdict(store={})
+
+        assert d._serialize(42) == 42
+        assert d._serialize("text") == "text"
+        assert d._serialize(None) is None

@@ -54,6 +54,8 @@ class dotdict(dict):  # noqa: N801
         *,
         frozen: Optional[bool] = False,
         hidden_keys: Optional[list[str]] = None,
+        store=None,
+        store_prefix: Optional[str] = None,
         **kwargs,
     ):
         """Initializes an instance of dotdict.
@@ -64,32 +66,65 @@ class dotdict(dict):  # noqa: N801
             frozen:
                 If True, prevents changes after creation.
             hidden_keys:
-                List of keys that should not be returned by get() method.
-                These keys will return None (or default) when accessed via get().
+                List of keys hidden from enumeration and serialization.
+                Direct access still works.
+            store:
+                Optional persistent store (e.g. ``diskcache.Cache``). Must support
+                ``__getitem__``, ``__setitem__``, ``__delitem__``, and ``__iter__``.
+                Every top-level key write is persisted automatically. On creation,
+                existing keys in the store are loaded first; ``initial_data`` then
+                overrides them.
+
+                .. warning::
+                    Nested child mutations (``d.user.name = "x"``) are **not**
+                    automatically persisted. Use ``d.set("user.name", "x")``,
+                    ``d.update({"user.name": "x"})``, or reassign the top-level key.
+
+            store_prefix:
+                Optional namespace prefix for store keys (e.g. ``"run_42"`` stores
+                keys as ``"run_42.key"``). Useful when multiple dotdicts share the
+                same store instance.
             **kwargs:
-                Additional key=value pairs.
+                Additional key=value pairs merged with ``initial_data``.
 
         ::: example:
             d = dotdict({"user": {"name": "Maria"}}, frozen=False)
             print(d.user.name)
             >> Maria
 
-            # With hidden keys
-            d = dotdict({"api_key": "secret", "name": "John"}, hidden_keys=["api_key"])
-            print(d.get("api_key"))   # None
-            print("api_key" in d)     # False
-            print(d.to_dict())        # {"name": "John"}
-            print(d.api_key)          # "secret"  (direct access)
+            # With persistent store
+            import diskcache
+            cache = diskcache.Cache("./state")
+            d = dotdict(store=cache, store_prefix="run_1")
+            d.x = 1   # persisted immediately
+            d.y = 2   # persisted immediately
         """
         if initial_data is None:
             initial_data = {}
         elif not isinstance(initial_data, dict):
             initial_data = dict(initial_data)
+        self._store = store
+        self._store_prefix = store_prefix
         self._frozen = frozen
         self._hidden_keys = set(hidden_keys or [])
         super().__init__()
+
+        if store is not None:
+            prefix = store_prefix
+            for bkey in store:
+                if prefix:
+                    prefix_key = f"{prefix}."
+                    if not isinstance(bkey, str) or not bkey.startswith(prefix_key):
+                        continue
+                    key = bkey[len(prefix_key) :]
+                else:
+                    key = bkey
+                super().__setitem__(key, self._wrap(store[bkey]))
+
         for key, value in {**initial_data, **kwargs}.items():
-            super().__setitem__(key, self._wrap(value))
+            wrapped = self._wrap(value)
+            super().__setitem__(key, wrapped)
+            self._persist_store_key(key, wrapped)
 
     def __iter__(self):
         hidden = getattr(self, "_hidden_keys", set())
@@ -132,7 +167,20 @@ class dotdict(dict):  # noqa: N801
     def __setitem__(self, key: str, value: Any):
         if getattr(self, "_frozen", False):
             raise AttributeError("Cannot modify frozen dotdict")
-        super().__setitem__(key, self._wrap(value))
+        wrapped = self._wrap(value)
+        super().__setitem__(key, wrapped)
+        self._persist_store_key(key, wrapped)
+
+    def __delitem__(self, key: str):
+        if getattr(self, "_frozen", False):
+            raise AttributeError("Cannot delete from frozen dotdict")
+        super().__delitem__(key)
+        store = getattr(self, "_store", None)
+        if store is not None:
+            try:
+                del store[self._store_key(key)]
+            except KeyError:
+                pass
 
     def __delattr__(self, key: str):
         if getattr(self, "_frozen", False):
@@ -141,6 +189,22 @@ class dotdict(dict):  # noqa: N801
             del self[key]
         except KeyError as e:
             raise AttributeError(f"`dotdict` object has no attribute `{key}`") from e
+
+    def _store_key(self, key: str) -> str:
+        prefix = getattr(self, "_store_prefix", None)
+        return f"{prefix}.{key}" if prefix else key
+
+    def _persist_store_key(self, key: str, value: Any):
+        store = getattr(self, "_store", None)
+        if store is not None:
+            store[self._store_key(key)] = self._serialize(value)
+
+    def _serialize(self, value: Any) -> Any:
+        if isinstance(value, dotdict):
+            return value.to_dict()
+        elif isinstance(value, list):
+            return [self._serialize(item) for item in value]
+        return value
 
     def _wrap(self, value: Any):
         if isinstance(value, dict):
@@ -192,6 +256,8 @@ class dotdict(dict):  # noqa: N801
                     current[key_i] = self._wrap(value)
                 else:
                     current[key] = self._wrap(value)
+                if len(keys) > 1:
+                    self._persist_store_key(keys[0], self[keys[0]])
                 return
 
             if isinstance(current, list):
@@ -236,6 +302,7 @@ class dotdict(dict):  # noqa: N801
                 and isinstance(self[key], dotdict)
             ):
                 self[key].update(value)
+                self._persist_store_key(key, self[key])
 
             # General case: normal assignment (call __setitem__ e wrap)
             else:
