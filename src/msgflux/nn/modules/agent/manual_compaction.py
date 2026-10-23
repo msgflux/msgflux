@@ -92,7 +92,7 @@ def _operation(agent, scope):
                 if _is_capturing_events()
                 else _capture_events(_hub_event_sink(root_module=agent)),
                 event_source(agent.get_module_name(), "agent"),
-                agent._extension_run_snapshot(),
+                agent._extension_run_snapshot(scope),
                 _agent_context(agent, scope=scope, vars={}),
             ):
                 _validate_saved_work(agent, state, scope)
