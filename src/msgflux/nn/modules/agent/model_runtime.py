@@ -1,6 +1,7 @@
 # ruff: noqa: A002
 
 import asyncio
+import threading
 from collections.abc import MutableMapping
 from typing import (
     TYPE_CHECKING,
@@ -21,6 +22,7 @@ from msgflux.chat_messages import ChatMessages
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
 from msgflux.exceptions import (
+    AbortRequestedError,
     TaskInterruptRequestedError,
 )
 from msgflux.generation.control_flow import ToolFlowControl
@@ -60,6 +62,8 @@ from msgflux.nn.modules.agent.context import (
 )
 from msgflux.nn.modules.agent.continuation import _TerminalResponse
 from msgflux.nn.modules.agent.steering import _SteeringContinuation
+
+_STREAM_READY_POLL_SECONDS = 0.05
 
 
 class AgentModelRuntimeMixin:
@@ -661,13 +665,58 @@ class AgentModelRuntimeMixin:
 
     def _wait_stream_response_type(self, model_response) -> None:
         if isinstance(model_response, ModelStreamResponse):
-            wait_for_event(model_response._response_type_event)
+            event = model_response._response_type_event
+            if event.is_set():
+                # First output wins over an abort that arrived afterwards.
+                self._ensure_stream_response_ready(model_response)
+                return
+            abort_signal = get_execution_context().get("abort_signal")
+            if abort_signal is None:
+                wait_for_event(event)
+            elif isinstance(event, threading.Event):
+                # A synchronous provider cannot be interrupted from the event
+                # loop. Poll its readiness signal while observing the abort
+                # request so cancellation before the first token still wins.
+                abort_signal.raise_if_aborted()
+                while not event.wait(timeout=_STREAM_READY_POLL_SECONDS):
+                    abort_signal.raise_if_aborted()
+            else:
+                Executor.get_instance().submit(
+                    self._await_async_event_ready, event, abort_signal
+                ).result()
             self._ensure_stream_response_ready(model_response)
 
     async def _await_stream_response_type(self, model_response) -> None:
         if isinstance(model_response, ModelStreamResponse):
-            await await_for_event(model_response._response_type_event)
+            event = model_response._response_type_event
+            if event.is_set():
+                # First output wins over an abort that arrived afterwards.
+                self._ensure_stream_response_ready(model_response)
+                return
+            abort_signal = get_execution_context().get("abort_signal")
+            if isinstance(event, threading.Event):
+                await self._await_thread_event_ready(event, abort_signal)
+            else:
+                await self._await_async_event_ready(event, abort_signal)
             self._ensure_stream_response_ready(model_response)
+
+    @staticmethod
+    async def _await_async_event_ready(event, abort_signal) -> None:
+        try:
+            await await_with_abort(await_for_event(event), abort_signal)
+        except AbortRequestedError:
+            # First output and abort can race. A stream that already produced
+            # a response type is committed and keeps its result.
+            if not event.is_set():
+                raise
+
+    @staticmethod
+    async def _await_thread_event_ready(event, abort_signal) -> None:
+        """Wait on a thread event without parking an executor thread."""
+        while not event.is_set():
+            if abort_signal is not None:
+                abort_signal.raise_if_aborted()
+            await asyncio.sleep(_STREAM_READY_POLL_SECONDS)
 
     def _process_model_response_step(
         self,
