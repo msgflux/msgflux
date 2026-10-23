@@ -20,6 +20,16 @@ if TYPE_CHECKING:
     from msgflux.protocols.mcp.auth.base import BaseAuth
 
 
+async def _settle_task(task: asyncio.Task):
+    """Wait for an owned task despite repeated cancellation of its caller."""
+    while not task.done():
+        try:
+            await asyncio.shield(task)
+        except asyncio.CancelledError:
+            continue
+    return await task
+
+
 class BaseTransport(ABC):
     """Abstract base class for MCP transports."""
 
@@ -102,33 +112,38 @@ class HTTPTransport(BaseTransport):
         self._http_client: Optional[httpx2.AsyncClient] = None
         self._session_id: Optional[str] = None
         self._tool_schemas: Dict[str, Dict[str, Any]] = {}
+        self._lifecycle_lock = asyncio.Lock()
         super().__init__()
 
     async def connect(self):
         """Establish HTTP connection with pooling."""
-        if self._http_client is not None:
-            return
+        async with self._lifecycle_lock:
+            if self._http_client is not None:
+                return
 
-        # Don't generate session ID here - let the server create it during initialize
-        # The session ID will be captured from the initialize response
+            # Let the server create its session ID during initialize; the response
+            # carries that ID back to the client.
 
-        # Create limits with connection pooling
-        limits = httpx2.Limits(
-            max_connections=self.pool_limits["max_connections"],
-            max_keepalive_connections=self.pool_limits["max_keepalive_connections"],
-        )
+            # Create limits with connection pooling
+            limits = httpx2.Limits(
+                max_connections=self.pool_limits["max_connections"],
+                max_keepalive_connections=self.pool_limits["max_keepalive_connections"],
+            )
 
-        self._http_client = httpx2.AsyncClient(
-            timeout=httpx2.Timeout(self.timeout), headers=self.headers, limits=limits
-        )
+            self._http_client = httpx2.AsyncClient(
+                timeout=httpx2.Timeout(self.timeout),
+                headers=self.headers,
+                limits=limits,
+            )
 
     async def disconnect(self):
         """Close HTTP connection."""
-        if self._http_client:
-            await self._http_client.aclose()
-            self._http_client = None
-        self._session_id = None
-        self._tool_schemas.clear()
+        async with self._lifecycle_lock:
+            if self._http_client:
+                await self._http_client.aclose()
+                self._http_client = None
+            self._session_id = None
+            self._tool_schemas.clear()
 
     def set_session_id(self, session_id: str):
         """Set session ID for subsequent requests."""
@@ -478,59 +493,93 @@ class StdioTransport(BaseTransport):
         self._pending_requests: Dict[str, asyncio.Future] = {}
         self._notification_callbacks: Dict[Any, Callable[[Dict[str, Any]], None]] = {}
         self._read_task: Optional[asyncio.Task] = None
+        self._lifecycle_lock = asyncio.Lock()
         super().__init__()
 
     async def connect(self):
         """Launch subprocess and start reading from stdout."""
-        if self._process is not None:
-            return
+        async with self._lifecycle_lock:
+            if self._process is not None:
+                return
 
-        try:
-            full_command = [self.command, *self.args]
+            start_task = None
+            try:
+                full_command = [self.command, *self.args]
+                start_task = asyncio.create_task(
+                    asyncio.create_subprocess_exec(
+                        *full_command,
+                        stdin=asyncio.subprocess.PIPE,
+                        stdout=asyncio.subprocess.PIPE,
+                        stderr=asyncio.subprocess.DEVNULL,
+                        cwd=self.cwd,
+                        env=self.env,
+                    )
+                )
+                process = await asyncio.shield(start_task)
+            except asyncio.CancelledError as cancellation:
+                if start_task is not None:
+                    try:
+                        process = await _settle_task(start_task)
+                    except BaseException as start_error:
+                        cancellation.add_note(
+                            "MCP subprocess startup after cancellation failed: "
+                            f"{start_error!s}"
+                        )
+                    else:
+                        self._process = process
+                        cleanup_task = asyncio.create_task(
+                            self._terminate_process(process)
+                        )
+                        try:
+                            await _settle_task(cleanup_task)
+                        except BaseException as cleanup_error:
+                            cancellation.add_note(
+                                "MCP subprocess cleanup after cancellation failed: "
+                                f"{cleanup_error!s}"
+                            )
+                        else:
+                            self._process = None
+                raise
+            except Exception as e:
+                raise MCPConnectionError(f"Failed to start MCP server: {e}") from e
 
-            self._process = await asyncio.create_subprocess_exec(
-                *full_command,
-                stdin=asyncio.subprocess.PIPE,
-                stdout=asyncio.subprocess.PIPE,
-                stderr=asyncio.subprocess.DEVNULL,
-                cwd=self.cwd,
-                env=self.env,
-            )
-
-            # Start background task to read responses
+            self._process = process
             self._read_task = asyncio.create_task(self._read_responses())
-
-        except Exception as e:
-            raise MCPConnectionError(f"Failed to start MCP server: {e}") from e
 
     async def disconnect(self):
         """Terminate subprocess and cleanup."""
+        async with self._lifecycle_lock:
+            cleanup_task = asyncio.create_task(self._disconnect_owned_resources())
+            try:
+                await asyncio.shield(cleanup_task)
+            except asyncio.CancelledError as cancellation:
+                try:
+                    await _settle_task(cleanup_task)
+                except BaseException as cleanup_error:
+                    cancellation.add_note(
+                        "MCP transport cleanup after cancellation failed: "
+                        f"{cleanup_error!s}"
+                    )
+                raise
+
+    async def _disconnect_owned_resources(self) -> None:
+        """Stop owned reader/process resources and clear request tracking."""
         try:
             if self._read_task:
-                self._read_task.cancel()
+                read_task = self._read_task
+                read_task.cancel()
                 try:
-                    await self._read_task
+                    await read_task
                 except asyncio.CancelledError:
                     pass
                 finally:
-                    self._read_task = None
+                    if self._read_task is read_task:
+                        self._read_task = None
 
             process = self._process
             if process:
-                try:
-                    try:
-                        process.terminate()
-                    except ProcessLookupError:
-                        pass
-                    try:
-                        await asyncio.wait_for(process.wait(), timeout=5.0)
-                    except asyncio.TimeoutError:
-                        try:
-                            process.kill()
-                        except ProcessLookupError:
-                            pass
-                        await process.wait()
-                finally:
+                await self._terminate_process(process)
+                if self._process is process:
                     self._process = None
         finally:
             for future in self._pending_requests.values():
@@ -538,6 +587,22 @@ class StdioTransport(BaseTransport):
                     future.cancel()
             self._pending_requests.clear()
             self._notification_callbacks.clear()
+
+    @staticmethod
+    async def _terminate_process(process: asyncio.subprocess.Process) -> None:
+        """Terminate and reap a stdio child process."""
+        try:
+            process.terminate()
+        except ProcessLookupError:
+            pass
+        try:
+            await asyncio.wait_for(process.wait(), timeout=5.0)
+        except asyncio.TimeoutError:
+            try:
+                process.kill()
+            except ProcessLookupError:
+                pass
+            await process.wait()
 
     def _fail_pending_requests(self, message: str, *, cause: Exception | None = None):
         pending = self._pending_requests

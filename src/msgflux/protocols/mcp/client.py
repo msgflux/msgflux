@@ -84,6 +84,7 @@ class MCPClient:
         self._cache_expiry: Dict[str, float] = {}
         self._connection_attempts = 0
         self._last_error: Optional[Exception] = None
+        self._lifecycle_lock = asyncio.Lock()
 
     @classmethod
     def from_stdio(
@@ -195,14 +196,17 @@ class MCPClient:
     @Spans.ainstrument(attributes={"mcp.operation": "connect"})
     async def connect(self):
         """Establish connection to MCP server with retry logic."""
-        await self._connect_with_retry()
+        async with self._lifecycle_lock:
+            if not self._initialized:
+                await self._connect_with_retry()
 
     async def disconnect(self):
         """Close connection to MCP server."""
-        try:
-            await self.transport.disconnect()
-        finally:
-            self._reset_session_state()
+        async with self._lifecycle_lock:
+            try:
+                await self.transport.disconnect()
+            finally:
+                self._reset_session_state()
 
     def _reset_session_state(self) -> None:
         """Clear local state that is valid only for an active transport session."""
@@ -264,6 +268,16 @@ class MCPClient:
                 await self._negotiate_protocol()
                 self._last_error = None
                 return
+            except asyncio.CancelledError as cancellation:
+                self._reset_session_state()
+                try:
+                    await self.transport.disconnect()
+                except BaseException as cleanup_error:
+                    cancellation.add_note(
+                        "Transport cleanup after the cancelled connection attempt "
+                        f"also failed: {cleanup_error!s}"
+                    )
+                raise
             except Exception as e:
                 self._last_error = e
                 self._reset_session_state()
@@ -290,10 +304,14 @@ class MCPClient:
 
     async def _ensure_connected(self):
         """Ensure client is connected, reconnecting if necessary."""
-        if not self._initialized and self.auto_reconnect:
-            await self._connect_with_retry()
-        elif not self._initialized:
+        if self._initialized:
+            return
+        if not self.auto_reconnect:
             raise MCPConnectionError("Client not connected. Call connect() first.")
+
+        async with self._lifecycle_lock:
+            if not self._initialized:
+                await self._connect_with_retry()
 
     def _modern_params(self, params: Optional[Dict[str, Any]] = None) -> Dict[str, Any]:
         """Attach the required per-request metadata without changing caller data."""
