@@ -280,6 +280,21 @@ class BaseParser(BaseClient):
             ...     overlap_tokens=50
             ... )
         """
+        if (
+            not isinstance(max_tokens, int)
+            or isinstance(max_tokens, bool)
+            or max_tokens <= 0
+        ):
+            raise ValueError("`max_tokens` must be a positive integer")
+        if (
+            not isinstance(overlap_tokens, int)
+            or isinstance(overlap_tokens, bool)
+            or overlap_tokens < 0
+        ):
+            raise ValueError("`overlap_tokens` must be a non-negative integer")
+        if overlap_tokens >= max_tokens:
+            raise ValueError("`overlap_tokens` must be smaller than `max_tokens`")
+
         try:
             import tiktoken
 

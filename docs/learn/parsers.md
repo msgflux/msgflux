@@ -291,3 +291,28 @@ print(response.data["body"])                # "Hi Bob, this is a test email."
 **`data` keys:** `text`, `headers`, `body`, `html_body`, `attachments`, `metadata`
 
 **`metadata` fields:** `has_html`, `num_attachments`, `is_multipart`, `content_type`
+
+---
+
+## 10. Text Chunking
+
+Every parser inherits `chunk_text()` for character-based splitting and
+`chunk_by_tokens()` for token-based splitting. Token chunking uses `tiktoken`
+when available and falls back to an approximate character count otherwise.
+`max_tokens` must be a positive integer, and `overlap_tokens` must be a
+non-negative integer smaller than `max_tokens` so each chunk advances.
+
+```python
+import msgflux as mf
+
+parser = mf.Parser.csv("csv")
+chunks = parser.chunk_by_tokens(
+    "A long document to split into overlapping pieces.",
+    max_tokens=512,
+    overlap_tokens=50,
+)
+```
+
+This example uses a parser instance's inherited helper to target 512 tokens per
+chunk with a 50-token overlap. Without `tiktoken`, the fallback estimates token
+sizes from characters instead of counting tokens exactly.
