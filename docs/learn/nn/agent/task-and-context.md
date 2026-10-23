@@ -155,6 +155,29 @@ Templates use **Jinja2** syntax to format inputs and outputs. There are three te
 !!! tip "Response Template + Generation Schema"
     The `response` template is especially powerful when combined with `generation_schema`. The model outputs structured data, and you use Jinja to transform it into a human-readable format. This separates **what the model extracts** from **how you present it**.
 
+A task is absent when it is omitted or `None`. Supplied empty strings and empty
+mappings still use their normal template-rendering path; they do not select the
+raw template as a default prompt. Other scalar values retain the Agent's normal
+string conversion, including `0` and `False`; typed signature validation still
+sees the original value. Mappings remain Jinja context.
+
+For example, with an already configured `model`:
+
+```python
+from msgflux.nn import Agent
+
+agent = Agent(
+    name="greeting",
+    model=model,
+    templates={"task": "Hello {{ name | default('friend') }}!"},
+)
+response = agent(task={})
+```
+
+The empty mapping renders the Jinja default and sends `Hello friend!` to the
+model. Omitting the task or passing `task=None` preserves the default-prompt
+behavior, including rendering from `vars` when supplied.
+
 ???+ note "Template Examples"
 
     === "Task Template"

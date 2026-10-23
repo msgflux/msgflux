@@ -348,7 +348,7 @@ class AgentInputMixin:
             return None
 
         if self.templates.get("task"):
-            if task:
+            if task is not None:
                 if isinstance(task, str):
                     task_template = self.templates["task"]
                     if is_jinja_template(task_template) and not has_format_placeholder(
@@ -412,7 +412,7 @@ class AgentInputMixin:
             return None
 
         if self.templates.get("task"):
-            if task:
+            if task is not None:
                 if isinstance(task, str):
                     task_template = self.templates["task"]
                     if is_jinja_template(task_template) and not has_format_placeholder(
