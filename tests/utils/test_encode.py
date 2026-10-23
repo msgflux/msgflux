@@ -6,6 +6,7 @@ import httpx2
 import pytest
 
 from msgflux.utils.encode import (
+    aencode_data_to_base64,
     aencode_data_to_bytes,
     encode_base64_from_url,
     encode_data_to_base64,
@@ -48,6 +49,37 @@ def test_encode_data_to_base64(mock_httpx_get, temp_file):
     assert (
         base64.b64decode(encode_data_to_base64("http://example.com")) == b"hello world"
     )
+
+
+def test_encode_data_to_base64_keeps_local_path_with_http_in_name(tmp_path, mocker):
+    file_path = tmp_path / "http-notes.txt"
+    file_path.write_text("hello world")
+    http_get = mocker.patch(
+        "httpx2.get",
+        side_effect=AssertionError("local path must not be fetched over HTTP"),
+    )
+
+    encoded = encode_data_to_base64(str(file_path))
+
+    http_get.assert_not_called()
+    assert base64.b64decode(encoded) == b"hello world"
+
+
+@pytest.mark.asyncio
+async def test_aencode_data_to_base64_keeps_local_path_with_http_in_name(
+    tmp_path, monkeypatch
+):
+    file_path = tmp_path / "http-notes.txt"
+    file_path.write_text("hello world")
+
+    def fail_async_client(*args, **kwargs):
+        raise AssertionError("local path must not be fetched over HTTP")
+
+    monkeypatch.setattr(httpx2, "AsyncClient", fail_async_client)
+
+    encoded = await aencode_data_to_base64(str(file_path))
+
+    assert base64.b64decode(encoded) == b"hello world"
 
 
 def test_encode_to_io_object(mock_httpx_get, temp_file):
