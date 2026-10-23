@@ -2386,28 +2386,33 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                     )
                 ):
                     state["request_timer"].mark_first_output()
+                call_id = self._response_value(item, "call_id")
+                name = self._response_value(item, "name")
+                final_arguments = self._response_value(item, "arguments")
+                replace_arguments = isinstance(final_arguments, str) and bool(
+                    final_arguments.strip()
+                )
+                if replace_arguments:
+                    arguments = final_arguments
+                elif index not in state["tool_arguments_seen"]:
+                    arguments = self._response_value(item, "arguments", "{}")
+                else:
+                    arguments = None
                 stream_response.chat_accumulator.add_tool_call_delta(
                     index,
-                    call_id=self._response_value(item, "call_id"),
-                    name=self._response_value(item, "name"),
+                    call_id=call_id,
+                    name=name,
+                    arguments=arguments,
                     provider=self.provider,
                     api_mode=self.api_mode,
                     provider_state=self._serialize_openai_value(item),
+                    replace_arguments=replace_arguments,
                 )
-                if index not in state["tool_arguments_seen"]:
-                    arguments = self._response_value(item, "arguments", "{}")
-                    aggregator.process(
-                        index,
-                        self._response_value(item, "call_id"),
-                        self._response_value(item, "name"),
-                        arguments,
-                    )
-                    stream_response.chat_accumulator.add_tool_call_delta(
-                        index,
-                        call_id=self._response_value(item, "call_id"),
-                        name=self._response_value(item, "name"),
-                        arguments=arguments,
-                    )
+                if replace_arguments:
+                    aggregator.finalize(index, call_id, name, final_arguments)
+                    state["tool_arguments_seen"].add(index)
+                elif index not in state["tool_arguments_seen"]:
+                    aggregator.process(index, call_id, name, arguments)
             elif item_type == "message":
                 index = self._response_value(event, "output_index", 0)
                 state["message_phases"][index] = self._response_value(item, "phase")

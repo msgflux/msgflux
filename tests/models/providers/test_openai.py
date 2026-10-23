@@ -1436,6 +1436,217 @@ class TestOpenAIChatCompletion:
             ("reasoning_summary.delta", "Need inventory."),
         ]
 
+    @staticmethod
+    async def _run_responses_stream_events(events, *, asynchronous):
+        from msgflux.models.providers.openai import OpenAIChatCompletion
+        from msgflux.models.response import ModelStreamResponse
+
+        model = OpenAIChatCompletion(model_id="gpt-5", api_mode="responses")
+        stream_response = ModelStreamResponse(mode="async" if asynchronous else "sync")
+        if asynchronous:
+
+            async def source():
+                for event in events:
+                    yield event
+
+            model._aexecute_model = AsyncMock(return_value=source())
+            await model._astream_responses_generate(stream_response=stream_response)
+        else:
+            model._execute_model = Mock(return_value=iter(events))
+            model._stream_responses_generate(stream_response=stream_response)
+        return stream_response
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.asyncio
+    async def test_responses_stream_uses_complete_done_item_arguments(
+        self, asynchronous
+    ):
+        """A complete done item replaces an incomplete delta prefix."""
+        events = [
+            {
+                "type": "response.output_item.added",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "status": "in_progress",
+                    "call_id": "call_1",
+                    "name": "lookup_inventory",
+                    "arguments": "",
+                },
+            },
+            {
+                "type": "response.function_call_arguments.delta",
+                "output_index": 1,
+                "delta": '{"sku":"1842"}',
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "status": "completed",
+                    "call_id": "call_1",
+                    "name": "lookup_inventory",
+                    "arguments": '{"sku":"1842","quantity":2}',
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {"id": "resp_4", "status": "completed"},
+            },
+        ]
+        stream_response = await self._run_responses_stream_events(
+            events, asynchronous=asynchronous
+        )
+
+        assert stream_response.error is None
+        assert stream_response.response_type == "tool_call"
+        assert stream_response.data.get_calls() == [
+            ("call_1", "lookup_inventory", {"sku": "1842", "quantity": 2})
+        ]
+        assert stream_response.data.get_intents()[0].arguments == {
+            "sku": "1842",
+            "quantity": 2,
+        }
+        function_call = stream_response.chat_accumulator.snapshot()[0]
+        assert function_call["arguments"] == '{"sku":"1842","quantity":2}'
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize(
+        ("done_arguments", "expected_arguments", "expected_history"),
+        [
+            ("", {"sku": "1842"}, '{"sku":"1842"}'),
+            (" \n\t", {"sku": "1842"}, '{"sku":"1842"}'),
+            ("{}", {}, "{}"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_responses_stream_done_argument_placeholder_guard(
+        self, asynchronous, done_arguments, expected_arguments, expected_history
+    ):
+        """Empty placeholders keep deltas; `{}` remains authoritative."""
+        events = [
+            {
+                "type": "response.output_item.added",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "status": "in_progress",
+                    "call_id": "call_1",
+                    "name": "lookup_inventory",
+                    "arguments": "",
+                },
+            },
+            {
+                "type": "response.function_call_arguments.delta",
+                "output_index": 1,
+                "delta": '{"sku":"1842"}',
+            },
+            {
+                "type": "response.output_item.done",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "status": "completed",
+                    "call_id": "call_1",
+                    "name": "lookup_inventory",
+                    "arguments": done_arguments,
+                },
+            },
+            {
+                "type": "response.completed",
+                "response": {"id": "resp_5", "status": "completed"},
+            },
+        ]
+        stream_response = await self._run_responses_stream_events(
+            events, asynchronous=asynchronous
+        )
+
+        assert stream_response.data.get_calls() == [
+            ("call_1", "lookup_inventory", expected_arguments)
+        ]
+        assert stream_response.data.get_intents()[0].arguments == expected_arguments
+        function_call = stream_response.chat_accumulator.snapshot()[0]
+        assert function_call["arguments"] == expected_history
+
+    @pytest.mark.parametrize("asynchronous", [False, True])
+    @pytest.mark.parametrize(
+        ("delta", "done_arguments", "expected_arguments", "expected_history"),
+        [
+            (None, '{"sku":"1842"}', {"sku": "1842"}, '{"sku":"1842"}'),
+            ('{"sku":"1842"}', None, {"sku": "1842"}, '{"sku":"1842"}'),
+            (None, None, {}, "{}"),
+        ],
+    )
+    @pytest.mark.asyncio
+    async def test_responses_stream_preserves_done_argument_fallbacks(
+        self,
+        asynchronous,
+        delta,
+        done_arguments,
+        expected_arguments,
+        expected_history,
+    ):
+        """Missing fields keep the previous no-delta and delta-only behavior."""
+        events = [
+            {
+                "type": "response.output_item.added",
+                "output_index": 1,
+                "item": {
+                    "type": "function_call",
+                    "id": "fc_1",
+                    "status": "in_progress",
+                    "call_id": "call_1",
+                    "name": "lookup_inventory",
+                    "arguments": "",
+                },
+            },
+        ]
+        if delta is not None:
+            events.append(
+                {
+                    "type": "response.function_call_arguments.delta",
+                    "output_index": 1,
+                    "delta": delta,
+                }
+            )
+        done_item = {
+            "type": "function_call",
+            "id": "fc_1",
+            "status": "completed",
+            "call_id": "call_1",
+            "name": "lookup_inventory",
+        }
+        if done_arguments is not None:
+            done_item["arguments"] = done_arguments
+        events.extend(
+            [
+                {
+                    "type": "response.output_item.done",
+                    "output_index": 1,
+                    "item": done_item,
+                },
+                {
+                    "type": "response.completed",
+                    "response": {"id": "resp_6", "status": "completed"},
+                },
+            ]
+        )
+        stream_response = await self._run_responses_stream_events(
+            events, asynchronous=asynchronous
+        )
+
+        assert stream_response.data.get_calls() == [
+            ("call_1", "lookup_inventory", expected_arguments)
+        ]
+        assert stream_response.data.get_intents()[0].arguments == expected_arguments
+        function_call = stream_response.chat_accumulator.snapshot()[0]
+        assert function_call["arguments"] == expected_history
+
     def test_responses_stream_preserves_message_phase_and_native_identity(
         self, mock_openai_client
     ):
