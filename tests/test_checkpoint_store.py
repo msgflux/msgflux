@@ -369,6 +369,37 @@ def test_sqlite_checkpoint_store_can_finalize_from_worker_thread(tmp_path):
     store.close()
 
 
+def test_sqlite_load_state_keeps_snapshot_during_concurrent_delete(tmp_path):
+    path = str(tmp_path / "snapshot.sqlite3")
+    writer = SQLiteCheckpointStore(path)
+    messages = _message_state("run_1")
+    writer.save_state(
+        "agent:test",
+        "session_1",
+        "run_1",
+        {"status": "paused", "messages": messages},
+    )
+    expected = writer.load_state("agent:test", "session_1", "run_1")
+    reader = SQLiteCheckpointStore(path)
+    original = reader._denormalize_state
+    deleted = []
+
+    def delete_after_state_read(namespace, thread_id, state_text):
+        if not deleted:
+            deleted.append(True)
+            assert writer.delete_run(namespace, thread_id, "run_1")
+        return original(namespace, thread_id, state_text)
+
+    reader._denormalize_state = delete_after_state_read
+    try:
+        assert reader.load_state("agent:test", "session_1", "run_1") == expected
+        assert deleted == [True]
+        assert writer.load_state("agent:test", "session_1", "run_1") is None
+    finally:
+        reader.close()
+        writer.close()
+
+
 def test_sqlite_checkpoint_store_normalizes_messages(tmp_path):
     path = tmp_path / "checkpoints.sqlite3"
     store = SQLiteCheckpointStore(path=str(path))
