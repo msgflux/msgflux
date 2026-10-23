@@ -255,6 +255,11 @@ class AgentService:
         self._shutdown_task: asyncio.Task | None = None
         self._before_write = None
 
+    def _notify_before_write(self) -> None:
+        """Let a facade persist its journal before the service changes it."""
+        if self._before_write is not None:
+            self._before_write()
+
     @staticmethod
     def _validate_account_name(account_name: str | None) -> str:
         if not is_valid_account_name(account_name):
@@ -543,8 +548,7 @@ class AgentService:
             async with self._lock:
                 self._require_no_maintenance(thread_id)
                 self._require_open()
-                if self._before_write is not None:
-                    self._before_write()
+                self._notify_before_write()
                 state = session.workspace_policy_state
                 workspace = state.workspace if state is not None else None
                 if workspace is None:
@@ -825,8 +829,7 @@ class AgentService:
             async with self._lock:
                 self._require_no_maintenance(thread_id)
                 self._require_open()
-                if self._before_write is not None:
-                    self._before_write()
+                self._notify_before_write()
                 existing = self.store.get(thread_id, request_id)
                 if existing is None:
                     self._validate_new_input(session, thread_id)
@@ -1218,6 +1221,7 @@ class AgentService:
                     )
                 if (thread_id, request_id) in self._workers:
                     raise ServiceBusyError("The attempt still has a local worker")
+                self._notify_before_write()
                 if record.receipt.status == "accepted":
                     self._schedule(record, session)
                     return record.receipt
@@ -1275,6 +1279,7 @@ class AgentService:
                     )
                     if saved_account is not None:
                         saved_account = self._validate_account_name(saved_account)
+                    self._notify_before_write()
                     record = self.store.adopt_checkpoint(
                         thread_id, run_id, session.namespace, saved_account
                     )
