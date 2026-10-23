@@ -145,27 +145,25 @@ class PythonDocxDocxParser(BaseParser, DocxParser):
                     # Skip images that can't be extracted
                     pass
 
-        # Process document elements (paragraphs and tables)
+        # Process document elements (paragraphs and tables) in body order.
+        # Build each wrapper directly from its body element instead of asking
+        # python-docx for document-wide lists and scanning them per block.
+        num_paragraphs = 0
+        num_tables = 0
         for element in document.element.body:
             # Check if it's a paragraph
             if element.tag.endswith("p"):
-                # Find the paragraph object
-                for para in document.paragraphs:
-                    if para._element == element:
-                        para_text = self._process_paragraph(para)
-                        if para_text:
-                            md_content += para_text + "\n\n"
-                        break
+                num_paragraphs += 1
+                para_text = self._process_paragraph(Paragraph(element, document))
+                if para_text:
+                    md_content += para_text + "\n\n"
 
             # Check if it's a table
             elif element.tag.endswith("tbl"):
-                # Find the table object
-                for table in document.tables:
-                    if table._element == element:
-                        table_md = self._process_table(table)
-                        if table_md:
-                            md_content += table_md + "\n\n"
-                        break
+                num_tables += 1
+                table_md = self._process_table(Table(element, document))
+                if table_md:
+                    md_content += table_md + "\n\n"
 
         # Prepare images (optionally encode to base64)
         images_dict = self._prepare_images_dict(
@@ -175,8 +173,8 @@ class PythonDocxDocxParser(BaseParser, DocxParser):
         # Prepare metadata
         metadata = dotdict(
             {
-                "num_paragraphs": len(document.paragraphs),
-                "num_tables": len(document.tables),
+                "num_paragraphs": num_paragraphs,
+                "num_tables": num_tables,
                 "num_images": len(images_dict),
                 "table_format": self.table_format,
             }

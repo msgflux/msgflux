@@ -1,5 +1,6 @@
 """Tests for data parsers."""
 
+import base64
 from io import BytesIO
 
 import pytest
@@ -340,6 +341,65 @@ def test_docx_metadata(docx_bytes):
     response = parser(docx_bytes)
 
     assert response.data["metadata"].num_tables == 1
+
+
+def test_docx_parse_avoids_repeated_block_discovery(monkeypatch):
+    pytest.importorskip("docx")
+    from docx import Document
+    from docx.document import Document as DocxDocument
+
+    # Real, modest DOCX: 30 paragraphs (including empty ones), 10 tables, and an
+    # image. The baseline parser rescans document.paragraphs/tables once per
+    # body block, creating redundant paragraph and table wrappers quadratically.
+    png = base64.b64decode(
+        "iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8"
+        "/x8AAusB9Y9Zl1sAAAAASUVORK5CYII="
+    )
+    doc = Document()
+    for index in range(10):
+        doc.add_heading(f"Heading {index}", level=1)
+        paragraph = doc.add_paragraph(f"Paragraph {index}")
+        doc.add_paragraph("")
+        if index == 0:
+            paragraph.add_run().add_picture(BytesIO(png))
+        table = doc.add_table(rows=2, cols=2)
+        table.cell(0, 0).text = f"A{index}"
+        table.cell(0, 1).text = f"B{index}"
+        table.cell(1, 0).text = f"C{index}"
+        table.cell(1, 1).text = f"D{index}"
+
+    buffer = BytesIO()
+    doc.save(buffer)
+
+    accesses = {"paragraphs": 0, "tables": 0}
+    original_paragraphs = DocxDocument.paragraphs
+    original_tables = DocxDocument.tables
+
+    def count_paragraphs(self):
+        accesses["paragraphs"] += 1
+        return original_paragraphs.fget(self)
+
+    def count_tables(self):
+        accesses["tables"] += 1
+        return original_tables.fget(self)
+
+    monkeypatch.setattr(DocxDocument, "paragraphs", property(count_paragraphs))
+    monkeypatch.setattr(DocxDocument, "tables", property(count_tables))
+
+    parser = mf.Parser.docx("python_docx")
+    response = parser(buffer.getvalue())
+
+    # Allow a separate metadata read while rejecting a rescan per body block.
+    assert accesses["paragraphs"] <= 2
+    assert accesses["tables"] <= 2
+
+    text = response.data["text"]
+    assert "# Heading 0" in text
+    assert text.index("Heading 0") < text.index("| A0 |") < text.index("Heading 1")
+    assert response.data["metadata"].num_paragraphs == 30
+    assert response.data["metadata"].num_tables == 10
+    assert response.data["metadata"].num_images == 1
+    assert len(response.data["images"]) == 1
 
 
 # ---------------------------------------------------------------------------
