@@ -279,6 +279,17 @@ async def test_connect_rejects_invalid_startup_timeout(tmp_path, timeout):
 
 
 @pytest.mark.asyncio
+async def test_invalid_timeout_does_not_initialize_default_config(
+    tmp_path, monkeypatch
+):
+    home = tmp_path / "home"
+    monkeypatch.setattr(Path, "home", lambda: home)
+    with pytest.raises(ValueError, match="finite positive"):
+        await connect_local_service(startup_timeout=0)
+    assert not home.exists()
+
+
+@pytest.mark.asyncio
 async def test_connect_requires_existing_working_directory(tmp_path):
     with pytest.raises(NotADirectoryError, match="existing directory"):
         await connect_local_service(
