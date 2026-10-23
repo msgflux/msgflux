@@ -18,6 +18,24 @@ def native_item_types(*, output=False):
     }
 
 
+def pending_tool_calls(items) -> dict[str, Mapping]:
+    """Return call IDs awaiting an output mapped to their latest call item."""
+    call_types = {"function_call", *native_item_types()}
+    output_types = {"function_call_output", *native_item_types(output=True)}
+    pending: dict[str, Mapping] = {}
+    for item in items:
+        if not isinstance(item, Mapping):
+            continue
+        call_id = item.get("call_id") or item.get("id")
+        if not isinstance(call_id, str) or not call_id:
+            continue
+        if item.get("type") in call_types:
+            pending[call_id] = item
+        elif item.get("type") in output_types:
+            pending.pop(call_id, None)
+    return pending
+
+
 def history_adapter(item) -> ToolTransportAdapter | None:
     for adapter in _ADAPTERS:
         if item.get("type") in {adapter.item_type, adapter.output_type}:
