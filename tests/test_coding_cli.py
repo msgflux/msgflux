@@ -168,6 +168,53 @@ async def test_cli_final_json_resume_historical_result_and_failures(coding_cli_p
 
 
 @pytest.mark.asyncio
+async def test_relative_cwd_selects_project_from_invocation_directory(
+    coding_cli_project,
+):
+    project, config, runtime = coding_cli_project
+    process = await asyncio.create_subprocess_exec(
+        sys.executable,
+        "-m",
+        "msgflux.cli",
+        "-p",
+        "relative",
+        "--json",
+        "--config",
+        str(config),
+        "--runtime-dir",
+        str(runtime),
+        "--cwd",
+        project.name,
+        cwd=project.parent,
+        stdout=asyncio.subprocess.PIPE,
+        stderr=asyncio.subprocess.PIPE,
+    )
+    client = None
+    try:
+        async with asyncio.timeout(20):
+            stdout, stderr = await process.communicate()
+        assert process.returncode == 0, stderr + stdout
+        result = json.loads(stdout)
+        assert result["output"] == "FINAL: relative"
+        client = await connect_local_service(
+            config=config, runtime_dir=runtime, cwd=project
+        )
+        thread = next(
+            item
+            for item in await client.threads()
+            if item.thread_id == result["thread_id"]
+        )
+        assert thread.cwd == str(project.resolve())
+    finally:
+        if process.returncode is None:
+            process.kill()
+            await process.communicate()
+        if client is not None:
+            await client.aclose()
+        await _shutdown(runtime)
+
+
+@pytest.mark.asyncio
 async def test_print_watch_reconnect_does_not_admit_twice(
     coding_cli_project, monkeypatch
 ):
@@ -1078,3 +1125,37 @@ def test_plain_admission_failure_reports_known_ids(monkeypatch, capsys):
     assert "thread_id=thread" in captured.err
     assert "request_id=request" in captured.err
     assert "Cannot confirm admission" in captured.err
+
+
+def test_json_cwd_resolution_error_has_one_result(monkeypatch, tmp_path, capsys):
+    cwd = tmp_path / "project"
+    cwd.mkdir()
+    resolve = Path.resolve
+
+    def fail_project_resolution(path, *args, **kwargs):
+        if path == cwd:
+            raise RuntimeError("cwd cannot be resolved")
+        return resolve(path, *args, **kwargs)
+
+    monkeypatch.setattr(Path, "resolve", fail_project_resolution)
+    with pytest.raises(SystemExit) as exited:
+        cli.main(
+            [
+                "-p",
+                "hello",
+                "--json",
+                "--cwd",
+                str(cwd),
+                "--config",
+                str(tmp_path / "missing.toml"),
+                "--runtime-dir",
+                str(tmp_path / "runtime"),
+            ]
+        )
+    captured = capsys.readouterr()
+    result = json.loads(captured.out)
+    assert exited.value.code == 1
+    assert result["status"] == "failed"
+    assert result["error"] == "cwd cannot be resolved"
+    assert result["run_id"] is None
+    assert captured.err == ""
