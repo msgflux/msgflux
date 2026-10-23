@@ -1,3 +1,7 @@
+import os
+import subprocess
+import sys
+
 import pytest
 
 import msgflux as mf
@@ -89,6 +93,95 @@ def test_parse_skill_file_reads_frontmatter_and_body(tmp_path):
     assert skill.metadata == {"owner": "docs-team"}
     assert skill.include_in_prompt is True
     assert "Follow the PDF workflow" in skill.body
+
+
+def test_parse_skill_file_rejects_files_over_256_kib(tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_bytes(b"x" * (256 * 1024 + 1))
+
+    with pytest.raises(ValueError, match="256 KiB"):
+        parse_skill_file(skill_file)
+
+    manager = AgentSkillManager({"paths": tmp_path})
+    assert manager.names() == []
+    assert str(skill_file) in manager.diagnostics[0]
+    assert "256 KiB" in manager.diagnostics[0]
+
+
+def test_parse_skill_file_rejects_device_file():
+    with pytest.raises(ValueError, match="regular file"):
+        parse_skill_file(os.devnull)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX FIFO support")
+def test_parse_skill_file_fifo_does_not_block(tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    os.mkfifo(skill_file)
+    script = """
+import sys
+from msgflux.runtime.skills import parse_skill_file
+try:
+    parse_skill_file(sys.argv[1])
+except ValueError as error:
+    print(error)
+"""
+
+    result = subprocess.run(  # noqa: S603 - fixed test code uses tmp_path only.
+        [sys.executable, "-c", script, str(skill_file)],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=True,
+    )
+
+    assert "regular file" in result.stdout
+
+
+def test_parse_skill_file_rejects_yaml_aliases_promptly(tmp_path):
+    skill_file = tmp_path / "SKILL.md"
+    metadata = ['  a: &a ["x","x","x","x","x","x","x","x","x","x"]']
+    for index in range(1, 6):
+        previous = chr(ord("a") + index - 1)
+        current = chr(ord("a") + index)
+        metadata.append(
+            f"  {current}: &{current} ["
+            + ",".join(f"*{previous}" for _ in range(10))
+            + "]"
+        )
+    skill_file.write_text(
+        "\n".join(
+            [
+                "---",
+                "name: bomb",
+                "description: test",
+                "metadata:",
+                *metadata,
+                "---",
+                "body",
+            ]
+        ),
+        encoding="utf-8",
+    )
+    script = """
+import sys
+from msgflux.runtime.skills import parse_skill_file
+try:
+    parse_skill_file(sys.argv[1])
+except ValueError as error:
+    print(error)
+else:
+    print("accepted")
+"""
+
+    result = subprocess.run(  # noqa: S603 - fixed test code uses tmp_path only.
+        [sys.executable, "-c", script, str(skill_file)],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=True,
+    )
+
+    assert "YAML aliases are not allowed" in result.stdout
 
 
 def test_parse_skill_file_supports_yaml_frontmatter(tmp_path):
@@ -372,6 +465,49 @@ def test_agent_skill_manager_expands_globs(tmp_path, monkeypatch):
     manager = AgentSkillManager({"paths": "*/skills"})
 
     assert manager.names() == ["alpha", "beta"]
+
+
+def test_discovery_skips_symlinked_child_directories_and_skill_files(tmp_path):
+    outside = tmp_path / "outside"
+    _write_skill(outside, name="outside-secret")
+    skills_root = tmp_path / "skills"
+    skills_root.mkdir()
+    (skills_root / "directory-link").symlink_to(outside, target_is_directory=True)
+    file_skill = skills_root / "file-link"
+    file_skill.mkdir()
+    (file_skill / "SKILL.md").symlink_to(outside / "outside-secret" / "SKILL.md")
+
+    manager = AgentSkillManager({"paths": skills_root})
+
+    assert manager.names() == []
+    assert any("file-link/SKILL.md" in item for item in manager.diagnostics)
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX FIFO support")
+def test_discovery_reports_nonregular_skill_file(tmp_path):
+    skills_root = tmp_path / "skills"
+    skill_dir = skills_root / "blocked"
+    skill_dir.mkdir(parents=True)
+    os.mkfifo(skill_dir / "SKILL.md")
+
+    manager = AgentSkillManager({"paths": skills_root})
+
+    assert manager.names() == []
+    assert any(
+        "blocked/SKILL.md" in item and "regular file" in item
+        for item in manager.diagnostics
+    )
+
+
+def test_discovery_allows_an_explicit_symlinked_skill_root(tmp_path):
+    actual_root = tmp_path / "actual-skills"
+    _write_skill(actual_root, name="trusted-root")
+    configured_root = tmp_path / "configured-skills"
+    configured_root.symlink_to(actual_root, target_is_directory=True)
+
+    manager = AgentSkillManager({"paths": configured_root})
+
+    assert manager.names() == ["trusted-root"]
 
 
 def test_agent_skill_catalog_is_rendered_in_system_prompt(tmp_path):
@@ -780,6 +916,82 @@ def test_discovery_path_writes_index_instead_of_registering_search_tool(tmp_path
     assert "Review Python code." in index
     assert "## beta" in index
     assert "frontmatter" not in index.lower()
+
+
+@pytest.mark.skipif(not hasattr(os, "mkfifo"), reason="requires POSIX FIFO support")
+def test_write_index_replaces_fifo_without_blocking(tmp_path):
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root, name="alpha")
+    index_path = tmp_path / "index.md"
+    os.mkfifo(index_path)
+    script = """
+import sys
+from msgflux.runtime.skills import AgentSkillManager
+manager = AgentSkillManager({"paths": sys.argv[1], "discovery": sys.argv[2]})
+manager.write_index()
+print("written")
+"""
+
+    result = subprocess.run(  # noqa: S603 - fixed test code uses tmp_path only.
+        [sys.executable, "-c", script, str(skills_root), str(index_path)],
+        capture_output=True,
+        text=True,
+        timeout=3,
+        check=True,
+    )
+
+    assert result.stdout.strip() == "written"
+    assert index_path.is_file()
+    assert "## alpha" in index_path.read_text(encoding="utf-8")
+
+
+def test_write_index_replaces_symlink_without_writing_through_it(tmp_path):
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root, name="alpha")
+    target = tmp_path / "target.md"
+    target.write_text("leave this file alone", encoding="utf-8")
+    index_path = tmp_path / "index.md"
+    index_path.symlink_to(target)
+    manager = AgentSkillManager({"paths": skills_root, "discovery": index_path})
+
+    manager.write_index()
+
+    assert not index_path.is_symlink()
+    assert "## alpha" in index_path.read_text(encoding="utf-8")
+    assert target.read_text(encoding="utf-8") == "leave this file alone"
+
+
+def test_write_index_replaces_oversized_regular_file_without_comparing_it(tmp_path):
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root, name="alpha")
+    index_path = tmp_path / "index.md"
+    index_path.write_bytes(b"x" * (256 * 1024 + 1))
+    manager = AgentSkillManager({"paths": skills_root, "discovery": index_path})
+
+    manager.write_index()
+
+    assert "## alpha" in index_path.read_text(encoding="utf-8")
+    assert index_path.stat().st_size < 256 * 1024
+
+
+def test_index_directory_target_fails_without_removing_contents(tmp_path):
+    skills_root = tmp_path / "skills"
+    _write_skill(skills_root, name="alpha")
+    index_path = tmp_path / "index.md"
+    index_path.mkdir()
+    marker = index_path / "keep.txt"
+    marker.write_text("keep", encoding="utf-8")
+
+    with pytest.raises(IsADirectoryError, match="index path is a directory"):
+        Agent(
+            name="agent",
+            model=_ScriptedModel([]),
+            extensions=[
+                SkillsExtension({"paths": skills_root, "discovery": index_path})
+            ],
+        )
+
+    assert marker.read_text(encoding="utf-8") == "keep"
 
 
 def test_skills_discovery_validates_markdown_path(tmp_path):

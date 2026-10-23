@@ -20,6 +20,7 @@ from msgflux.runtime.approvals.agent import (
     AgentApprovals,
     ApprovalBatch,
     ApprovalReconciliationRequiredError,
+    _retired_tool_call_outcome,
     approval_batch_active,
 )
 from msgflux.runtime.approvals.reconciliation import inspect_batch, reconcile_batch
@@ -294,6 +295,7 @@ class AgentApprovalMixin:
         self, model_response, intents, message, messages, vars
     ):
         allowed, denied = self._partition_tool_filter_intents(intents)
+        allowed, denied = self._partition_retired_intents(allowed, denied)
         if not allowed:
             return self._order_tool_outcomes(intents, (), denied)
         pending = self._approval_pending(
@@ -329,6 +331,7 @@ class AgentApprovalMixin:
         self, model_response, intents, message, messages, vars
     ):
         allowed, denied = self._partition_tool_filter_intents(intents)
+        allowed, denied = self._partition_retired_intents(allowed, denied)
         if not allowed:
             return self._order_tool_outcomes(intents, (), denied)
         pending = self._approval_pending(
@@ -377,6 +380,17 @@ class AgentApprovalMixin:
             outcome = self.tool_library._tool_filter_outcome(
                 intent, self.tool_library.get_tool_definition(intent.name)
             )
+            if outcome is None:
+                allowed.append(intent)
+            else:
+                denied[intent.id] = outcome
+        return tuple(allowed), denied
+
+    @staticmethod
+    def _partition_retired_intents(intents, denied):
+        allowed = []
+        for intent in intents:
+            outcome = _retired_tool_call_outcome(intent)
             if outcome is None:
                 allowed.append(intent)
             else:

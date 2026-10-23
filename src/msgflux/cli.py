@@ -8,7 +8,7 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
-from msgflux._cli_output import write_observation
+from msgflux._private.cli_output import write_observation
 from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import msgspec_dumps
 
