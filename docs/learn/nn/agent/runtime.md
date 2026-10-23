@@ -1195,6 +1195,9 @@ Behavior:
   when a checkpoint store is configured.
 - `interrupt` raises `TaskInterruptRequestedError` and checkpoints the run as
   `interrupted` when a checkpoint store is configured.
+- A control published during the final model response is observed before normal
+  completion, so it stops that run instead of carrying into a later run. The
+  control does not start an additional generation.
 - Unknown control commands remain normal system notifications.
 
 For a persistent writer:
