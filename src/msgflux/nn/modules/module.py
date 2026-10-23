@@ -1,5 +1,6 @@
 import asyncio
 import contextvars
+import copy
 import functools
 import inspect
 import weakref
@@ -1637,7 +1638,7 @@ class Module:
 
     def _transform_module_output(self, output: Any) -> Any:
         """Apply presentation-only output hooks to a settled result."""
-        if isinstance(output, ModelStreamResponse):
+        if self._stream_response_from_result(output) is not None:
             return output
         return self._run_lifecycle_hooks("transform_output", output)
 
@@ -1850,7 +1851,7 @@ class Module:
 
     async def _atransform_module_output(self, output: Any) -> Any:
         """Async counterpart to :meth:`_transform_module_output`."""
-        if isinstance(output, ModelStreamResponse):
+        if self._stream_response_from_result(output) is not None:
             return output
         return await self._arun_lifecycle_hooks("transform_output", output)
 
@@ -2117,8 +2118,12 @@ class Module:
             output = getattr(stream_response, "_settled_output", stream_response.data)
             output = await self._atransform_module_output(output)
             if result is not stream_response and isinstance(result, dict):
-                result["response"] = output
-                output = result
+                # Preserve the caller's stream handle. A direct Agent call can
+                # share this envelope with the detached event finalizer, and
+                # replacing its ``response`` would race against token consumers.
+                presented = copy.copy(result)
+                presented["response"] = output
+                output = presented
         else:
             output = result
         emit_event(EventType.MESSAGE_END, {"content": output})
