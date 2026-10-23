@@ -511,7 +511,12 @@ class AgentServiceClient:
 
 
 def _segment(value: str) -> str:
-    return quote(value, safe="")
+    encoded = quote(value, safe="")
+    # Dot segments are unreserved characters, but HTTP clients normalize them
+    # before dispatch. Encode them so they remain opaque identifiers.
+    if encoded in {".", ".."}:
+        return encoded.replace(".", "%2E")
+    return encoded
 
 
 def _error_payload(response: httpx2.Response) -> ErrorResponse:
