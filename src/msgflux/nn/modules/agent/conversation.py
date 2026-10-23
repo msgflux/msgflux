@@ -31,7 +31,7 @@ from msgflux.exceptions import (
 from msgflux.models.configuration import ModelConfiguration
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.response import ModelResponse, ModelStreamResponse
-from msgflux.models.tool_transport import native_item_types
+from msgflux.models.tool_transport import native_item_types, pending_tool_calls
 from msgflux.models.types import reasoning_effort_from_history
 from msgflux.nn.hooks.events import (
     NotificationContext,
@@ -962,11 +962,7 @@ class AgentConversationMixin:
         ]
         messages.extend(trajectory_items)
 
-        existing_call_ids = {
-            item.get("call_id") or item.get("id")
-            for item in messages
-            if item.get("type") in call_item_types
-        }
+        existing_call_ids = set(pending_tool_calls(messages))
         get_tool_intents = getattr(model_response, "get_tool_intents", None)
         if callable(get_tool_intents):
             missing_calls = []
@@ -1007,18 +1003,14 @@ class AgentConversationMixin:
             return
 
         call_item_types = {"function_call", *native_item_types()}
-        existing_call_ids = {
-            item.get("call_id") or item.get("id")
-            for item in messages
-            if item.get("type") in call_item_types
-        }
+        open_call_ids = set(pending_tool_calls(messages))
         normalized = ChatMessages(tool_response_messages).to_items()
         messages.extend(
             item
             for item in normalized
             if not (
                 item.get("type") in call_item_types
-                and (item.get("call_id") or item.get("id")) in existing_call_ids
+                and (item.get("call_id") or item.get("id")) in open_call_ids
             )
         )
 

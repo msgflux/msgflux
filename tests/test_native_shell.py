@@ -129,6 +129,54 @@ def test_native_interruption_and_portable_projection():
     assert portable[1]["role"] == "tool"
 
 
+def test_native_then_generic_reused_id_interrupts_with_generic_output():
+    history = ChatMessages([CALL])
+    assert history.close_interrupted_tool_calls(reason="first") == 1
+    history.append(
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "lookup",
+            "arguments": "{}",
+        }
+    )
+
+    assert history.close_interrupted_tool_calls(reason="second") == 1
+
+    interrupted = history.to_items()[-1]
+    assert interrupted["type"] == "function_call_output"
+    assert interrupted["call_id"] == "call_1"
+    assert interrupted["status"] == "interrupted"
+    assert interrupted["output"]["details"] == "second"
+
+
+def test_generic_then_native_reused_id_interrupts_with_native_output():
+    history = ChatMessages(
+        [
+            {
+                "type": "function_call",
+                "call_id": "call_1",
+                "name": "lookup",
+                "arguments": "{}",
+            },
+            {
+                "type": "function_call_output",
+                "call_id": "call_1",
+                "output": "first",
+            },
+            deepcopy(CALL),
+        ]
+    )
+
+    assert history.close_interrupted_tool_calls(reason="second") == 1
+
+    interrupted = history.to_items()[-1]
+    assert interrupted["type"] == "shell_call_output"
+    assert interrupted["call_id"] == "call_1"
+    assert len(interrupted["output"]) == 2
+    assert all(part["stderr"] == "second" for part in interrupted["output"])
+
+
 def test_reader_constructor_config_is_compiled():
     class VisualReader(ReadFileTool):
         """Read configured files."""

@@ -358,6 +358,41 @@ def test_chat_messages_close_interrupted_tool_calls():
     assert chat.to_responses_input()[-1]["status"] == "incomplete"
 
 
+def test_chat_messages_close_interrupted_tool_calls_reopens_reused_id():
+    chat = ChatMessages(thread_id="thread_1", namespace="agent:test")
+    first_call = {
+        "type": "function_call",
+        "call_id": "reused-id",
+        "name": "lookup",
+        "arguments": "{}",
+    }
+    first_output = {
+        "type": "function_call_output",
+        "call_id": "reused-id",
+        "output": "first",
+    }
+    chat.append(first_call)
+    chat.append(first_output)
+    chat.append({**first_call, "arguments": '{"attempt":2}'})
+
+    closed = chat.close_interrupted_tool_calls(reason="user pressed interrupt")
+    closed_again = chat.close_interrupted_tool_calls(reason="user pressed interrupt")
+
+    items = chat.to_items()
+    assert closed == 1
+    assert closed_again == 0
+    assert [item["type"] for item in items] == [
+        "function_call",
+        "function_call_output",
+        "function_call",
+        "function_call_output",
+    ]
+    assert items[1]["output"] == "first"
+    assert items[-1]["call_id"] == "reused-id"
+    assert items[-1]["status"] == "interrupted"
+    assert items[-1]["output"]["status"] == "interrupted"
+
+
 def _completed_turn(chat: ChatMessages, user: str, assistant: str) -> str:
     chat.begin_turn()
     chat.add_user(user)
