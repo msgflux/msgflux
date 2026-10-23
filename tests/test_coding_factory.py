@@ -87,6 +87,8 @@ def test_factory_builds_named_child_agents_lazily_and_closes_models(
         return model
 
     monkeypatch.setattr(factory_module, "_create_model", create_model)
+    home = tmp_path / "home"
+    monkeypatch.setenv("HOME", str(home))
     parent = resolve_coding_agent_options(
         CodingAgentOptions(
             agent_id="coding",
@@ -109,7 +111,7 @@ def test_factory_builds_named_child_agents_lazily_and_closes_models(
         options=parent,
         catalog=catalog,
         config_path=tmp_path / "config.toml",
-        runtime_dir=tmp_path / "runtime",
+        runtime_dir=home / ".msgflux" / "nested" / ".." / "runtime",
     )
 
     assert created_models == []
@@ -119,7 +121,7 @@ def test_factory_builds_named_child_agents_lazily_and_closes_models(
 
     assert len(created_models) == 2
     assert session.agent.get_module_name() == "coding"
-    assert session.agent.agent_dir == tmp_path
+    assert session.agent.agent_dir == home / ".msgflux"
     assert session.agent.has_extension("coding_checkpoints")
     agent_tool = session.agent.tool_library.library["agent"].impl
     assert [
@@ -129,9 +131,149 @@ def test_factory_builds_named_child_agents_lazily_and_closes_models(
     assert (
         session.agent.tool_library.get_tool_definition("bash").loading.deferred is False
     )
+    resources = session.agent._bind_resources("thread-1")
+    assert resources.thread_dir == home / ".msgflux" / "threads" / "thread-1"
+    assert not (home / ".msgflux" / "runtime" / "threads").exists()
 
     asyncio.run(session.on_close())
     assert all(model.closed for model in created_models)
+
+
+def test_factory_requires_explicit_custom_agent_dir_before_side_effects(
+    tmp_path, monkeypatch
+):
+    import msgflux.coding.factory as factory_module
+
+    options = CodingAgentOptions(
+        agent_id="coding",
+        model="openai/gpt-4.1",
+        reasoning_effort="medium",
+        tools_active=("read",),
+    )
+    monkeypatch.setattr(
+        factory_module,
+        "_create_model",
+        lambda _options: pytest.fail("model must not be constructed"),
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+    runtime_dir = tmp_path / "runtime"
+
+    with pytest.raises(ValueError, match="requires an explicit agent_dir") as caught:
+        create_coding_session_factory(
+            options=options,
+            catalog=CodingAgentCatalog({"coding": options}),
+            config_path=tmp_path / "config.toml",
+            runtime_dir=runtime_dir,
+        )
+
+    assert str(tmp_path / "threads") in str(caught.value)
+    assert not runtime_dir.exists()
+    assert not (tmp_path / "threads").exists()
+
+
+def test_factory_accepts_explicit_legacy_root_for_existing_threads(
+    tmp_path, monkeypatch
+):
+    import msgflux.coding.factory as factory_module
+
+    monkeypatch.setattr(factory_module, "_create_model", lambda _options: _FakeModel())
+    legacy_root = tmp_path / "legacy-parent"
+    legacy_root.mkdir(mode=0o755)
+    legacy_root.chmod(0o755)
+    runtime_dir = legacy_root / "runtime"
+    runtime_dir.mkdir()
+    options = CodingAgentOptions(
+        agent_id="coding",
+        model="openai/gpt-4.1",
+        reasoning_effort="medium",
+        tools_active=("read",),
+    )
+
+    session = asyncio.run(
+        create_coding_session_factory(
+            options=options,
+            catalog=CodingAgentCatalog({"coding": options}),
+            config_path=tmp_path / "config.toml",
+            runtime_dir=runtime_dir,
+            agent_dir=legacy_root,
+        )(ServiceThread("existing-thread", "coding", str(tmp_path)))
+    )
+    try:
+        assert session.agent.agent_dir == legacy_root
+        assert legacy_root.stat().st_mode & 0o777 == 0o755
+        assert not (legacy_root / "threads").exists()
+        resources = session.agent._bind_resources("existing-thread")
+        assert resources.thread_dir == legacy_root / "threads" / "existing-thread"
+        assert not (runtime_dir / "threads").exists()
+    finally:
+        asyncio.run(session.on_close())
+
+
+def test_explicit_custom_root_does_not_claim_runtime_parent(tmp_path, monkeypatch):
+    import msgflux.coding.factory as factory_module
+
+    monkeypatch.setattr(factory_module, "_create_model", lambda _options: _FakeModel())
+    runtime_parent = tmp_path / "shared"
+    runtime_parent.mkdir(mode=0o755)
+    runtime_parent.chmod(0o755)
+    runtime_dir = runtime_parent / "runtime"
+    runtime_dir.mkdir()
+    agent_dir = tmp_path / "coding-state"
+    options = CodingAgentOptions(
+        agent_id="coding",
+        model="openai/gpt-4.1",
+        reasoning_effort="medium",
+        tools_active=("read",),
+    )
+    session = asyncio.run(
+        create_coding_session_factory(
+            options=options,
+            catalog=CodingAgentCatalog({"coding": options}),
+            config_path=tmp_path / "config.toml",
+            runtime_dir=runtime_dir,
+            agent_dir=agent_dir,
+        )(ServiceThread("custom-thread", "coding", str(tmp_path)))
+    )
+    try:
+        assert not agent_dir.exists()
+        resources = session.agent._bind_resources("custom-thread")
+        assert resources.thread_dir == agent_dir / "threads" / "custom-thread"
+        assert runtime_parent.stat().st_mode & 0o777 == 0o755
+        assert not (runtime_parent / "threads").exists()
+    finally:
+        asyncio.run(session.on_close())
+
+
+def test_explicit_symlinked_agent_root_remains_rejected(tmp_path, monkeypatch):
+    import msgflux.coding.factory as factory_module
+
+    monkeypatch.setattr(factory_module, "_create_model", lambda _options: _FakeModel())
+    target = tmp_path / "real-state"
+    target.mkdir()
+    agent_dir = tmp_path / "state-link"
+    agent_dir.symlink_to(target, target_is_directory=True)
+    options = CodingAgentOptions(
+        agent_id="coding",
+        model="openai/gpt-4.1",
+        reasoning_effort="medium",
+        tools_active=("read",),
+    )
+    session = asyncio.run(
+        create_coding_session_factory(
+            options=options,
+            catalog=CodingAgentCatalog({"coding": options}),
+            config_path=tmp_path / "config.toml",
+            runtime_dir=tmp_path / "runtime",
+            agent_dir=agent_dir,
+        )(ServiceThread("symlink-thread", "coding", str(tmp_path)))
+    )
+    try:
+        assert session.agent.agent_dir == agent_dir.absolute()
+        with pytest.raises(ValueError, match="real directory"):
+            session.agent._bind_resources("symlink-thread")
+        assert list(target.iterdir()) == []
+    finally:
+        asyncio.run(session.on_close())
 
 
 def test_custom_prompt_keeps_harness_context(tmp_path: Path, monkeypatch):
@@ -153,6 +295,7 @@ def test_custom_prompt_keeps_harness_context(tmp_path: Path, monkeypatch):
             catalog=CodingAgentCatalog(agents={"coding": options}),
             config_path=tmp_path / "config.toml",
             runtime_dir=tmp_path / "runtime",
+            agent_dir=tmp_path / "agent-state",
         )(ServiceThread("thread-1", "coding", str(tmp_path)))
     )
 
@@ -226,6 +369,7 @@ def test_partial_tool_construction_closes_prior_owned_resources(tmp_path, monkey
         catalog=CodingAgentCatalog(agents={"coding": options}),
         config_path=tmp_path / "config.toml",
         runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "agent-state",
     )
 
     with pytest.raises(RuntimeError, match="tool constructor failed"):
@@ -265,6 +409,7 @@ async def test_child_agent_tool_result_is_checkpoint_and_watch_serializable(
         catalog=catalog,
         config_path=tmp_path / "config.toml",
         runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "agent-state",
     )
     session = await session_factory(
         ServiceThread("stream-child-thread", "coding", str(tmp_path))
@@ -318,6 +463,13 @@ async def test_child_agent_tool_result_is_checkpoint_and_watch_serializable(
         assert any(record.type == "run.end" for record in records)
         assert snapshot.messages is not None
         assert child_agent.config["stream"] is False
+        assert (
+            parent_agent.agent_dir
+            / "threads"
+            / "stream-child-thread"
+            / "checkpoints.sqlite3"
+        ).is_file()
+        assert child_agent._owned_threads == {}
     finally:
         await service.aclose()
 
@@ -341,6 +493,7 @@ def test_factory_enables_read_vision_from_model_input_modalities(tmp_path, monke
             catalog=CodingAgentCatalog(agents={"coding": options}),
             config_path=tmp_path / "config.toml",
             runtime_dir=tmp_path / "runtime",
+            agent_dir=tmp_path / "agent-state",
         )(ServiceThread("vision-thread", "coding", str(tmp_path)))
     )
 
@@ -382,6 +535,7 @@ def test_factory_adds_progress_tool_only_to_interactive_parent(tmp_path, monkeyp
             catalog=CodingAgentCatalog(agents={"coding": parent, "lite-coding": child}),
             config_path=tmp_path / "config.toml",
             runtime_dir=tmp_path / "runtime",
+            agent_dir=tmp_path / "agent-state",
         )(ServiceThread("interactive-thread", "coding", str(tmp_path)))
     )
     parent_tools = session.agent.tool_library.library
@@ -481,6 +635,7 @@ async def test_read_only_delegation_blocks_mutations_and_descendant_escalation(
         catalog=catalog,
         config_path=tmp_path / "config.toml",
         runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "agent-state",
     )(ServiceThread("readonly-delegation", "coding", str(tmp_path)))
     main = session.agent
     child = main.tool_library.get_tool_definition("explorer").executor.impl
@@ -587,6 +742,7 @@ async def test_factory_enforces_independent_workspace_permissions(
         catalog=CodingAgentCatalog(agents={"coding": options}),
         config_path=tmp_path / "config.toml",
         runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "agent-state",
     )(ServiceThread("permission-matrix", "coding", str(tmp_path)))
     workspace = session.agent.workspace
     try:

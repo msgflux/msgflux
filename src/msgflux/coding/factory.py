@@ -13,6 +13,7 @@ from msgflux.coding.config import (
     CodingAgentCatalog,
     CodingAgentOptions,
     CodingPermission,
+    _resolve_coding_agent_dir,
     coding_permission_set,
     coding_tool_allowed,
     validate_coding_catalog,
@@ -159,6 +160,7 @@ def create_coding_session_factory(
     catalog: CodingAgentCatalog,
     config_path: Path,
     runtime_dir: Path,
+    agent_dir: Path | None = None,
     accounts=None,
     extension_catalog: AgentExtensionCatalog | None = None,
 ) -> Callable[[ServiceThread], Awaitable[AgentSession]]:
@@ -172,11 +174,13 @@ def create_coding_session_factory(
     validate_coding_catalog(catalog)
     config_path = Path(config_path).expanduser().resolve()
     runtime_dir = Path(runtime_dir).expanduser().resolve()
+    agent_dir = _resolve_coding_agent_dir(runtime_dir, agent_dir)
     builder = _CodingSessionBuilder(
         options=options,
         catalog=catalog,
         config_path=config_path,
         runtime_dir=runtime_dir,
+        agent_dir=agent_dir,
         accounts=accounts,
         extension_catalog=extension_catalog,
     )
@@ -191,6 +195,7 @@ class _CodingSessionBuilder:
         catalog: CodingAgentCatalog,
         config_path: Path,
         runtime_dir: Path,
+        agent_dir: Path,
         accounts=None,
         extension_catalog: AgentExtensionCatalog | None = None,
     ) -> None:
@@ -198,6 +203,7 @@ class _CodingSessionBuilder:
         self.catalog = catalog
         self.config_path = config_path
         self.runtime_dir = runtime_dir
+        self.agent_dir = agent_dir
         self.accounts = accounts
         self.extension_catalog = extension_catalog or AgentExtensionCatalog()
         for entry in catalog.agents.values():
@@ -320,11 +326,9 @@ class _CodingSessionBuilder:
             config={"stream": selected.agent_id == self.options.agent_id},
             tools=tools,
             workspace=workspace,
-            agent_dir=(
-                self.runtime_dir.parent
-                if selected.agent_id == self.options.agent_id
-                else None
-            ),
+            agent_dir=self.agent_dir
+            if selected.agent_id == self.options.agent_id
+            else None,
         )
         agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
         if selected.extensions:

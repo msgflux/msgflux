@@ -70,11 +70,22 @@ def _make_manifest_service(
     manifest = manifest or load_service_manifest(config_path, cwd=cwd)
     coding_builder = None
     accounts = None
+    agent_dir = None
     if manifest.coding_catalog.agents:
-        from msgflux.accounts.store import Accounts  # noqa: PLC0415
+        from msgflux.coding.config import (  # noqa: PLC0415
+            _resolve_coding_agent_dir,
+        )
         from msgflux.coding.factory import (  # noqa: PLC0415
             create_coding_session_factory,
         )
+
+        agent_dir = _resolve_coding_agent_dir(
+            runtime_dir,
+            Path(manifest.defaults.agent_dir)
+            if manifest.defaults.agent_dir is not None
+            else None,
+        )
+        from msgflux.accounts.store import Accounts  # noqa: PLC0415
 
         accounts = Accounts(manifest.defaults.accounts_dir)
         coding_builder = create_coding_session_factory
@@ -89,6 +100,7 @@ def _make_manifest_service(
                     catalog=manifest.coding_catalog,
                     config_path=manifest.path,
                     runtime_dir=runtime_dir,
+                    agent_dir=agent_dir,
                     accounts=accounts,
                     extension_catalog=manifest.extension_catalog,
                 )
@@ -199,11 +211,26 @@ async def serve_local_service(  # noqa: C901
     if factory is not None and (not isinstance(factory, str) or not factory):
         raise ValueError("factory must use the form 'module:attribute'")
     working_directory = _validated_cwd(cwd)
-    directory = prepare_runtime_dir(
+    requested_runtime = (
         Path(runtime_dir).expanduser()
         if runtime_dir is not None
         else Path.home() / ".msgflux" / "runtime"
     )
+    manifest = None
+    if config is not None:
+        manifest = load_service_manifest(config, cwd=working_directory)
+        if manifest.coding_catalog.agents:
+            from msgflux.coding.config import (  # noqa: PLC0415
+                _resolve_coding_agent_dir,
+            )
+
+            _resolve_coding_agent_dir(
+                requested_runtime,
+                Path(manifest.defaults.agent_dir)
+                if manifest.defaults.agent_dir is not None
+                else None,
+            )
+    directory = prepare_runtime_dir(requested_runtime)
 
     lock_path = directory / "daemon.lock"
     with process_lock(lock_path, blocking=False) as lock:
@@ -224,7 +251,8 @@ async def serve_local_service(  # noqa: C901
                     raise ValueError("provide exactly one of factory or config")
                 service = await _make_service(factory, directory, working_directory)
             else:
-                manifest = load_service_manifest(config, cwd=working_directory)
+                if manifest is None:
+                    raise RuntimeError("service config was not loaded during preflight")
                 http_config = manifest.http
                 service, config_path, config_digest = _make_manifest_service(
                     config, directory, working_directory, manifest=manifest

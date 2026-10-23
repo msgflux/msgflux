@@ -222,6 +222,7 @@ async def test_builtin_daemon_ignores_untrusted_cwd_module_shadows(daemon_worksp
     config = project / "service.toml"
     config.write_text(
         "[defaults]\nagent = 'coding'\nmodel = 'provider/model-id'\n"
+        "agent_dir = 'agent-state'\n"
         "[agents.coding]\nharness = 'coding'\n"
     )
 

@@ -458,6 +458,56 @@ where application modules are imported or select a thread's workspace; pass that
 project path when opening a thread. TUI appearance and key bindings belong in a
 separate `tui.toml`; this backend file defines agents and service configuration.
 
+### Coding Agent State Directory
+
+The daemon `runtime_dir` stores service metadata and the workspace registry.
+Coding Agent checkpoints, approvals, tasks, and inboxes live separately under
+`agent_dir/threads/<thread_id>/`. With the default `~/.msgflux/runtime`, the
+coding state root is `~/.msgflux`, preserving the usual
+`~/.msgflux/threads/<thread_id>/` layout. A custom runtime does not implicitly
+claim its parent: set `defaults.agent_dir` for coding agents:
+
+```toml
+[defaults]
+agent = "coding"
+model = "provider/model-id"
+agent_dir = "./agent-state"
+
+[agents.coding]
+harness = "coding"
+```
+
+In TOML, an explicit relative `agent_dir` is resolved from the config file's
+directory and `~` is expanded. Custom-factory-only configurations do not need
+this coding setting. The Python `create_coding_session_factory(...)` accepts the
+same `agent_dir` keyword alongside `runtime_dir`; relative Python paths resolve
+from the process working directory.
+
+```python
+from pathlib import Path
+
+from msgflux.coding.factory import create_coding_session_factory
+
+session_factory = create_coding_session_factory(
+    options=coding_options,
+    catalog=coding_catalog,
+    config_path=Path("./agents.toml"),
+    runtime_dir=Path("./service-runtime"),
+    agent_dir=Path("./agent-state"),
+)
+```
+
+This creates the session factory without creating directories; the selected
+`agent_dir` is used for managed coding thread stores when a thread is admitted.
+
+Older releases placed custom-runtime threads at `<old runtime_dir>/../threads/`.
+To resume them without moving data, set `agent_dir` to that old runtime parent
+(or pass it as the Python factory's `agent_dir`). A non-default runtime without
+an explicit root is rejected before the runtime directory is created, and the
+error reports the legacy path. Msgflux never moves, merges, or silently switches
+thread roots. For the canonical default runtime, omit `agent_dir` to retain the
+default layout.
+
 Discovery identifies the config by its canonical path and a SHA-256 digest of
 its contents. Editing a running daemon's file does not hot-reload it. A subsequent
 connection reports a conflict until an explicit restart rereads the recorded
@@ -517,6 +567,7 @@ Save this as `my_backend.py` in your project:
 
 ```python
 import re
+from pathlib import Path
 
 import msgflux as mf
 from msgflux.coding import CodingCheckpointExtension
@@ -527,6 +578,7 @@ from msgflux.runtime import AgentService, AgentSession, AgentWorkspace, SQLiteSe
 
 def create_service(runtime_dir):
     service = AgentService(store=SQLiteServiceStore(runtime_dir / "service.sqlite3"))
+    agent_dir = Path.home() / ".msgflux"
 
     async def create_agent(thread):
         # Application policy keeps thread IDs safe as directory names.
@@ -534,7 +586,7 @@ def create_service(runtime_dir):
             raise ValueError("Unsupported persistent thread ID")
         if thread.cwd is None:
             raise ValueError("This coding service requires a project cwd")
-        folder = runtime_dir.parent / "threads" / thread.thread_id
+        folder = agent_dir / "threads" / thread.thread_id
         folder.mkdir(parents=True, exist_ok=True)
         model = workspace = checkpoints = None
 
@@ -1251,10 +1303,12 @@ constructing an Agent. A PID from a discovery file is never used to signal or ki
 a process. Stale metadata may be replaced when no owner holds the lifetime lock;
 failed startup cleanup operates only on the child handle created by that launcher.
 
-Factory-owned conversation stores stay separate from discovery files. The example
-adds `runtime/service.sqlite3` and `threads/<thread_id>/checkpoints.sqlite3`; the
-manifest runner owns the admission journal, while the factories choose conversation
-storage and model credentials.
+Factory-owned conversation stores stay separate from discovery files. In the
+custom-factory example, `runtime/service.sqlite3` is separate from the explicitly
+chosen `agent_dir/threads/<thread_id>/checkpoints.sqlite3`. The manifest runner
+owns the admission journal, while factories choose conversation storage and
+model credentials. Built-in coding agents use the same separation; set
+`defaults.agent_dir` when overriding the daemon runtime directory.
 
 ## Failure And Recovery
 

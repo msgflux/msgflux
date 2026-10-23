@@ -91,6 +91,7 @@ async def test_manifest_runner_injects_custom_accounts_root_into_parent_and_chil
         'agent = "coding"\n'
         'account = "work"\n'
         'accounts_dir = "credential-bundles"\n'
+        'agent_dir = "agent-state"\n'
         'model = "openai/gpt-4.1"\n'
         "\n[agents.coding]\n"
         'harness = "coding"\n'

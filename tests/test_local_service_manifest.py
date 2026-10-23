@@ -66,6 +66,34 @@ def test_manifest_parses_factory_refs(tmp_path):
         manifest.agents["worker"].factory
         == "tests.test_local_service_runner:local_factory"
     )
+    assert manifest.defaults.agent_dir is None
+
+
+def test_manifest_expands_agent_dir_without_touching_home(tmp_path, monkeypatch):
+    fake_home = tmp_path / "fake-home"
+    monkeypatch.setenv("HOME", str(fake_home))
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[defaults]\nagent = 'worker'\nagent_dir = '~/agent-state/../state'\n"
+        "[agents.worker]\nfactory = 'tests.test_local_service_runner:local_factory'\n"
+    )
+
+    manifest = load_service_manifest(path)
+
+    assert manifest.defaults.agent_dir == str((fake_home / "state").resolve())
+
+
+def test_manifest_normalizes_optional_agent_dir_for_custom_factories(tmp_path):
+    path = tmp_path / "nested" / "config.toml"
+    path.parent.mkdir()
+    path.write_text(
+        "[defaults]\nagent = 'worker'\nagent_dir = '../agent-state'\n"
+        "[agents.worker]\nfactory = 'tests.test_local_service_runner:local_factory'\n"
+    )
+
+    manifest = load_service_manifest(path)
+
+    assert manifest.defaults.agent_dir == str((tmp_path / "agent-state").resolve())
 
 
 def test_manifest_parses_coding_agent_permissions(tmp_path):
@@ -85,6 +113,8 @@ def test_manifest_parses_coding_agent_permissions(tmp_path):
     "content",
     [
         "[defaults]\nagent = 'worker'\nunknown = true\n",
+        "[defaults]\nagent = 'worker'\nagent_dir = '   '\n[agents.worker]\n"
+        "factory = 'tests.test_local_service_runner:local_factory'\n",
         "[defaults]\nagent = 'worker'\n[agents.worker]\nfactory = ''\n",
         "[defaults]\nagent = 'worker'\n[agents.worker]\nfactory = 'not-a-path'\n",
         "[defaults]\nagent = 'worker'\n[agents.\"\"]\nfactory = 'module:factory'\n",
@@ -115,6 +145,58 @@ def test_runner_imports_factories_before_opening_service_store(tmp_path, monkeyp
     monkeypatch.setattr(runner, "SQLiteServiceStore", unexpected_store)
     with pytest.raises(ValueError, match="Invalid agent factory"):
         runner._make_manifest_service(path, tmp_path / "runtime", tmp_path)
+
+
+@pytest.mark.asyncio
+async def test_runner_rejects_custom_coding_runtime_before_creating_it(
+    tmp_path, monkeypatch
+):
+    from msgflux.runtime.service.local.runner import serve_local_service
+
+    parent = tmp_path / "shared-state"
+    parent.mkdir(mode=0o755)
+    runtime = parent / "runtime"
+    config = tmp_path / "config.toml"
+    config.write_text(
+        "[defaults]\nagent='coding'\nmodel='provider/model'\n"
+        "[agents.coding]\nharness='coding'\n"
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+
+    with pytest.raises(ValueError, match="requires an explicit agent_dir") as caught:
+        await serve_local_service(config=config, runtime_dir=runtime, cwd=Path.cwd())
+
+    assert str(parent / "threads") in str(caught.value)
+    assert parent.stat().st_mode & 0o777 == 0o755
+    assert not runtime.exists()
+    assert not (parent / "threads").exists()
+    with pytest.raises(ValueError, match="requires an explicit agent_dir"):
+        await restart_local_service(config=config, runtime_dir=runtime, cwd=tmp_path)
+    assert not runtime.exists()
+
+
+@pytest.mark.asyncio
+async def test_discovery_rejects_custom_coding_runtime_before_preparing_it(
+    tmp_path, monkeypatch
+):
+    parent = tmp_path / "shared-state"
+    parent.mkdir(mode=0o755)
+    parent.chmod(0o755)
+    runtime = parent / "runtime"
+    config = tmp_path / "config.toml"
+    config.write_text(
+        "[defaults]\nagent='coding'\nmodel='provider/model'\n"
+        "[agents.coding]\nharness='coding'\n"
+    )
+    monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
+
+    with pytest.raises(ValueError, match="requires an explicit agent_dir") as caught:
+        await connect_local_service(config=config, runtime_dir=runtime, cwd=tmp_path)
+
+    assert str(parent / "threads") in str(caught.value)
+    assert parent.stat().st_mode & 0o777 == 0o755
+    assert not runtime.exists()
+    assert not (parent / "threads").exists()
 
 
 def test_manifest_runner_passes_declared_default_agent(tmp_path):
@@ -245,6 +327,7 @@ def test_runner_rejects_expanded_tool_overlap_before_opening_store(
     path = tmp_path / "config.toml"
     path.write_text(
         "[defaults]\nagent='worker'\nmodel='openai-codex/gpt-6-luna'\n"
+        "agent_dir='agent-state'\n"
         "[agents.worker]\nharness='coding'\n"
         "[agents.worker.tools]\nactive=['workspace']\ndeferred=['bash']\n"
     )
@@ -496,7 +579,7 @@ async def test_connect_requires_model_from_initialized_default_manifest(
     config.write_text(
         config.read_text().replace(
             'agent = "coding"\n',
-            'agent = "coding"\nmodel = "provider/model-id"\n',
+            'agent = "coding"\nmodel = "provider/model-id"\nagent_dir = "."\n',
             1,
         )
     )
