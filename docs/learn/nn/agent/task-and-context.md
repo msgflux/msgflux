@@ -765,10 +765,15 @@ The final assistant response is **never added automatically** — append it manu
     === "ChatBot Pattern"
 
         Complete chatbot loop with streaming. `messages=None` on the first turn
-        means ephemeral — no list is needed until history starts accumulating:
+        means ephemeral — no list is needed until history starts accumulating.
+        With `return_messages=True`, the streamed result is an envelope: consume
+        `result.response` and reuse `result.messages` after it settles. The
+        completed stream already commits the assistant reply to that history.
 
         ```python
         # pip install msgflux
+        import asyncio
+
         import msgflux as mf
         import msgflux.nn as nn
 
@@ -779,25 +784,26 @@ The final assistant response is **never added automatically** — append it manu
             system_prompt = "You are a helpful assistant."
             config = {"stream": True, "return_messages": True}
 
-        agent = ChatBot()
-        messages = None  # ephemeral on first turn
+        async def main():
+            agent = ChatBot()
+            messages = None  # ephemeral on first turn
 
-        while True:
-            user_input = input("You: ")
-            if user_input.lower() in ["quit", "exit"]:
-                break
+            while True:
+                user_input = input("You: ")
+                if user_input.lower() in ["quit", "exit"]:
+                    break
 
-            result = agent(user_input, messages=messages)
+                result = await agent.acall(user_input, messages=messages)
 
-            full_response = ""
-            print("Assistant: ", end="", flush=True)
-            for chunk in result.consume():
-                print(chunk, end="", flush=True)
-                full_response += chunk
-            print()
+                print("Assistant: ", end="", flush=True)
+                async for chunk in result.response.consume():
+                    print(chunk, end="", flush=True)
+                print()
 
-            # Build history for the next turn (include the assistant reply)
-            messages = result.messages + [mf.ChatBlock.assist(full_response)]
+                # The completed stream commits the assistant reply to history.
+                messages = result.messages
+
+        asyncio.run(main())
         ```
 
 ## Declarative Mode with Message
