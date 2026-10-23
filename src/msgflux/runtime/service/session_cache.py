@@ -94,6 +94,9 @@ class _SessionCache:
 
     ``load`` and ``idle_reason`` are host/service callbacks. Loading and closing
     happen outside the cache lock; per-thread tasks serialize each generation.
+    ``validate`` is a synchronous service callback that may reject an unpublished
+    session immediately before it is published, making cross-thread ownership
+    checks atomic with cache publication.
     """
 
     def __init__(
@@ -103,15 +106,19 @@ class _SessionCache:
         *,
         policy: SessionCachePolicy | None = None,
         busy_reason: Callable[[Any, Any], str | None] | None = None,
+        validate: Callable[[Any], None] | None = None,
         clock: Callable[[], float] = time.monotonic,
     ) -> None:
         if not callable(load) or not callable(idle_reason) or not callable(clock):
             raise TypeError("load, idle_reason, and clock must be callable")
         if busy_reason is not None and not callable(busy_reason):
             raise TypeError("busy_reason must be callable or None")
+        if validate is not None and not callable(validate):
+            raise TypeError("validate must be callable or None")
         self._load = load
         self._idle_reason = idle_reason
         self._busy_reason = busy_reason
+        self._validate = validate
         self._policy = policy
         self._clock = clock
         self._lock = asyncio.Lock()
@@ -359,8 +366,10 @@ class _SessionCache:
                 session = await session
             entry = None
             async with self._lock:
-                waiters = self._load_waiters.pop(key, 0)
                 is_closing = self._closed
+                if not is_closing and self._validate is not None:
+                    self._validate(session)
+                waiters = self._load_waiters.pop(key, 0)
                 if not is_closing and self._loads.get(key) is asyncio.current_task():
                     self._loads.pop(key, None)
                 if is_closing:
