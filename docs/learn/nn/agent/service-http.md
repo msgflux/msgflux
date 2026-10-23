@@ -622,6 +622,48 @@ header. Native browser `EventSource` cannot set that header; tokens are not
 accepted in query parameters. The CORS middleware sends the SSE response headers
 immediately and does not buffer the event stream.
 
+### Service Transport And Proxies
+
+A client created by `AgentServiceClient` owns its HTTP connection pool and
+ignores the ambient `HTTP_PROXY`, `HTTPS_PROXY`, `ALL_PROXY`, and related
+environment settings. Loopback addresses are not implicitly exempt from those
+settings in general, so this default keeps the service bearer token on the
+direct connection to `base_url` instead of sending it to an environment-selected
+proxy.
+
+```python
+from msgflux.runtime.service.http import AgentServiceClient
+
+# Owned transport: direct connection, ambient proxy variables ignored.
+client = AgentServiceClient("http://127.0.0.1:8765", token=token)
+try:
+    health = await client.health()
+finally:
+    await client.aclose()
+```
+
+An intentional proxy, custom CA, or custom transport is still possible by
+injecting an `httpx2.AsyncClient` you configure. `AgentServiceClient` borrows an
+injected client for requests, keeps its caller configuration, and does not close
+it from `aclose()`.
+
+```python
+import httpx2
+
+# Explicit remote proxy: caller-owned client, closed by the caller.
+async with httpx2.AsyncClient(proxy="http://proxy.internal:3128") as http:
+    client = AgentServiceClient(
+        "https://service.example", token=token, client=http
+    )
+    try:
+        await client.health()
+    finally:
+        await client.aclose()  # Leaves the injected http client open.
+```
+
+Use the same injection point with `verify=` when a service requires a private CA.
+Model provider HTTP settings are independent of this service client.
+
 ## Inspect The Loaded HTTP Policy
 
 `GET /v1/service/inspection` returns an authenticated snapshot of the running
