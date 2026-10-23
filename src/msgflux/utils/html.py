@@ -91,6 +91,11 @@ _chunk_regex = re.compile(
     r"|"
     # 14. Fallback
     rf"(?:[^\r\n]{{1,{MAX_STANDALONE_LINE_LENGTH}}}{_SENT_END}?(?=\s|$)|[^\r\n]{{1,{MAX_STANDALONE_LINE_LENGTH}}}(?=[\r\n]|$))"
+    r"|"
+    # 15. Bounded progress for unbroken lines. Without this, a line longer
+    # than the bounded alternatives makes findall retry every position and
+    # silently drop the remainder after the first match.
+    rf"(?:[^\r\n]{{1,{MAX_STANDALONE_LINE_LENGTH}}})"
     r")",
     re.MULTILINE | re.UNICODE,
 )
