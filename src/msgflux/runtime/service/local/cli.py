@@ -525,9 +525,6 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         )
 
         args.config = initialize_service_config(default_service_config_path())
-    current_directory = str(Path.cwd().resolve())
-    if current_directory not in sys.path:
-        sys.path.insert(0, current_directory)
 
     from msgflux.runtime.service.local.runner import (  # noqa: PLC0415
         serve_local_service,

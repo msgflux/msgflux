@@ -61,7 +61,7 @@ async def test_runner_retains_owner_lease_and_store_until_cancelled_shutdown_set
     await service.open_thread("agent", thread_id="retained-thread")
     await service.snapshot("retained-thread")
 
-    async def make_service(_factory, _runtime):
+    async def make_service(_factory, _runtime, _cwd):
         return service
 
     async def verify_health(*_args):

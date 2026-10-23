@@ -19,7 +19,10 @@ pytestmark = pytest.mark.skipif(
 )
 
 from msgflux.runtime.service.http import AgentServiceClient
-from msgflux.runtime.service.local.discovery import connect_local_service
+from msgflux.runtime.service.local.discovery import (
+    connect_local_service,
+    stop_local_service,
+)
 from msgflux.runtime.service.local.files import process_lock, read_record, write_record
 from msgflux.runtime.service.local.records import LocalServiceRecord
 
@@ -198,6 +201,88 @@ async def test_concurrent_starter_processes_exit_and_leave_one_reusable_daemon(
     third = await _finish_starter(_starter(project_b, runtime_dir))
     assert third == identities[0]
     assert (runtime_dir / "boots").read_text().splitlines() == ["boot"]
+
+
+@pytest.mark.asyncio
+async def test_builtin_daemon_ignores_untrusted_cwd_module_shadows(daemon_workspace):
+    project, _project_b, _project_c, runtime_dir = daemon_workspace
+    marker = project / "shadow-import.marker"
+    shadow_package = project / "msgflux"
+    shadow_package.mkdir()
+    (shadow_package / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('msgflux')\n"
+        "raise RuntimeError('untrusted msgflux shadow imported')\n"
+    )
+    (project / "uvicorn.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('uvicorn')\n"
+        "raise RuntimeError('untrusted uvicorn shadow imported')\n"
+    )
+    config = project / "service.toml"
+    config.write_text(
+        "[defaults]\nagent = 'coding'\nmodel = 'provider/model-id'\n"
+        "[agents.coding]\nharness = 'coding'\n"
+    )
+
+    client = await connect_local_service(
+        config=config, runtime_dir=runtime_dir, cwd=project, startup_timeout=20
+    )
+    try:
+        health = await client.health()
+        assert health.instance_id == read_record(runtime_dir).instance_id
+    finally:
+        await client.aclose()
+        await stop_local_service(runtime_dir=runtime_dir, stop_timeout=10)
+
+    assert not marker.exists()
+
+
+@pytest.mark.asyncio
+async def test_explicit_cwd_factory_import_does_not_shadow_server_modules(
+    daemon_workspace,
+):
+    project, _project_b, _project_c, runtime_dir = daemon_workspace
+    (project / "daemon_fixture.py").write_text(
+        "def create_service(runtime_dir):\n"
+        "    from local_helper import make_service\n"
+        "    return make_service(runtime_dir)\n"
+    )
+    (project / "local_helper.py").write_text(
+        "def make_service(runtime_dir):\n"
+        "    from pathlib import Path\n"
+        "    from msgflux.runtime.service import AgentService, SQLiteServiceStore\n"
+        "    Path(runtime_dir, 'function-import').write_text('loaded')\n"
+        "    return AgentService(\n"
+        "        store=SQLiteServiceStore(Path(runtime_dir) / 'service.sqlite3')\n"
+        "    )\n"
+    )
+    marker = project / "shadow-import.marker"
+    shadow_package = project / "msgflux"
+    shadow_package.mkdir()
+    (shadow_package / "__init__.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('msgflux')\n"
+        "raise RuntimeError('untrusted msgflux shadow imported')\n"
+    )
+    (project / "uvicorn.py").write_text(
+        "from pathlib import Path\n"
+        f"Path({str(marker)!r}).write_text('uvicorn')\n"
+        "raise RuntimeError('untrusted uvicorn shadow imported')\n"
+    )
+
+    client = await connect_local_service(
+        FACTORY, runtime_dir=runtime_dir, cwd=project, startup_timeout=20
+    )
+    try:
+        health = await client.health()
+        assert health.instance_id == read_record(runtime_dir).instance_id
+        assert (runtime_dir / "function-import").read_text() == "loaded"
+    finally:
+        await client.aclose()
+        await stop_local_service(runtime_dir=runtime_dir, stop_timeout=10)
+
+    assert not marker.exists()
 
 
 @pytest.mark.asyncio

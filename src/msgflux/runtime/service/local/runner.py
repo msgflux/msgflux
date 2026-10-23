@@ -26,19 +26,33 @@ from msgflux.runtime.service.local.files import (
 )
 from msgflux.runtime.service.local.manifest import (
     ServiceManifest,
-    load_factory,
     load_service_manifest,
 )
 from msgflux.runtime.service.local.records import LocalServiceRecord
+from msgflux.utils.imports import _factory_import_root, load_factory
 
 
-def _load_factory(path: str) -> Callable[[Path], Any]:
-    return load_factory(path)
+def _load_factory(path: str, cwd: Path) -> Callable[[Path], Any]:
+    with _factory_import_root(cwd):
+        return load_factory(path)
 
 
-async def _make_service(factory_path: str, runtime_dir: Path) -> AgentService:
-    factory = _load_factory(factory_path)
-    service = factory(runtime_dir)
+def _with_factory_import_root(
+    factory: Callable[..., Any], cwd: Path
+) -> Callable[..., Any]:
+    def invoke(*args: Any, **kwargs: Any) -> Any:
+        with _factory_import_root(cwd):
+            return factory(*args, **kwargs)
+
+    return invoke
+
+
+async def _make_service(
+    factory_path: str, runtime_dir: Path, cwd: Path
+) -> AgentService:
+    factory = _load_factory(factory_path, cwd)
+    with _factory_import_root(cwd):
+        service = factory(runtime_dir)
     if inspect.isawaitable(service):
         service = await service
     if not isinstance(service, AgentService):
@@ -84,9 +98,10 @@ def _make_manifest_service(
                         f"Agent {agent_id!r} has no coding harness or factory"
                     )
                 factories[agent_id] = with_extensions(
-                    load_factory(config.factory),
+                    _with_factory_import_root(_load_factory(config.factory, cwd), cwd),
                     config.extensions,
                     manifest.extension_catalog,
+                    import_root=cwd,
                 )
         except (ValueError, TypeError, ImportError, AttributeError) as exc:
             raise ValueError(f"Invalid agent factory for {agent_id!r}: {exc}") from exc
@@ -207,7 +222,7 @@ async def serve_local_service(  # noqa: C901
             if config is None:
                 if factory is None:
                     raise ValueError("provide exactly one of factory or config")
-                service = await _make_service(factory, directory)
+                service = await _make_service(factory, directory, working_directory)
             else:
                 manifest = load_service_manifest(config, cwd=working_directory)
                 http_config = manifest.http

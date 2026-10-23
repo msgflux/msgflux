@@ -426,6 +426,19 @@ synchronous or asynchronous. Its module is imported only by the server, before
 the admission journal opens; the frontend parses configuration without importing
 application modules. `harness` and `factory` are mutually exclusive.
 
+The managed daemon starts Python in safe-path mode, so the launch directory does
+not shadow `msgflux` or server dependencies during bootstrap. For an explicitly
+configured factory, msgFlux makes the selected launch directory importable only
+while importing that factory and during a synchronous factory call; configured
+extension factories attached to custom agent factories use the same scoped
+behavior. Builtin coding agents load extensions from the server environment;
+install their extension packages or explicitly provide their import directory
+through `PYTHONPATH`. The directory is not kept on
+the daemon's import path for later server imports or while an async factory or
+session coroutine runs. Dependencies imported from inside those coroutines must
+be installed in the server environment or supplied through an explicitly
+exported `PYTHONPATH`, which remains active and is trusted host configuration.
+
 ### Selecting And Initializing A File
 
 ```bash

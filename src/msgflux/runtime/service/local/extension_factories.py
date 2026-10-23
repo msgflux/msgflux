@@ -7,17 +7,18 @@ from functools import partial
 
 from msgflux.nn.extensions.installation import AgentExtensionInstallation
 from msgflux.runtime.service.api import AgentSession
+from msgflux.utils.imports import _factory_import_root
 
 
-def with_extensions(factory, names, catalog):
+def with_extensions(factory, names, catalog, *, import_root):
     """Keep custom Agent construction lazy and retain its cleanup ownership."""
     if not names:
         return factory
 
-    return partial(_create_session, factory, tuple(names), catalog)
+    return partial(_create_session, factory, tuple(names), catalog, import_root)
 
 
-async def _create_session(factory, names, catalog, thread):
+async def _create_session(factory, names, catalog, import_root, thread):
     session = factory(thread)
     if inspect.isawaitable(session):
         session = await session
@@ -41,7 +42,8 @@ async def _create_session(factory, names, catalog, thread):
     else:
         session.on_close = close
     try:
-        installation.install(names)
+        with _factory_import_root(import_root):
+            installation.install(names)
     except BaseException as error:
         try:
             await session.on_close()

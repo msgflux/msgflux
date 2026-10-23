@@ -1,6 +1,9 @@
 import importlib
 import pathlib
 import pkgutil
+import sys
+from contextlib import contextmanager
+from pathlib import Path
 from types import ModuleType
 from typing import Any, Union
 
@@ -29,6 +32,20 @@ def load_factory(path: str) -> Any:
     if not callable(factory):
         raise TypeError("configured factory attribute must be callable")
     return factory
+
+
+@contextmanager
+def _factory_import_root(path: str | Path):
+    """Temporarily make a trusted configured factory's root importable."""
+    import_root = str(Path(path).resolve())
+    sys.path.insert(0, import_root)
+    try:
+        yield
+    finally:
+        for index, entry in enumerate(sys.path):
+            if entry is import_root:
+                del sys.path[index]
+                break
 
 
 def import_module_from_lib(_import: str, _from: str):
