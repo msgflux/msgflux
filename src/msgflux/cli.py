@@ -178,12 +178,13 @@ def main(argv: Sequence[str] | None = None) -> None:
         write_observation(kind, record, as_json=options.json)
 
     try:
+        cwd = options.cwd.expanduser().resolve() if options.cwd is not None else None
         result = asyncio.run(
             execution.run(
                 options.prompt,
                 config=options.config,
                 runtime_dir=options.runtime_dir,
-                cwd=options.cwd,
+                cwd=cwd,
                 agent_id=options.agent,
                 account_name=options.account_name,
                 thread_id=options.thread,

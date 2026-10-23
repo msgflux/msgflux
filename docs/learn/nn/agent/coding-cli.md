@@ -20,8 +20,9 @@ are not copied into the service config. See [Accounts](accounts.md).
 Initialization creates `~/.msgflux/config.toml` once and preserves an existing
 file. Choose a model available through your configured credentials. A prompt
 connects to the configured daemon, starting it when absent, and creates a thread
-whose workspace is the current directory. Use `--cwd` to select another project.
-The command prints the final answer on stdout. As soon as the service confirms
+whose workspace is the current directory. Use `--cwd` to select another project;
+relative paths are resolved from the invocation directory. The command prints
+the final answer on stdout. As soon as the service confirms
 admission, plain mode prints `thread_id`, `agent_id`, `request_id`, and `run_id`
 on stderr and flushes them, including when the thread ID was generated. Save
 these IDs to continue or inspect the execution later. Commentary, reasoning and
