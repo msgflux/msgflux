@@ -24,9 +24,9 @@ from msgflux.runtime import (
 )
 
 
-def tool_response(mode="chat_completions"):
+def tool_response(mode="chat_completions", call_id="call_1", query="secret"):
     calls = ToolCallAggregator(api_mode=mode)
-    calls.process(0, "call_1", "lookup", '{"query":"secret"}')
+    calls.process(0, call_id, "lookup", f'{{"query":"{query}"}}')
     response = ModelResponse()
     response.set_response_type("tool_call")
     response.add(calls)
@@ -494,7 +494,6 @@ def test_host_reconciliation_is_atomic_and_idempotent(
         agent("", scope=scope())
     if sqlite:
         checkpoint.close()
-
         checkpoint = SQLiteCheckpointStore(str(tmp_path / "cp.db"))
     restored = make_agent(checkpoint, journal, calls)
     state = restored.inspect_approval_batch("thread", "run")
@@ -540,6 +539,319 @@ def test_host_reconciliation_is_atomic_and_idempotent(
         checkpoint.close()
 
 
+@pytest.mark.parametrize("checkpoint_sqlite", [False, True])
+@pytest.mark.parametrize("journal_sqlite", [False, True])
+@pytest.mark.parametrize("abandon", [False, True])
+def test_reconciled_call_ids_cannot_be_reused(  # noqa: C901
+    tmp_path, monkeypatch, checkpoint_sqlite, journal_sqlite, abandon
+):
+    checkpoint_path = str(tmp_path / "checkpoints.db")
+    journal_path = str(tmp_path / "approvals.db")
+    checkpoint = (
+        SQLiteCheckpointStore(checkpoint_path)
+        if checkpoint_sqlite
+        else InMemoryCheckpointStore()
+    )
+    journal = (
+        SQLiteApprovalStore(journal_path) if journal_sqlite else InMemoryApprovalStore()
+    )
+    calls = []
+    agent = make_agent(checkpoint, journal, calls)
+
+    def public() -> str:
+        """Execute an unprotected sibling."""
+        calls.append("public")
+        return "public"
+
+    agent.tool_library.add(public)
+    batch = tool_response()
+    batch.data.process(1, "call_2", "public", "{}")
+    agent.generator.forward = Mock(return_value=batch)
+    with pytest.raises(TaskPauseRequestedError):
+        agent("lookup", scope=scope())
+    record = journal.pending("reviewer", "thread", "run")[0]
+    agent.decide_approval(record.request_id, approved=True, decided_by="human")
+
+    def crash(*_args):
+        raise SystemExit("worker lost")
+
+    monkeypatch.setattr(agent, "_process_tool_intents", crash)
+    with pytest.raises(SystemExit):
+        agent("ignored", scope=scope())
+    if checkpoint_sqlite:
+        checkpoint.close()
+        checkpoint = SQLiteCheckpointStore(checkpoint_path)
+    if journal_sqlite:
+        journal.close()
+        journal = SQLiteApprovalStore(journal_path)
+    agent = make_agent(checkpoint, journal, calls)
+    agent.tool_library.add(public)
+    state = agent.inspect_approval_batch("thread", "run")
+    decision = {
+        "expected_revision": state["_checkpoint"]["revision"],
+        "decision_id": "retire:1",
+        "decided_by": "operator",
+        "reason": "verified effects",
+        "worker_stopped": True,
+        "abandon": abandon,
+        "results": None if abandon else {"call_1": "checked", "call_2": "checked"},
+    }
+    receipt = agent.reconcile_approval_batch("thread", "run", **decision)
+    assert agent.reconcile_approval_batch("thread", "run", **decision) == receipt
+    assert calls == []
+
+    if checkpoint_sqlite:
+        checkpoint.close()
+        checkpoint = SQLiteCheckpointStore(checkpoint_path)
+    if journal_sqlite:
+        journal.close()
+        journal = SQLiteApprovalStore(journal_path)
+    agent = make_agent(checkpoint, journal, calls)
+    agent.tool_library.add(public)
+    state = checkpoint.load_state("reviewer", "thread", "run")
+    assert state["runtime"]["extensions"]["retired_tool_call_ids"] == [
+        "call_1",
+        "call_2",
+    ]
+    assert (
+        state["runtime"]["extensions"]["approval_reconciliations"]["retire:1"]
+        == receipt
+    )
+    assert (
+        sum(
+            event["event_type"] == "approval.reconciled"
+            for event in checkpoint.load_events("reviewer", "thread", "run")
+        )
+        == 1
+    )
+    assert journal.get("reviewer", record.request_id).status == "approved"
+
+    if abandon:
+        from msgflux.nn.modules.tool.execution import (
+            DispatchRequest,
+            ToolExecutionPlan,
+            ToolRuntimeContext,
+        )
+        from msgflux.runtime.agent_run import AgentRun, agent_run_context
+        from msgflux.runtime.approvals.agent import guard_approved_plan
+        from msgflux.nn.modules.tool.execution_runtime import _ToolBackgroundScheduler
+        from msgflux.tools.runtime import ToolIntent
+
+        run = AgentRun.from_durable_state(state["runtime"])
+        with agent_run_context(run):
+            for call_id, name, arguments in (
+                ("call_1", "lookup", {"query": "secret"}),
+                ("call_2", "public", {}),
+            ):
+                plan = ToolExecutionPlan(
+                    intent=ToolIntent(id=call_id, name=name, arguments=arguments),
+                    definition=agent.tool_library.get_tool_definition(name),
+                    visible_arguments=arguments,
+                )
+                assert guard_approved_plan(plan).status == "blocked"
+            background_plan = ToolExecutionPlan(
+                intent=ToolIntent(id="call_2", name="public", arguments={}),
+                definition=agent.tool_library.get_tool_definition("public"),
+                visible_arguments={},
+                dispatch="background",
+            )
+            dispatched = _ToolBackgroundScheduler(agent.tool_library).dispatch(
+                DispatchRequest(
+                    plan=background_plan,
+                    context=ToolRuntimeContext(),
+                    execute=lambda _plan=None: None,
+                )
+            )
+            assert dispatched.status == "blocked"
+    else:
+        repeated = tool_response()
+        repeated.data.process(1, "call_2", "public", "{}")
+        agent.generator.forward = Mock(side_effect=[repeated, text_response()])
+        assert agent("ignored", scope=scope()) == "done"
+        assert calls == []
+        assert journal.get("reviewer", record.request_id).status == "approved"
+
+    assert calls == []
+    if checkpoint_sqlite:
+        checkpoint.close()
+    if journal_sqlite:
+        journal.close()
+
+
+@pytest.mark.parametrize("consumed_before_crash", [False, True])
+def test_retired_id_is_rejected_before_approval_prepare(
+    tmp_path, monkeypatch, consumed_before_crash
+):
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls)
+    with pytest.raises(TaskPauseRequestedError):
+        agent("lookup", scope=scope())
+    original_record = journal.pending("reviewer", "thread", "run")[0]
+    agent.decide_approval(original_record.request_id, approved=True, decided_by="human")
+    process = agent._process_tool_intents
+
+    def crash_before_consume(*_args):
+        raise SystemExit("worker lost before consume")
+
+    def crash_after_consume(*args):
+        process(*args)
+        raise SystemExit("worker lost after consume")
+
+    monkeypatch.setattr(
+        agent,
+        "_process_tool_intents",
+        crash_after_consume if consumed_before_crash else crash_before_consume,
+    )
+    with pytest.raises(SystemExit):
+        agent("ignored", scope=scope())
+    expected_calls = ["secret"] if consumed_before_crash else []
+    assert calls == expected_calls
+    expected_status = "consumed" if consumed_before_crash else "approved"
+    assert journal.get("reviewer", original_record.request_id).status == expected_status
+
+    state = agent.inspect_approval_batch("thread", "run")
+    agent.reconcile_approval_batch(
+        "thread",
+        "run",
+        expected_revision=state["_checkpoint"]["revision"],
+        decision_id="retire:prepare",
+        decided_by="operator",
+        reason="verified external state",
+        worker_stopped=True,
+        results={"call_1": "checked"},
+    )
+    monkeypatch.setattr(agent, "_process_tool_intents", process)
+    replay = (
+        tool_response(query="changed") if not consumed_before_crash else tool_response()
+    )
+    agent.generator.forward = Mock(side_effect=[replay, text_response()])
+    assert agent("replay", scope=scope()) == "done"
+    assert calls == expected_calls
+    assert journal.get("reviewer", original_record.request_id).status == expected_status
+    assert journal.pending("reviewer", "thread", "run") == []
+
+
+@pytest.mark.asyncio
+async def test_async_retired_id_is_rejected_before_approval_prepare(monkeypatch):
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls)
+    agent.generator.aforward = AsyncMock(side_effect=[tool_response()])
+    with pytest.raises(TaskPauseRequestedError):
+        await agent.acall("lookup", scope=scope())
+    record = journal.pending("reviewer", "thread", "run")[0]
+    agent.decide_approval(record.request_id, approved=True, decided_by="human")
+
+    async def crash(*_args):
+        raise SystemExit("worker lost before consume")
+
+    process = agent._aprocess_tool_intents
+    monkeypatch.setattr(agent, "_aprocess_tool_intents", crash)
+    with pytest.raises(SystemExit):
+        await agent.acall("ignored", scope=scope())
+    state = agent.inspect_approval_batch("thread", "run")
+    agent.reconcile_approval_batch(
+        "thread",
+        "run",
+        expected_revision=state["_checkpoint"]["revision"],
+        decision_id="retire:async",
+        decided_by="operator",
+        reason="verified external state",
+        worker_stopped=True,
+        results={"call_1": "checked"},
+    )
+    monkeypatch.setattr(agent, "_aprocess_tool_intents", process)
+    agent.generator.aforward = AsyncMock(
+        side_effect=[tool_response(query="changed"), text_response()]
+    )
+    assert await agent.acall("replay", scope=scope()) == "done"
+    assert calls == []
+    assert journal.get("reviewer", record.request_id).status == "approved"
+    assert journal.pending("reviewer", "thread", "run") == []
+
+
+def test_legacy_retirement_fails_closed_and_is_run_local():
+    from msgflux.nn.modules.tool.execution import ToolExecutionPlan
+    from msgflux.runtime.agent_run import AgentRun, agent_run_context
+    from msgflux.runtime.approvals.agent import guard_approved_plan
+    from msgflux.tools.runtime import ToolIntent
+
+    agent = make_agent(InMemoryCheckpointStore(), InMemoryApprovalStore(), [])
+    definition = agent.tool_library.get_tool_definition("lookup")
+
+    def plan(call_id):
+        return ToolExecutionPlan(
+            intent=ToolIntent(id=call_id, name="lookup", arguments={"query": "secret"}),
+            definition=definition,
+            visible_arguments={"query": "secret"},
+        )
+
+    confirmed = AgentRun(
+        extension_state={
+            "approval_reconciliations": {
+                "legacy": {"abandon": False, "results": {"call_1": "checked"}}
+            }
+        }
+    )
+    with agent_run_context(confirmed):
+        assert guard_approved_plan(plan("call_1")).status == "blocked"
+        assert guard_approved_plan(plan("call_2")) is None
+        with agent_run_context(AgentRun()):
+            assert guard_approved_plan(plan("call_1")) is None
+
+    for extensions in (
+        {"approval_reconciliations": {"legacy": {"abandon": True, "results": None}}},
+        {"retired_tool_call_ids": "not-a-list"},
+    ):
+        with agent_run_context(AgentRun(extension_state=extensions)):
+            assert guard_approved_plan(plan("call_2")).status == "blocked"
+
+
+@pytest.mark.parametrize("new_run", [False, True])
+def test_retirement_does_not_block_new_call_ids_or_runs(tmp_path, new_run):
+    checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
+    agent = make_agent(checkpoint, journal, calls)
+    with pytest.raises(TaskPauseRequestedError):
+        agent("lookup", scope=scope())
+    original = journal.pending("reviewer", "thread", "run")[0]
+    agent.decide_approval(original.request_id, approved=True, decided_by="human")
+
+    original_process = agent._process_tool_intents
+
+    def crash(*_args):
+        raise SystemExit("worker lost")
+
+    agent._process_tool_intents = crash
+    with pytest.raises(SystemExit):
+        agent("ignored", scope=scope())
+    state = agent.inspect_approval_batch("thread", "run")
+    agent.reconcile_approval_batch(
+        "thread",
+        "run",
+        expected_revision=state["_checkpoint"]["revision"],
+        decision_id="retire",
+        decided_by="operator",
+        reason="verified effects",
+        worker_stopped=True,
+        results={"call_1": "checked"},
+    )
+    agent._process_tool_intents = original_process
+
+    fresh_scope = replace(scope(), run_id="next") if new_run else scope()
+    fresh_call_id = "call_1" if new_run else "call_2"
+    agent.generator.forward = Mock(
+        side_effect=[tool_response(call_id=fresh_call_id), text_response()]
+    )
+    with pytest.raises(TaskPauseRequestedError, match="waiting"):
+        agent("new invocation", scope=fresh_scope)
+    pending = journal.pending("reviewer", "thread", fresh_scope.run_id)
+    assert len(pending) == 1
+    assert pending[0].request_id != original.request_id
+    agent.decide_approval(pending[0].request_id, approved=True, decided_by="human")
+    assert agent("ignored", scope=fresh_scope) == "done"
+    assert calls == ["secret"]
+    assert journal.get("reviewer", pending[0].request_id).status == "consumed"
+
+
 @pytest.mark.asyncio
 async def test_async_reconciliation_rollback_and_stale_writer(monkeypatch):
     checkpoint, journal, calls = InMemoryCheckpointStore(), InMemoryApprovalStore(), []
@@ -570,13 +882,31 @@ async def test_async_reconciliation_rollback_and_stale_writer(monkeypatch):
     monkeypatch.setattr(checkpoint, "commit_state", fail)
     with pytest.raises(OSError):
         await agent.areconcile_approval_batch("thread", "run", **decision)
-    assert checkpoint.load_state("reviewer", "thread", "run") == state
+    failed = checkpoint.load_state("reviewer", "thread", "run")
+    assert failed == state
+    assert "retired_tool_call_ids" not in failed["runtime"]["extensions"]
+    assert "approval_reconciliations" not in failed["runtime"]["extensions"]
     monkeypatch.setattr(checkpoint, "commit_state", original)
-    await agent.areconcile_approval_batch("thread", "run", **decision)
+    receipt = await agent.areconcile_approval_batch("thread", "run", **decision)
+    assert await agent.areconcile_approval_batch("thread", "run", **decision) == receipt
+    committed = checkpoint.load_state("reviewer", "thread", "run")
+    assert committed["runtime"]["extensions"]["retired_tool_call_ids"] == ["call_1"]
+    assert (
+        committed["runtime"]["extensions"]["approval_reconciliations"]["repair"]
+        == receipt
+    )
+    assert "pending_approvals" not in committed["runtime"]["extensions"]
     resumed = agent.watch_commits("thread", "run", after=before.cursor)
     page = await resumed.__anext__()
     assert page.events[0].data["event_type"] == "approval.reconciled"
     await resumed.aclose()
+    assert (
+        sum(
+            event["event_type"] == "approval.reconciled"
+            for event in checkpoint.load_events("reviewer", "thread", "run")
+        )
+        == 1
+    )
     with pytest.raises(CheckpointConflictError):
         checkpoint.commit_state(
             "reviewer", "thread", "run", state, expected_revision=revision

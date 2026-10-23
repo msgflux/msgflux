@@ -1,5 +1,7 @@
 """Live workspace policies remain thread-local and clip each operation."""
 
+import asyncio
+
 import pytest
 from unittest.mock import Mock
 
@@ -9,6 +11,8 @@ from msgflux.runtime.context import (
     execution_context,
     get_execution_scope,
 )
+from msgflux.runtime.event_hub import get_event_hub
+from msgflux.runtime.events import EventType
 from msgflux.runtime.permissions import PermissionSet, require_permissions
 from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
 from msgflux.runtime.workspace.api import AgentWorkspace
@@ -97,6 +101,33 @@ async def test_borrowed_workspace_policy_state_is_isolated_by_thread(tmp_path):
         finally:
             await first_lease.aclose()
             await second_lease.aclose()
+    finally:
+        await service.aclose()
+        workspace.require_active()
+        service.store.close()
+
+
+@pytest.mark.asyncio
+async def test_service_policy_update_is_observable_without_phantom_live_run(tmp_path):
+    workspace = AgentWorkspace.local(tmp_path)
+    agent = _agent("policy-watch", workspace)
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("assistant", lambda _thread: AgentSession(agent))
+    try:
+        thread = await service.open_thread("assistant", thread_id="policy-watch-thread")
+        async with service.watch(thread.thread_id) as watcher:
+            assert watcher.snapshot.active_run is None
+            await service.update_workspace_policy(
+                thread.thread_id, permissions="read-only"
+            )
+            event = await asyncio.wait_for(anext(watcher), timeout=5)
+            assert event.type == EventType.WORKSPACE_POLICY_UPDATED
+            assert event.run_id is None
+            state = get_event_hub()._threads[thread.thread_id]
+            assert state.runs == {}
+            assert not state.active
+
+        assert thread.thread_id not in get_event_hub()._threads
     finally:
         await service.aclose()
         workspace.require_active()

@@ -273,3 +273,59 @@ async def test_full_watcher_closes_without_queuefull_or_hanging():
             await anext(watcher)
         with pytest.raises(StopAsyncIteration):
             await anext(watcher)
+
+
+@pytest.mark.asyncio
+async def test_policy_event_keeps_existing_run_projection_and_is_delivered():
+    hub = EventHub()
+    thread_id = "thread_policy_active"
+    hub.publish(thread_id, make_event(EventType.RUN_START, {"namespace": "root"}))
+    hub.publish(thread_id, make_event(EventType.MESSAGE_DELTA, {"delta": "hello"}))
+    policy_event = make_event(
+        EventType.WORKSPACE_POLICY_UPDATED,
+        {"policy": {}},
+        run_id=None,
+        source_path=(),
+    )
+
+    async with hub.watch(thread_id) as watcher:
+        before = watcher.snapshot.active_run
+        assert before is not None
+        assert before.streaming_message == "hello"
+
+        hub.publish(thread_id, policy_event)
+        assert await asyncio.wait_for(anext(watcher), timeout=1) == policy_event
+
+        async with hub.watch(thread_id) as reconnected:
+            assert reconnected.snapshot.active_run == before
+            assert reconnected.snapshot.streaming_message == "hello"
+            assert len(reconnected.snapshot.active_runs) == 1
+
+        hub.publish(thread_id, make_event(EventType.RUN_END))
+
+    assert thread_id not in hub._threads
+
+
+@pytest.mark.asyncio
+async def test_idle_policy_event_is_observable_without_live_run_or_retained_state():
+    hub = EventHub()
+    thread_id = "thread_policy_idle"
+    policy_event = make_event(
+        EventType.WORKSPACE_POLICY_UPDATED,
+        {"policy": {}},
+        run_id=None,
+        source_path=(),
+    )
+
+    hub.publish(thread_id, policy_event)
+    assert thread_id not in hub._threads
+
+    async with hub.watch(thread_id) as watcher:
+        assert watcher.snapshot.active_run is None
+        hub.publish(thread_id, policy_event)
+        assert await asyncio.wait_for(anext(watcher), timeout=1) == policy_event
+        state = hub._threads[thread_id]
+        assert state.runs == {}
+        assert not state.active
+
+    assert thread_id not in hub._threads

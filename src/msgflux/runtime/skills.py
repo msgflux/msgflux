@@ -1,3 +1,6 @@
+import errno
+import os
+import stat
 from glob import glob
 from pathlib import Path
 from tempfile import NamedTemporaryFile
@@ -22,6 +25,8 @@ SkillName = Annotated[
 ]
 SkillDescription = Annotated[str, msgspec.Meta(min_length=1, max_length=1024)]
 SkillCompatibility = Annotated[str, msgspec.Meta(max_length=500)]
+_MAX_SKILL_FILE_BYTES = 256 * 1024
+_MAX_INDEX_FILE_BYTES = 256 * 1024
 _TEMPORARY_SKILL_PATH_SUFFIXES = (
     ".pyc",
     ".pyo",
@@ -31,6 +36,90 @@ _TEMPORARY_SKILL_PATH_SUFFIXES = (
     ".temp",
     "~",
 )
+
+
+class _NoAliasSafeLoader(yaml.SafeLoader):
+    def compose_node(self, parent, index):
+        if self.check_event(yaml.events.AliasEvent):
+            event = self.peek_event()
+            raise yaml.composer.ComposerError(
+                None,
+                None,
+                "YAML aliases are not allowed in skill frontmatter",
+                event.start_mark,
+            )
+        return super().compose_node(parent, index)
+
+
+def _validate_regular_file(
+    path: Path, metadata: os.stat_result, max_bytes: int
+) -> None:
+    if not stat.S_ISREG(metadata.st_mode):
+        raise ValueError(f"`{path}` must be a regular file.")
+    if metadata.st_size > max_bytes:
+        raise ValueError(
+            f"`{path}` exceeds the maximum allowed size of {max_bytes // 1024} KiB."
+        )
+
+
+def _read_bounded_descriptor(descriptor: int, path: Path, max_bytes: int) -> bytes:
+    chunks = []
+    total = 0
+    while total < max_bytes + 1:
+        chunk = os.read(descriptor, min(64 * 1024, max_bytes + 1 - total))
+        if not chunk:
+            break
+        chunks.append(chunk)
+        total += len(chunk)
+    if total > max_bytes:
+        raise ValueError(
+            f"`{path}` exceeds the maximum allowed size of {max_bytes // 1024} KiB."
+        )
+    return b"".join(chunks)
+
+
+def _read_regular_file(path: Path, *, max_bytes: int) -> bytes:
+    """Read a bounded regular file without following its final symlink."""
+    path_metadata = path.lstat()
+    _validate_regular_file(path, path_metadata, max_bytes)
+    flags = os.O_RDONLY | getattr(os, "O_NONBLOCK", 0)
+    if hasattr(os, "O_NOFOLLOW"):
+        flags |= os.O_NOFOLLOW
+    try:
+        descriptor = os.open(path, flags)
+    except OSError as exc:
+        if exc.errno == errno.ELOOP:
+            raise ValueError(
+                f"`{path}` must be a regular file, not a symlink."
+            ) from exc
+        raise
+    try:
+        metadata = os.fstat(descriptor)
+        if (metadata.st_dev, metadata.st_ino) != (
+            path_metadata.st_dev,
+            path_metadata.st_ino,
+        ):
+            raise ValueError(f"`{path}` changed while it was being opened.")
+        _validate_regular_file(path, metadata, max_bytes)
+        return _read_bounded_descriptor(descriptor, path, max_bytes)
+    finally:
+        os.close(descriptor)
+
+
+def _existing_index_matches(path: Path, content: str) -> bool:
+    try:
+        metadata = path.lstat()
+    except FileNotFoundError:
+        return False
+    if stat.S_ISDIR(metadata.st_mode):
+        raise IsADirectoryError(f"Discovery index path is a directory: {path}")
+    if not stat.S_ISREG(metadata.st_mode) or metadata.st_size > _MAX_INDEX_FILE_BYTES:
+        return False
+    try:
+        existing = _read_regular_file(path, max_bytes=_MAX_INDEX_FILE_BYTES)
+    except (FileNotFoundError, ValueError):
+        return False
+    return existing == content.encode("utf-8")
 
 
 def default_skill_paths() -> list[Path]:
@@ -149,8 +238,11 @@ def _frontmatter_error_message(path: Path, error: msgspec.ValidationError) -> st
 
 def parse_skill_file(path: SkillPath) -> AgentSkill:
     """Parse a SKILL.md file using the Agent Skills frontmatter format."""
-    skill_path = Path(path).expanduser().resolve()
-    text = skill_path.read_text(encoding="utf-8")
+    supplied_path = Path(path).expanduser()
+    skill_path = supplied_path.parent.resolve() / supplied_path.name
+    text = _read_regular_file(skill_path, max_bytes=_MAX_SKILL_FILE_BYTES).decode(
+        "utf-8"
+    )
     lines = text.splitlines()
     if not lines or lines[0].strip() != "---":
         raise ValueError(f"`{skill_path}` must start with YAML frontmatter.")
@@ -165,7 +257,15 @@ def parse_skill_file(path: SkillPath) -> AgentSkill:
 
     frontmatter = "\n".join(lines[1:end_index])
     body = "\n".join(lines[end_index + 1 :]).strip()
-    metadata = yaml.safe_load(frontmatter) or {}
+    loader = _NoAliasSafeLoader(frontmatter)
+    try:
+        metadata = loader.get_single_data() or {}
+    except yaml.YAMLError as exc:
+        raise ValueError(
+            f"`{skill_path}` has invalid skill frontmatter: {exc}"
+        ) from exc
+    finally:
+        loader.dispose()
     if not isinstance(metadata, Mapping):
         raise ValueError(f"`{skill_path}` frontmatter must be a YAML mapping.")
 
@@ -277,7 +377,9 @@ class AgentSkillManager:
             path = Path(value).expanduser()
             if path.suffix.lower() != ".md":
                 raise ValueError("`skills['discovery']` path must end in `.md`.")
-            return path.resolve()
+            # Resolve symlinked parents, but keep the final component intact so
+            # write_index() replaces a configured symlink rather than following it.
+            return path.parent.resolve() / path.name
         raise TypeError(
             "`skills['discovery']` must be `'tool'`, a Markdown path, or None."
         )
@@ -414,18 +516,47 @@ class AgentSkillManager:
             self.diagnostics.append(f"{root}: directory does not exist.")
             return
         if root.is_file():
-            if root.name == "SKILL.md":
+            if root.name == "SKILL.md" and self._is_skill_file_within_root(root, root):
                 yield root
             return
+        if root.is_dir():
+            yield from self._iter_child_skill_files(root)
+
+    def _iter_child_skill_files(self, root: Path) -> Iterable[Path]:
         direct_skill = root / "SKILL.md"
-        if direct_skill.exists():
-            yield direct_skill
+        if direct_skill.exists() or direct_skill.is_symlink():
+            if self._is_skill_file_within_root(root, direct_skill):
+                yield direct_skill
+            else:
+                self.diagnostics.append(
+                    f"{direct_skill}: skipped; SKILL.md must be a regular file "
+                    "contained within the configured root."
+                )
             return
         for child in sorted(root.iterdir()):
-            if child.is_dir():
-                skill_file = child / "SKILL.md"
-                if skill_file.exists():
-                    yield skill_file
+            if child.is_symlink() or not child.is_dir():
+                continue
+            skill_file = child / "SKILL.md"
+            if not skill_file.exists() and not skill_file.is_symlink():
+                continue
+            if self._is_skill_file_within_root(root, skill_file):
+                yield skill_file
+            else:
+                self.diagnostics.append(
+                    f"{skill_file}: skipped; SKILL.md must be a regular file "
+                    "contained within the configured root."
+                )
+
+    @staticmethod
+    def _is_skill_file_within_root(root: Path, skill_file: Path) -> bool:
+        try:
+            if not stat.S_ISREG(skill_file.lstat().st_mode):
+                return False
+            resolved_root = root.resolve(strict=True)
+            resolved_file = skill_file.resolve(strict=True)
+        except (OSError, RuntimeError):
+            return False
+        return resolved_file.is_relative_to(resolved_root)
 
     def has_skills(self) -> bool:
         return bool(self.skills)
@@ -500,7 +631,7 @@ class AgentSkillManager:
             return None
         content = self.render_index()
         path.parent.mkdir(parents=True, exist_ok=True)
-        if path.exists() and path.read_text(encoding="utf-8") == content:
+        if _existing_index_matches(path, content):
             return path
         temporary_path = None
         try:
@@ -514,7 +645,12 @@ class AgentSkillManager:
             ) as temporary:
                 temporary.write(content)
                 temporary_path = Path(temporary.name)
-            temporary_path.replace(path)
+            try:
+                temporary_path.replace(path)
+            except IsADirectoryError as exc:
+                raise IsADirectoryError(
+                    f"Discovery index path is a directory: {path}"
+                ) from exc
         finally:
             if temporary_path is not None and temporary_path.exists():
                 temporary_path.unlink()
