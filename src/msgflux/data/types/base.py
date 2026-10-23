@@ -3,6 +3,8 @@
 from abc import ABC, abstractmethod
 from typing import Any, Dict, Optional
 
+from msgflux.utils.validation import is_http_url
+
 
 class MediaType(ABC):
     """Base class for multimodal types.
@@ -65,6 +67,4 @@ class MediaType(ABC):
 
     def _is_url(self, source) -> bool:
         """Check if source is a URL."""
-        if isinstance(source, bytes):
-            return source.startswith(b"http")
-        return source.startswith("http")
+        return is_http_url(source)

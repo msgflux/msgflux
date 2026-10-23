@@ -8,7 +8,7 @@ from msgflux.data.types.base import MediaType
 from msgflux.utils.chat import ChatBlock
 from msgflux.utils.encode import aencode_data_to_base64, encode_data_to_base64
 from msgflux.utils.inspect import get_mime_type
-from msgflux.utils.validation import is_base64
+from msgflux.utils.validation import is_base64, is_http_url
 
 
 @lru_cache(maxsize=128)
@@ -110,7 +110,7 @@ class Image(MediaType):
         Returns:
             URL or data URI string.
         """
-        if data.startswith("http"):
+        if is_http_url(data):
             return data
 
         mime_type = self._detect_mime_type()

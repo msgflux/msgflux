@@ -8,6 +8,8 @@ from urllib.parse import urlparse
 
 import httpx2
 
+from msgflux.utils.validation import is_http_url
+
 try:
     import anyio
 except ImportError:
@@ -34,7 +36,7 @@ def encode_local_file_in_base64(path: str) -> str:
 def encode_data_to_base64(path: Union[str, bytes]) -> str:
     if isinstance(path, bytes):
         return base64.b64encode(path).decode("utf-8")
-    if "http" in path:
+    if is_http_url(path):
         return encode_base64_from_url(path)
     elif os.path.exists(path) and not os.path.isdir(path):
         return encode_local_file_in_base64(path)
@@ -71,7 +73,7 @@ async def aencode_data_to_base64(path: Union[str, bytes]) -> str:
     """Async version of encode_data_to_base64."""
     if isinstance(path, bytes):
         return base64.b64encode(path).decode("utf-8")
-    if "http" in path:
+    if is_http_url(path):
         return await aencode_base64_from_url(path)
     elif os.path.exists(path) and not os.path.isdir(path):
         return await aencode_local_file_in_base64(path)
@@ -99,7 +101,7 @@ def encode_to_io_object(input_data: Union[bytes, str]) -> io.IOBase:
         return io.BytesIO(input_data)
 
     if isinstance(input_data, str):
-        if input_data.startswith("http://") or input_data.startswith("https://"):
+        if is_http_url(input_data):
             response = httpx2.get(input_data, timeout=300)
             response.raise_for_status()
             return io.BytesIO(response.content)
@@ -177,7 +179,7 @@ def _resolve_string_input(
     if os.path.isfile(input_data):
         with open(input_data, "rb") as file:
             return file.read(), os.path.basename(input_data)
-    if input_data.startswith(("http://", "https://")):
+    if is_http_url(input_data):
         response = httpx2.get(input_data, timeout=300)
         response.raise_for_status()
         resolved = os.path.basename(urlparse(str(response.url)).path) or filename
@@ -215,9 +217,7 @@ async def aencode_data_to_bytes(
     decoding run in a worker thread so model ``acall`` does not block its event
     loop.
     """
-    if not (
-        isinstance(input_data, str) and input_data.startswith(("http://", "https://"))
-    ):
+    if not (isinstance(input_data, str) and is_http_url(input_data)):
         return await asyncio.to_thread(
             encode_data_to_bytes,
             input_data,
