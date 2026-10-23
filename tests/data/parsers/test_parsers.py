@@ -3,10 +3,25 @@
 import base64
 from contextlib import contextmanager
 from io import BytesIO
+import sys
+import types
 
 import pytest
 
 import msgflux as mf
+
+
+def _install_fake_tiktoken(monkeypatch):
+    class Encoding:
+        def encode(self, text):
+            return list(text)
+
+        def decode(self, tokens):
+            return "".join(tokens)
+
+    tiktoken = types.ModuleType("tiktoken")
+    tiktoken.get_encoding = lambda _name: Encoding()
+    monkeypatch.setitem(sys.modules, "tiktoken", tiktoken)
 
 
 # ---------------------------------------------------------------------------
@@ -260,6 +275,57 @@ def test_email_text_is_markdown(email_bytes):
 
     assert "# Email" in response.data["text"]
     assert "**From:**" in response.data["text"]
+
+
+# ---------------------------------------------------------------------------
+# Text chunking
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("max_tokens", "overlap_tokens", "message"),
+    [
+        (0, 0, "max_tokens"),
+        (-1, 0, "max_tokens"),
+        (1.5, 0, "max_tokens"),
+        (True, 0, "max_tokens"),
+        (4, -1, "overlap_tokens"),
+        (4, 1.5, "overlap_tokens"),
+        (4, False, "overlap_tokens"),
+        (4, 4, "smaller than"),
+        (4, 5, "smaller than"),
+    ],
+)
+def test_chunk_by_tokens_rejects_invalid_bounds(max_tokens, overlap_tokens, message):
+    parser = mf.Parser.csv("csv")
+
+    with pytest.raises(ValueError, match=message):
+        parser.chunk_by_tokens(
+            "some text", max_tokens=max_tokens, overlap_tokens=overlap_tokens
+        )
+
+
+def test_chunk_by_tokens_makes_progress_and_preserves_boundaries(monkeypatch):
+    _install_fake_tiktoken(monkeypatch)
+    parser = mf.Parser.csv("csv")
+
+    assert parser.chunk_by_tokens("abcdefgh", max_tokens=4, overlap_tokens=1) == [
+        "abcd",
+        "defg",
+        "gh",
+    ]
+    assert parser.chunk_by_tokens("abcd", max_tokens=4, overlap_tokens=1) == ["abcd"]
+    assert parser.chunk_by_tokens("", max_tokens=4, overlap_tokens=1) == [""]
+
+
+def test_chunk_by_tokens_fallback_accepts_valid_bounds(monkeypatch):
+    monkeypatch.setitem(sys.modules, "tiktoken", None)
+    parser = mf.Parser.csv("csv")
+
+    assert parser.chunk_by_tokens("abcdefgh", max_tokens=2, overlap_tokens=0) == [
+        "abcdefgh"
+    ]
+    assert parser.chunk_by_tokens("", max_tokens=2, overlap_tokens=0) == []
 
 
 # ---------------------------------------------------------------------------

@@ -159,8 +159,10 @@ class RemoteThreadWatcher:
 class AgentServiceClient:
     """Async client for the versioned AgentService HTTP API.
 
-    A client created here owns its HTTP connection pool. An injected client is
-    borrowed and remains open after :meth:`aclose`.
+    A client created here owns its HTTP connection pool and ignores ambient
+    proxy environment variables, so service bearer credentials are only sent to
+    ``base_url``. An injected client is borrowed, keeps its caller configuration
+    (including an explicit proxy), and remains open after :meth:`aclose`.
     """
 
     def __init__(
@@ -178,6 +180,9 @@ class AgentServiceClient:
         self._authorization = f"Bearer {token}"
         self._client = client or httpx2.AsyncClient(
             timeout=timeout,
+            # Service requests carry a bearer token; never route them through
+            # ambient HTTP_PROXY/ALL_PROXY configuration.
+            trust_env=False,
         )
 
     async def aclose(self) -> None:
