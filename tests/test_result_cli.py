@@ -97,6 +97,30 @@ async def test_result_plain_json_history_empty_and_interrupted(daemon_workspace)
 
 
 @pytest.mark.asyncio
+async def test_result_dot_segment_id_stays_on_its_thread_route(daemon_workspace):
+    project, _b, _c, runtime = daemon_workspace
+    client = await connect_local_service(FACTORY, runtime_dir=runtime, cwd=project)
+    try:
+        thread = await client.open_thread("main", thread_id="..")
+        receipt = await client.prompt(thread.thread_id, "hello", request_id="dot")
+        assert (
+            await _wait_completed(client, thread.thread_id, "dot")
+        ).status == "completed"
+        for resource, ids in (
+            ("threads", (thread.thread_id,)),
+            ("runs", (thread.thread_id, receipt.run_id)),
+        ):
+            code, out, err = await _command(runtime, resource, "result", *ids)
+            assert code == 0 and not err
+            value = json.loads(out)
+            assert value["thread_id"] == thread.thread_id
+            assert value["run_id"] == receipt.run_id
+            assert value["output"] == "daemon response: hello"
+    finally:
+        await client.aclose()
+
+
+@pytest.mark.asyncio
 async def test_result_wait_ctrl_c_detaches_and_second_wait_returns_answer(
     daemon_workspace,
 ):

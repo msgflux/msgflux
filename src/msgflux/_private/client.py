@@ -1,5 +1,6 @@
 import asyncio
 from abc import ABC, abstractmethod
+from collections.abc import Mapping
 from typing import Any, Dict
 
 from msgflux._private.core import Core
@@ -79,25 +80,42 @@ class BaseClient(ABC, Core):
         return data
 
     @classmethod
-    def from_serialized(cls, state: Dict[str, Any]):
-        """Deserialize a client instance from a dictionary.
+    def from_serialized(cls, state: Mapping[str, Any]):
+        """Deserialize a client instance from its serialized state.
 
         This method creates a new instance of the client and restores its
-        state from the provided dictionary. It also ensures that the
-        client is properly initialized after deserialization.
+        state from the provided mapping. It does not mutate the input
+        mapping. Classes with an ``_initialize`` hook are reconstructed
+        without calling their constructor, so required constructor arguments
+        do not block restoration; the hook rebuilds runtime-only resources
+        that are intentionally excluded from serialized state. Classes
+        without that hook use their constructor to recreate those resources
+        before the serialized state is applied.
 
         Args:
-            state (Dict[str, Any]): A dictionary containing the serialized
-                state of the client.
+            state: A mapping containing the serialized state of the client.
 
         Returns:
             BaseClient: A new instance of the client with its state
                 restored.
+
+        Raises:
+            TypeError: If ``state`` is not a mapping.
         """
-        if "msgflux_type" in state:
-            state.pop("msgflux_type")
-        instance = cls()
-        instance.__setstate__(state)
-        if hasattr(instance, "_initialize"):
-            instance._initialize()
+        if not isinstance(state, Mapping):
+            raise TypeError(
+                f"`state` must be a mapping, given `{type(state).__name__}`"
+            )
+
+        restored_state = dict(state)
+        restored_state.pop("msgflux_type", None)
+
+        if getattr(cls, "_initialize", None) is None:
+            instance = cls()
+            instance.__setstate__(restored_state)
+            return instance
+
+        instance = object.__new__(cls)
+        instance.__setstate__(restored_state)
+        instance._initialize()
         return instance

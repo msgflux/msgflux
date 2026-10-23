@@ -14,7 +14,7 @@ class MockProvider(BaseModel):
     model_type = "chat_completion"
     provider = "mock_provider"
 
-    def __init__(self, model_id: str = "default-model", **kwargs):
+    def __init__(self, model_id: str, **kwargs):
         self.model_id = model_id
         self._api_key = kwargs.get("api_key")
         self.model = None
@@ -23,7 +23,7 @@ class MockProvider(BaseModel):
         self.custom_param = kwargs.get("custom_param")
 
     def _initialize(self):
-        pass
+        self.client = f"initialized:{self.model_id}"
 
     def __call__(self, *args, **kwargs):
         return {"response": "mock"}
@@ -95,9 +95,6 @@ class TestModel:
         assert model.model_id == "test-model"
         assert model.custom_param == "test_value"
 
-    @pytest.mark.skip(
-        reason="from_serialized requires complex __setstate__/__getstate__ implementation"
-    )
     @patch("msgflux.models.model.model_registry")
     def test_from_serialized(self, mock_registry):
         """Test deserializing a model from state."""
@@ -116,6 +113,45 @@ class TestModel:
         assert isinstance(model, MockProvider)
         assert model.model_id == "restored-model"
         assert model.custom_param == "restored_value"
+        assert model() == {"response": "mock"}
+
+    @patch("msgflux.models.model.model_registry")
+    def test_from_serialized_missing_required_state_fails_in_initializer(
+        self, mock_registry
+    ):
+        """Missing required model state fails in the provider initializer."""
+        mock_registry.__getitem__ = lambda self, key: (
+            {"mock_provider": MockProvider} if key == "chat_completion" else {}
+        )
+        mock_registry.__contains__ = lambda self, key: key == "chat_completion"
+
+        with pytest.raises(AttributeError, match="model_id"):
+            Model.from_serialized("mock_provider", "chat_completion", {})
+
+    def test_from_serialized_restores_chat_runtime(self, monkeypatch):
+        """A restored real model must rebuild runtime-only transport state."""
+        from msgflux.models.chat_transport import ChatTransport
+        from msgflux.models.providers.vllm import VLLMChatCompletion
+
+        monkeypatch.setattr(VLLMChatCompletion, "_get_api_key", lambda self: "test")
+
+        model = Model.chat_completion(
+            "vllm/local-model",
+            base_url="http://127.0.0.1:1/v1",
+            temperature=0.2,
+            max_tokens=32,
+        )
+        serialized = model.serialize()
+        restored = Model.from_serialized(
+            serialized["provider"], serialized["model_type"], serialized["state"]
+        )
+
+        assert restored.model_id == "local-model"
+        assert restored.sampling_run_params["temperature"] == 0.2
+        assert isinstance(restored.chat_transport, ChatTransport)
+        assert restored.api_adapter is not None
+        assert restored.api_mode_capabilities is not None
+        assert restored.reasoning_codec is not None
 
     @patch("msgflux.models.model.model_registry")
     def test_chat_completion(self, mock_registry):

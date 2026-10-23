@@ -306,7 +306,9 @@ the canonical timeline may store Responses content as typed content blocks.
 
 For direct token streaming through `ModelStreamResponse`, no complete-output
 transformation is applied. Use the execution event stream when a hook requires
-the fully accumulated assistant output.
+the fully accumulated assistant output. With `return_messages=True`, the result
+is an envelope whose `response` is the `ModelStreamResponse`; consume that
+attribute and reuse `messages` after the stream settles.
 
 `event=...` cannot be combined with `on=...` or `method=...`. Forward and
 method hooks remain available as lower-level extension points, while lifecycle
