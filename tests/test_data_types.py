@@ -5,6 +5,7 @@ These tests validate that the dtype classes correctly process files/URLs
 and return properly formatted ChatBlocks.
 """
 
+import base64
 import tempfile
 from pathlib import Path
 
@@ -206,6 +207,47 @@ class TestFile:
             assert result["type"] == "file"
         finally:
             Path(temp_path).unlink()
+
+
+MEDIA_CASES = [
+    (Image, ".png", lambda block: block["image_url"]["url"]),
+    (Audio, ".mp3", lambda block: block["input_audio"]["data"]),
+    (Video, ".mp4", lambda block: block["video_url"]["url"]),
+    (File, ".pdf", lambda block: block["file"]["file_data"]),
+]
+
+
+@pytest.mark.parametrize(("media_cls", "suffix", "extract"), MEDIA_CASES)
+def test_sync_encode_reflects_current_file_contents(
+    media_cls, suffix, extract, tmp_path
+):
+    """A new media object reads the current file contents, not a stale value."""
+    path = tmp_path / f"media{suffix}"
+    path.write_bytes(b"first version")
+
+    first = extract(media_cls(str(path))())
+    path.write_bytes(b"second version")
+    second = extract(media_cls(str(path))())
+
+    assert first.endswith(base64.b64encode(b"first version").decode())
+    assert second.endswith(base64.b64encode(b"second version").decode())
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize(("media_cls", "suffix", "extract"), MEDIA_CASES)
+async def test_async_encode_reflects_current_file_contents(
+    media_cls, suffix, extract, tmp_path
+):
+    """Async processing keeps the same freshness contract as sync."""
+    path = tmp_path / f"media{suffix}"
+    path.write_bytes(b"first version")
+
+    first = extract(await media_cls(str(path)).acall())
+    path.write_bytes(b"second version")
+    second = extract(await media_cls(str(path)).acall())
+
+    assert first.endswith(base64.b64encode(b"first version").decode())
+    assert second.endswith(base64.b64encode(b"second version").decode())
 
 
 class TestMediaTypeBase:

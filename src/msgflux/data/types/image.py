@@ -1,7 +1,6 @@
 """Image data type for multimodal processing."""
 
 import base64
-from functools import lru_cache
 from typing import Any, Dict
 
 from msgflux.data.types.base import MediaType
@@ -9,12 +8,6 @@ from msgflux.utils.chat import ChatBlock
 from msgflux.utils.encode import aencode_data_to_base64, encode_data_to_base64
 from msgflux.utils.inspect import get_mime_type
 from msgflux.utils.validation import is_base64
-
-
-@lru_cache(maxsize=128)
-def _cached_encode(source: str) -> str:
-    """Cache encoding to avoid re-encoding same files."""
-    return encode_data_to_base64(source)
 
 
 class Image(MediaType):
@@ -80,7 +73,7 @@ class Image(MediaType):
         if self._is_url(source) and not self.force_encode:
             return source
 
-        return _cached_encode(source)
+        return encode_data_to_base64(source)
 
     async def _encode_async(self) -> str:
         """Encode image asynchronously.
