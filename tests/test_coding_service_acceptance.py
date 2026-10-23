@@ -47,7 +47,8 @@ async def test_coding_factory_refuses_replaced_workspace_root(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text(
         '[defaults]\nagent="coding"\nmodel="openai/gpt-4.1"\n'
-        'accounts_dir="accounts"\n[agents.coding]\nharness="coding"\n'
+        'accounts_dir="accounts"\nagent_dir="agent-state"\n'
+        '[agents.coding]\nharness="coding"\n'
         '[agents.coding.tools]\nactive=["workspace"]\n'
     )
     service = _make_manifest_service(config, runtime, root)[0]
@@ -116,7 +117,8 @@ async def test_manifest_coding_approval_and_account_survive_restart(
     config = tmp_path / "config.toml"
     config.write_text(
         '[defaults]\nagent="coding"\naccount="work"\n'
-        'accounts_dir="accounts"\nmodel="openai/gpt-4.1"\n'
+        'accounts_dir="accounts"\nagent_dir="agent-state"\n'
+        'model="openai/gpt-4.1"\n'
         '[agents.coding]\nharness="coding"\n'
         '[agents.coding.tools]\nactive=["workspace"]\n'
     )
@@ -192,6 +194,11 @@ async def test_manifest_coding_approval_and_account_survive_restart(
             paused = await asyncio.wait_for(session.wait("patch-request"), 5)
             assert paused.status == "paused", paused.error
             assert not (workspace / "hello.txt").exists()
+            thread_state = tmp_path / "agent-state" / "threads" / receipt.thread_id
+            assert (thread_state / "checkpoints.sqlite3").is_file()
+            assert (thread_state / "approvals.sqlite3").is_file()
+            assert not (tmp_path / "threads").exists()
+            assert not (runtime / "threads").exists()
             (review,) = await session.approval_reviews(receipt.run_id)
             assert "Olá Vulcano" in review.diff
         await service.aclose()
@@ -210,6 +217,13 @@ async def test_manifest_coding_approval_and_account_survive_restart(
                 "http://service", token="fixture-service-token", client=http
             )
             session = await AgentSessionClient.open(client, thread_id=receipt.thread_id)
+            assert (
+                tmp_path
+                / "agent-state"
+                / "threads"
+                / receipt.thread_id
+                / "checkpoints.sqlite3"
+            ).is_file()
             (restored,) = await session.approval_reviews(receipt.run_id)
             assert restored == review
             await session.decide_approval(

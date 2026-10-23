@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import os
 from collections.abc import Mapping
 from pathlib import Path
 from typing import Literal
@@ -77,6 +78,29 @@ def workspace_coding_permissions(
         name
         for name, grants in _PERMISSION_GRANTS.items()
         if permissions.allows(grants)
+    )
+
+
+def _resolve_coding_agent_dir(runtime_dir: Path, agent_dir: Path | None = None) -> Path:
+    """Resolve the coding state root without creating filesystem state."""
+    selected_runtime = Path(runtime_dir).expanduser().resolve()
+    if agent_dir is not None:
+        # Keep the final path component intact so AgentResources can continue
+        # rejecting a symlinked state root during its secure bind.
+        return Path(os.path.abspath(Path(agent_dir).expanduser()))
+
+    canonical_root = (Path.home() / ".msgflux").absolute()
+    canonical_runtime = (canonical_root / "runtime").resolve()
+    if selected_runtime == canonical_runtime:
+        return canonical_root
+
+    legacy_root = selected_runtime.parent
+    raise ValueError(
+        f"A non-default runtime_dir ({selected_runtime}) requires an explicit "
+        f"agent_dir for coding-agent state. Existing threads from the previous "
+        f"layout are at {legacy_root / 'threads'}; set defaults.agent_dir = "
+        f"{str(legacy_root)!r} (or pass agent_dir={str(legacy_root)!r} to "
+        "create_coding_session_factory) to resume them. No state is moved."
     )
 
 

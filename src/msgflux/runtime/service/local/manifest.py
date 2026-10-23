@@ -39,6 +39,7 @@ account = "default"
 # Choose a model available to your configured provider, for example:
 # model = "provider/model-id"
 # reasoning_effort = "medium"
+# agent_dir = "~/.msgflux" # required only when runtime_dir is non-default
 
 [agents.coding]
 harness = "coding"
@@ -58,6 +59,7 @@ class _DefaultsConfig(msgspec.Struct, forbid_unknown_fields=True):
     agent: str
     account: str = "default"
     accounts_dir: str | None = None
+    agent_dir: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
 
@@ -171,6 +173,22 @@ def _resolve_account_defaults(defaults: _DefaultsConfig, config_dir: Path) -> No
         defaults.accounts_dir = str(selected_root.resolve())
 
 
+def _resolve_agent_dir_default(defaults: _DefaultsConfig, config_dir: Path) -> None:
+    if defaults.agent_dir is None:
+        return
+    if not defaults.agent_dir.strip():
+        raise ValueError("defaults.agent_dir must be non-empty when provided")
+    selected_root = Path(defaults.agent_dir).expanduser()
+    if not selected_root.is_absolute():
+        selected_root = config_dir / selected_root
+    try:
+        # Do not follow a symlinked state root here; AgentResources must be able
+        # to reject it at bind time using its existing secure-directory checks.
+        defaults.agent_dir = str(Path(os.path.abspath(selected_root)))
+    except (OSError, RuntimeError) as exc:
+        raise ValueError(f"defaults.agent_dir could not be resolved: {exc}") from exc
+
+
 def _read_config_document(path: Path, *, cwd: Path | None = None):
     manifest_path = Path(path).expanduser()
     if not manifest_path.is_absolute():
@@ -215,6 +233,7 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
     ):
         raise ValueError("defaults.reasoning_effort must be non-empty when provided")
     _resolve_account_defaults(config.defaults, manifest_path.parent)
+    _resolve_agent_dir_default(config.defaults, manifest_path.parent)
     if config.defaults.agent not in config.agents:
         raise ValueError("defaults.agent must reference a declared agent")
 

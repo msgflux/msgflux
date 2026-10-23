@@ -122,11 +122,23 @@ async def _ensure_local_service(
         or startup_timeout <= 0
     ):
         raise ValueError("startup_timeout must be a finite positive number")
-    selected_runtime = prepare_runtime_dir(
-        Path(runtime_dir)
+    requested_runtime = (
+        Path(runtime_dir).expanduser()
         if runtime_dir is not None
         else Path.home() / ".msgflux" / "runtime"
     )
+    if manifest is not None and manifest.coding_catalog.agents:
+        from msgflux.coding.config import (  # noqa: PLC0415
+            _resolve_coding_agent_dir,
+        )
+
+        _resolve_coding_agent_dir(
+            requested_runtime,
+            Path(manifest.defaults.agent_dir)
+            if manifest.defaults.agent_dir is not None
+            else None,
+        )
+    selected_runtime = prepare_runtime_dir(requested_runtime)
     selected_cwd = (Path(cwd) if cwd is not None else Path.cwd()).expanduser().resolve()
     if not selected_cwd.is_dir():
         raise NotADirectoryError("cwd must name an existing directory")
@@ -168,11 +180,43 @@ async def restart_local_service(  # noqa: C901
         or restart_timeout <= 0
     ):
         raise ValueError("restart_timeout must be a finite positive number")
-    selected_runtime = prepare_runtime_dir(
-        Path(runtime_dir)
+    requested_runtime = (
+        Path(runtime_dir).expanduser()
         if runtime_dir is not None
         else Path.home() / ".msgflux" / "runtime"
     )
+    if requested_runtime.is_symlink():
+        raise ValueError("Runtime directory must be a real directory, not a symlink")
+    preflight_record = read_record(requested_runtime)
+    preflight_config = config
+    if (
+        factory is None
+        and preflight_config is None
+        and preflight_record is not None
+        and preflight_record.config_path is not None
+    ):
+        preflight_config = Path(preflight_record.config_path)
+    if preflight_config is not None:
+        selected_cwd_for_config = (
+            Path(cwd).expanduser().resolve()
+            if cwd is not None
+            else Path(preflight_record.cwd)
+            if preflight_record is not None
+            else Path.cwd().resolve()
+        )
+        manifest = load_service_manifest(preflight_config, cwd=selected_cwd_for_config)
+        if manifest.coding_catalog.agents:
+            from msgflux.coding.config import (  # noqa: PLC0415
+                _resolve_coding_agent_dir,
+            )
+
+            _resolve_coding_agent_dir(
+                requested_runtime,
+                Path(manifest.defaults.agent_dir)
+                if manifest.defaults.agent_dir is not None
+                else None,
+            )
+    selected_runtime = prepare_runtime_dir(requested_runtime)
     deadline = asyncio.get_running_loop().time() + restart_timeout
     async with _StartupLock(selected_runtime, deadline):
         record = read_record(selected_runtime)

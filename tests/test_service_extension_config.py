@@ -130,6 +130,7 @@ async def test_coding_factory_extensions_are_ordered_fresh_and_not_inherited(
         catalog=CodingAgentCatalog({"coding": parent, "child": child}),
         config_path=tmp_path / "config.toml",
         runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "agent-state",
         extension_catalog=catalog,
     )
     assert RecordingExtension.created == []
@@ -188,6 +189,7 @@ async def test_coding_extension_registration_failure_cleans_prior_instances_and_
         catalog=CodingAgentCatalog({"coding": options}),
         config_path=tmp_path / "config.toml",
         runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "agent-state",
         extension_catalog=catalog,
     )
     with pytest.raises(RuntimeError, match="registration failed"):

@@ -107,6 +107,12 @@ prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
 history and receipts. `session.aclose()` settles managed background work and
 closes its owned handles without deleting persisted data.
 
+The built-in local coding service preserves this layout with its default
+`runtime_dir=~/.msgflux/runtime` and `agent_dir=~/.msgflux`. If you choose another
+daemon runtime directory, configure an explicit coding state root with
+`defaults.agent_dir`; see [Coding Agent State Directory](service-local.md#coding-agent-state-directory)
+for configuration, Python factory, and legacy-thread recovery examples.
+
 Cancelling the coroutine awaiting `session.aclose()` leaves shutdown running.
 Await it again before closing borrowed models or workspaces. Managed journals
 and thread stores stay open while admitted work and its cleanup drain.

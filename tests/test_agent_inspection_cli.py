@@ -94,6 +94,7 @@ agent = "coding"
 model = "openai-codex/unavailable-model"
 account = "not-logged-in"
 accounts_dir = "missing-accounts"
+agent_dir = "agent-state"
 [agents.coding]
 harness = "coding"
 reasoning_effort = "high"
@@ -143,6 +144,7 @@ preset = "explorer"
         assert await client.threads() == () and await client.active_runs() == ()
         assert not (runtime / "workspaces.sqlite3").exists()
         assert not (tmp_path / "missing-accounts").exists()
+        assert not (tmp_path / "agent-state").exists()
         assert not list(tmp_path.rglob("checkpoints.sqlite3"))
     finally:
         await client.aclose()
