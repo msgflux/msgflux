@@ -291,3 +291,30 @@ print(response.data["body"])                # "Hi Bob, this is a test email."
 **`data` keys:** `text`, `headers`, `body`, `html_body`, `attachments`, `metadata`
 
 **`metadata` fields:** `has_html`, `num_attachments`, `is_multipart`, `content_type`
+
+---
+
+## 10. **Serialization**
+
+Parsers serialize their configuration, so you can recreate a configured parser
+later without repeating every option:
+
+```python
+import msgflux as mf
+
+parser = mf.Parser.csv("csv", delimiter=";", table_format="html")
+serialized = parser.serialize()
+
+restored = mf.Parser.from_serialized(
+    provider=serialized["provider"],
+    parser_type=serialized["parser_type"],
+    params=serialized["state"],
+)
+
+response = restored(b"name;score\nAda;10\n")
+print(response.data["metadata"].table_format)  # "html"
+```
+
+`from_serialized` restores configuration only. Runtime resources that are
+excluded from serialized state, such as clients, are not persisted. Pass the
+mapping under `serialized["state"]` as `params`.
