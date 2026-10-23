@@ -3039,15 +3039,20 @@ synchronous code already running in a thread; that code must cooperate or finish
 Independently dispatched background tasks have separate lifetimes and must be
 interrupted through their task handles.
 
-Providers observe the signal before output starts. After the first model token
-or tool call is produced, that model response is treated as committed; abort is
-then observed only at the next safe runtime boundary, such as before executing
-tools or before a later model call. When an abort reaches `Agent`, msgFlux
-converts it into the durable interrupt semantics: open tool calls are closed
-with synthetic interrupted outputs, and the checkpoint/task status becomes
-`interrupted`. The canonical timeline retains that status for audit. If the
-timeline is later converted to Responses input, the corresponding
-`function_call_output` uses the protocol's `incomplete` wire status.
+Providers observe the signal before output starts. The Agent also observes it
+while waiting for a stream's first response type, so an abort before that type
+arrives interrupts the run instead of waiting for the provider to settle. A
+stream whose response type is already present when that check begins is already
+committed; the abort is observed at the next safe boundary instead. After the
+first model token or tool call is produced, that model response is treated as
+committed; abort is then observed only at the next safe runtime boundary, such
+as before executing tools or before a later model call. When an abort
+reaches `Agent`, msgFlux converts it into the durable interrupt semantics: open
+tool calls are closed with synthetic interrupted outputs, and the
+checkpoint/task status becomes `interrupted`. The canonical timeline retains
+that status for audit. If the timeline is later converted to Responses input,
+the corresponding `function_call_output` uses the protocol's `incomplete` wire
+status.
 
 A terminal streamed response may therefore finish with status `completed` after
 an interruption request: it has no later tool or model boundary at which to
