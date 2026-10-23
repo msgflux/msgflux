@@ -352,3 +352,159 @@ async def test_active_run_listing_distinguishes_missing_endpoint_from_other_erro
             assert isinstance(raised.value.__cause__, AgentServiceHTTPError)
         else:
             assert str(raised.value) == "original error"
+
+
+@pytest.fixture
+def closed_event_parsers(monkeypatch):
+    from contextlib import aclosing
+    from msgflux.runtime.service.http import client as client_module
+
+    closed = []
+    parse = client_module._sse_events
+
+    async def tracked_parser(lines):
+        try:
+            async with aclosing(parse(lines)) as events:
+                async for event in events:
+                    yield event
+        finally:
+            closed.append("parser")
+
+    monkeypatch.setattr(client_module, "_sse_events", tracked_parser)
+    return closed
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("consume_event", [False, True])
+async def test_watch_exit_closes_owned_event_parser(
+    closed_event_parsers, consume_event
+):
+    body = (
+        'event: snapshot\ndata: {"thread_id":"t","namespace":"main","messages":[]}\n\n'
+        'event: event\ndata: {"type":"message.delta","timestamp":"now","data":{}}\n\n'
+    )
+
+    async def handler(request):
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+            request=request,
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        async with client.watch("t") as watcher:
+            if consume_event:
+                assert (await anext(watcher)).type == "message.delta"
+            assert closed_event_parsers == []
+        assert closed_event_parsers == ["parser"]
+        await watcher.aclose()
+        assert closed_event_parsers == ["parser"]
+        assert not http.is_closed
+        with pytest.raises(StopAsyncIteration):
+            await anext(watcher)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("invalid_snapshot", [False, True])
+async def test_watch_protocol_error_closes_owned_parser(
+    closed_event_parsers, invalid_snapshot
+):
+    body = (
+        "event: snapshot\ndata: {}\n\n"
+        if invalid_snapshot
+        else 'event: snapshot\ndata: {"thread_id":"t"}\n\nevent: event\ndata: {}\n\n'
+    )
+
+    async def handler(request):
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content=body,
+            request=request,
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        with pytest.raises(AgentServiceProtocolError, match="Invalid"):
+            async with client.watch("t") as watcher:
+                await anext(watcher)
+        assert closed_event_parsers == ["parser"]
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("cancel_reader", [False, True])
+async def test_watch_close_with_inflight_read(closed_event_parsers, cancel_reader):
+    import asyncio
+
+    reading, closed = asyncio.Event(), asyncio.Event()
+
+    class WatchBody(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'event: snapshot\ndata: {"thread_id":"t"}\n\n'
+            reading.set()
+            await closed.wait()
+
+        async def aclose(self):
+            closed.set()
+
+    async def handler(request):
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            stream=WatchBody(),
+            request=request,
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        async with client.watch("t") as watcher:
+            reader = asyncio.create_task(anext(watcher))
+            try:
+                await asyncio.wait_for(reading.wait(), 2)
+                if cancel_reader:
+                    reader.cancel()
+                    with pytest.raises(asyncio.CancelledError):
+                        await reader
+                else:
+                    await watcher.aclose()
+                    with pytest.raises(StopAsyncIteration):
+                        await asyncio.wait_for(reader, 2)
+            finally:
+                reader.cancel()
+                await asyncio.gather(reader, return_exceptions=True)
+        assert closed.is_set()
+        assert closed_event_parsers == ["parser"]
+
+
+@pytest.mark.asyncio
+async def test_watch_exit_closes_owned_line_iterator(monkeypatch):
+    from contextlib import aclosing
+
+    closed = []
+    original_lines = httpx2.Response.aiter_lines
+
+    async def tracked_lines(response):
+        try:
+            async with aclosing(original_lines(response)) as lines:
+                async for line in lines:
+                    yield line
+        finally:
+            closed.append("lines")
+
+    monkeypatch.setattr(httpx2.Response, "aiter_lines", tracked_lines)
+
+    async def handler(request):
+        return httpx2.Response(
+            200,
+            headers={"content-type": "text/event-stream"},
+            content='event: snapshot\ndata: {"thread_id":"t"}\n\n',
+            request=request,
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        async with client.watch("t"):
+            assert closed == []
+        assert closed == ["lines"]
