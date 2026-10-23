@@ -121,6 +121,101 @@ msgFlux provides several inspection mechanisms to help you debug and understand 
         })]
         ```
 
+    === "Pretty-print history"
+
+        `ChatMessages.pprint()` returns an elegant plain-text view of the
+        conversation. Each block is separated by a blank line and prefixed
+        with a header, so each kind is visually distinct.
+
+        | Header | Meaning |
+        |---|---|
+        | `[SYSTEM]` / `[DEVELOPER]` | System or developer instructions |
+        | `[USER]` | User message |
+        | `[ASSISTANT]` | Assistant message |
+        | `[REASONING]` | Reasoning trace or summary |
+        | `[TOOL CALL <name> id=<call_id>]` | Tool call with pretty-printed arguments |
+        | `[TOOL RESULT id=<call_id> status=<status>]` | Tool result output |
+
+        ```python
+        # pip install msgflux
+        import msgflux as mf
+        import msgflux.nn as nn
+
+        # mf.set_envs(OPENAI_API_KEY="...")
+
+
+        def get_weather(city: str) -> dict:
+            """Return the current temperature for a city.
+
+            Args:
+                city: City name, e.g. "Paris".
+
+            Returns:
+                Current temperature as a dict.
+            """
+            return {"temp": "22C"}
+
+
+        class Assistant(nn.Agent):
+            model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+            tools = [get_weather]
+            config = {"return_messages": True}
+
+        agent = Assistant()
+        response = agent("What's the weather in Paris? Use get_weather.")
+        print(response.messages.pprint())
+        ```
+
+        This example defines a `get_weather` tool, registers it on the agent,
+        and runs one turn with `return_messages` enabled. Printing
+        `response.messages.pprint()` renders the accumulated `ChatMessages`
+        history: the user turn, the tool call with its arguments, the tool
+        result, and the final assistant reply each appear as their own
+        labeled block.
+
+        Expected Output (`call_id` values vary per run):
+
+        ```bash
+        [USER]
+        What's the weather in Paris? Use get_weather.
+
+        [TOOL CALL get_weather id=call_abc123]
+        {
+          "city": "Paris"
+        }
+
+        [TOOL RESULT id=call_abc123]
+        {"temp": "22C"}
+
+        [ASSISTANT]
+        It is currently 22C in Paris.
+        ```
+
+        Useful options:
+
+        ```python
+        # Hide system prompt and reasoning, truncate long payloads
+        print(response.messages.pprint(show_system=False, show_reasoning=False))
+
+        # Show turn / compaction bookkeeping (hidden by default)
+        print(response.messages.pprint(show_turns=True, show_compaction=True))
+
+        # Truncate long contents, arguments and tool outputs
+        print(
+            response.messages.pprint(
+                max_content_chars=2000,
+                max_tool_args_chars=1000,
+                max_tool_output_chars=2000,
+            )
+        )
+        ```
+
+        !!! note
+            `pprint()` renders the portable `messages` view by default, so
+            `provider` / `api_mode` are optional. Pass them only to inspect a
+            provider-only compaction view. Multimodal parts render as short
+            placeholders such as `[image: ...]` and `[file: ...]`.
+
     === "State Dict"
 
         To inspect the agent's buffers and parameters, simply call its *.state_dict()* method.
