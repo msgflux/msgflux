@@ -1,7 +1,7 @@
 """Tests for ArxivWebRetriever."""
 
-import sys
 from datetime import datetime, timezone
+from importlib import import_module
 from unittest.mock import MagicMock, patch
 
 import pytest
@@ -49,23 +49,19 @@ class TestArxivWebRetriever:
         mock_client.results.return_value = [mock_result]
         mock_module.Client.return_value = mock_client
 
-        with patch.dict("sys.modules", {"arxiv": mock_module}):
-            # Import to get the mocked version
-            from msgflux.data.retrievers.providers.arxiv import ArxivWebRetriever
+        provider = import_module("msgflux.data.retrievers.providers.arxiv")
 
-            yield ArxivWebRetriever
+        # Patch the cached dependency without changing the global module registry.
+        with patch.object(provider, "arxiv", mock_module):
+            yield provider.ArxivWebRetriever
 
     def test_init_without_library_raises_error(self):
         """Test that initialization fails without arxiv."""
-        with patch.dict("sys.modules", {"arxiv": None}):
-            # Force reimport
-            if "msgflux.data.retrievers.providers.arxiv" in sys.modules:
-                del sys.modules["msgflux.data.retrievers.providers.arxiv"]
+        provider = import_module("msgflux.data.retrievers.providers.arxiv")
 
-            from msgflux.data.retrievers.providers.arxiv import ArxivWebRetriever
-
+        with patch.object(provider, "arxiv", None):
             with pytest.raises(ImportError) as exc_info:
-                ArxivWebRetriever()
+                provider.ArxivWebRetriever()
 
             assert "arxiv" in str(exc_info.value).lower()
             assert "pip install" in str(exc_info.value).lower()
