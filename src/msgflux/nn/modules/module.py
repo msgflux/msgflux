@@ -37,6 +37,8 @@ from opentelemetry.trace import Status, StatusCode
 from msgflux._private.executor import Executor
 from msgflux.core.dotdict import dotdict
 from msgflux.core.message import Message
+from msgflux.data.parsers.parser import Parser
+from msgflux.data.retrievers.retriever import Retriever
 from msgflux.envs import envs
 from msgflux.exceptions import (
     AbortRequestedError,
@@ -88,7 +90,22 @@ __all__ = [
 MSGFLUX_DESERIALIZABLE_CLS: Dict[str, Type] = {
     "model": Model,
     "model_gateway": ModelGateway,
+    "parser": Parser,
+    "retriever": Retriever,
 }
+
+
+def _deserialize_msgflux_value(data: Dict[str, Any]) -> Any:
+    """Rebuild a serialized msgflux buffer without mutating ``data``."""
+    msgflux_type = data["msgflux_type"]
+    if msgflux_type == "generation_schema":
+        return StructFactory.from_schema(data["state"])
+    if msgflux_type == "model_gateway":
+        return ModelGateway.from_serialized(data)
+
+    return MSGFLUX_DESERIALIZABLE_CLS[msgflux_type].from_serialized(
+        data["provider"], data[f"{msgflux_type}_type"], data["state"]
+    )
 
 
 T = TypeVar("T", bound="Module")
@@ -2548,16 +2565,13 @@ class Module:
                 data = state_dict[key]
                 # Check if it is a msgflux serializable class
                 if isinstance(data, dict) and "msgflux_type" in data:
-                    msgflux_type = data.pop("msgflux_type")
-                    if msgflux_type in MSGFLUX_DESERIALIZABLE_CLS:
+                    msgflux_type = data["msgflux_type"]
+                    if (
+                        msgflux_type in MSGFLUX_DESERIALIZABLE_CLS
+                        or msgflux_type == "generation_schema"
+                    ):
                         # TODO not recreate if same type
-                        cls = MSGFLUX_DESERIALIZABLE_CLS[msgflux_type]
-                        instance = cls.from_serialized(**data)
-                        self._buffers[name] = instance
-                    elif msgflux_type == "generation_schema":
-                        state = data.pop("state")
-                        generation_schema = StructFactory.from_schema(state)
-                        self._buffers[name] = generation_schema
+                        self._buffers[name] = _deserialize_msgflux_value(data)
                 else:  # Otherwise, load the value directly
                     self._buffers[name] = data
 

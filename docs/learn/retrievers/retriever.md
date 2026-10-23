@@ -173,3 +173,43 @@ response = await retriever.acall("artificial intelligence", top_k=2)
 for result in response.data[0].results:
     print(result.data.title)
 ```
+
+---
+
+## 5. **Serialization**
+
+Retrievers serialize their configuration, not their runtime resources or local
+corpus. Recreate a configured retriever with `from_serialized` and add the
+corpus again before searching:
+
+```python
+import msgflux as mf
+
+retriever = mf.Retriever.lexical("bm25", k1=1.2, b=0.4)
+retriever.add([
+    "Python is a high-level programming language.",
+    "Machine learning is a subset of artificial intelligence.",
+])
+
+serialized = retriever.serialize()
+restored = mf.Retriever.from_serialized(
+    provider=serialized["provider"],
+    retriever_type=serialized["retriever_type"],
+    params=serialized["state"],
+)
+
+print(restored.k1, restored.b)  # 1.2 0.4
+print(restored.documents)       # [] — corpus is runtime-only
+
+# Supply the corpus again before querying.
+restored.add([
+    "Python is a high-level programming language.",
+    "Machine learning is a subset of artificial intelligence.",
+])
+response = restored("machine learning", top_k=1)
+print(response.data[0].results[0].data)
+```
+
+`client` and `documents` are intentionally excluded from serialized state.
+Restoration does not persist a corpus, credentials, or live clients. Pass the
+mapping under `serialized["state"]` as `params`.

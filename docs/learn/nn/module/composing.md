@@ -244,6 +244,11 @@ print(outer("hello"))
 # <div><i><b>hello</b></i></div>
 ```
 
+Serialized msgFlux buffers such as parsers, retrievers, and models are
+reconstructed by `load_state_dict()`. Retriever buffers restore configuration
+only; re-add a local corpus after loading, because documents are runtime state
+and are not serialized.
+
 ## 6. **Container Modules**
 
 For common patterns, msgFlux provides dedicated containers — see their individual pages:

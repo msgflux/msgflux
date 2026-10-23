@@ -860,7 +860,13 @@ class ModelGateway:
 
         deployments = []
         for entry in serialized_deployments:
-            model = Model.from_serialized(**entry["model"])
+            model = Model.from_serialized(
+                **{
+                    key: value
+                    for key, value in entry["model"].items()
+                    if key != "msgflux_type"
+                }
+            )
             deployment: Dict[str, Any] = {
                 "model_name": entry["model_name"],
                 "model": model,

@@ -1,9 +1,13 @@
 """Tests for msgflux.nn.modules.module base class."""
 
+import copy
 import inspect
 import pytest
 from unittest.mock import Mock, MagicMock, patch
 
+import msgflux as mf
+
+from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
 from msgflux.nn.modules.module import (
     Module,
     _IncompatibleKeys,
@@ -22,6 +26,17 @@ class SimpleModule(Module):
 
     def forward(self, x):
         return x + self.value
+
+
+class BufferModule(Module):
+    """Module with one serializable buffer."""
+
+    def __init__(self, value=None):
+        super().__init__()
+        self.register_buffer("value", value)
+
+    def forward(self, x):
+        return x
 
 
 class NestedModule(Module):
@@ -614,6 +629,78 @@ class TestModule:
         result = module2.load_state_dict(state)
         # Check that it returns IncompatibleKeys
         assert hasattr(result, "missing_keys") or result is None
+
+    def test_load_state_dict_roundtrips_serialized_parser(self):
+        """A parser buffer round-trips through the public module state API."""
+        parser = mf.Parser.csv("csv", delimiter=";", table_format="html")
+        source = BufferModule(parser)
+        state = source.state_dict()
+        snapshot = copy.deepcopy(state)
+
+        target = BufferModule(mf.Parser.csv("csv"))
+        target.load_state_dict(state)
+
+        assert state == snapshot
+        assert target.value.delimiter == ";"
+        response = target.value(b"name;score\nAda;10\n")
+        assert response.data["metadata"].table_format == "html"
+        assert "Ada" in response.data["text"]
+
+    def test_load_state_dict_roundtrips_serialized_retriever(self):
+        """A retriever buffer restores config; the corpus is re-added."""
+        documents = [
+            "python programming language",
+            "machine learning with python",
+            "java programming language",
+        ]
+        retriever = BM25LexicalRetriever(k1=1.2, b=0.4)
+        retriever.add(documents)
+        source = BufferModule(retriever)
+        state = source.state_dict()
+        snapshot = copy.deepcopy(state)
+
+        target = BufferModule(BM25LexicalRetriever())
+        target.load_state_dict(state)
+
+        assert state == snapshot
+        restored = target.value
+        assert restored.k1 == 1.2
+        assert restored.b == 0.4
+        assert restored.documents == []
+
+        restored.add(documents)
+        response = restored("machine learning", top_k=1)
+        assert response.data[0].results[0].data == "machine learning with python"
+
+    def test_load_state_dict_roundtrips_serialized_model(self, monkeypatch):
+        """A model buffer restores configuration and runtime transport."""
+        from msgflux.models.chat_transport import ChatTransport
+        from msgflux.models.providers.vllm import VLLMChatCompletion
+
+        monkeypatch.setattr(VLLMChatCompletion, "_get_api_key", lambda self: "test")
+
+        model = mf.Model.chat_completion(
+            "vllm/local-model",
+            base_url="http://127.0.0.1:1/v1",
+            temperature=0.2,
+            max_tokens=32,
+        )
+        source = BufferModule(model)
+        state = source.state_dict()
+        snapshot = copy.deepcopy(state)
+
+        target = BufferModule(
+            mf.Model.chat_completion(
+                "vllm/other-model", base_url="http://127.0.0.1:1/v1"
+            )
+        )
+        target.load_state_dict(state)
+
+        assert state == snapshot
+        restored = target.value
+        assert restored.model_id == "local-model"
+        assert restored.sampling_run_params["temperature"] == 0.2
+        assert isinstance(restored.chat_transport, ChatTransport)
 
     def test_module_training_mode(self):
         """Test train() and eval() mode switching."""

@@ -176,6 +176,29 @@ def test_csv_html_format(csv_bytes):
     assert "<th>" in response.data["text"]
 
 
+def test_csv_serialized_roundtrip_restores_usable_parser():
+    parser = mf.Parser.csv(
+        "csv",
+        delimiter=";",
+        has_header=True,
+        table_format="html",
+        encoding="utf-8",
+        quotechar="'",
+    )
+    serialized = parser.serialize()
+
+    restored = mf.Parser.from_serialized(
+        serialized["provider"], serialized["parser_type"], serialized["state"]
+    )
+    response = restored(b"name;score\nAda;10\nGrace;9\n")
+
+    assert response.response_type == "csv_parse"
+    assert response.data["metadata"].delimiter == ";"
+    assert response.data["metadata"].table_format == "html"
+    assert "<table>" in response.data["text"]
+    assert "Ada" in response.data["text"]
+
+
 # ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
