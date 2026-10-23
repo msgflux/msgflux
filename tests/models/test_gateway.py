@@ -1007,3 +1007,49 @@ class TestGatewaySerialization:
 
         with pytest.raises(ValueError, match="does not contain models"):
             ModelGateway.from_serialized(data)
+
+
+@pytest.mark.parametrize("via_module", [False, True])
+def test_serialized_gateway_roundtrip_restores_model_envelopes(monkeypatch, via_module):
+    from copy import deepcopy
+
+    from msgflux.nn.modules.module import Module
+
+    class SerializableModel(MockModel):
+        serialize = BaseModel.serialize
+
+    monkeypatch.setattr(
+        "msgflux.models.model.model_registry",
+        {"chat_completion": {"mock": SerializableModel}},
+    )
+    gateway = ModelGateway(
+        models=[
+            {
+                "model_name": "fast",
+                "model": SerializableModel("first"),
+                "description": "First deployment",
+            },
+            {"model_name": "deep", "model": SerializableModel("second")},
+        ],
+        fallback=False,
+    )
+    if via_module:
+        original = Module()
+        original.register_buffer("gateway", gateway)
+        state = original.state_dict()
+        before = deepcopy(state)
+        restored_module = Module()
+        restored_module.register_buffer("gateway", None)
+        restored_module.load_state_dict(state)
+        restored = restored_module.gateway
+    else:
+        state = gateway.serialize()
+        before = deepcopy(state)
+        restored = ModelGateway.from_serialized(state)
+
+    assert state == before
+    assert restored.model_names == ["fast", "deep"]
+    assert restored.fallback is False
+    assert restored.model_descriptions["fast"] == "First deployment"
+    assert restored.models[0]().data == "Response from first"
+    assert restored.models[1]().data == "Response from second"

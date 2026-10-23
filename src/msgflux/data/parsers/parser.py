@@ -62,11 +62,7 @@ class Parser:
             An instance of the appropriate parser class with restored state.
         """
         parser_cls = cls._get_parser_class(parser_type, provider)
-        # Create instance without calling __init__
-        instance = object.__new__(parser_cls)
-        # Restore the instance state
-        instance.from_serialized(params)
-        return instance
+        return parser_cls.from_serialized(params)
 
     @classmethod
     def pdf(cls, provider: str, **kwargs) -> PdfParser:

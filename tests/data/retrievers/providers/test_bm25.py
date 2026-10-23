@@ -3,6 +3,7 @@
 import pytest
 
 from msgflux.data.retrievers.providers.bm25 import BM25LexicalRetriever
+from msgflux.data.retrievers.retriever import Retriever
 
 
 class TestBM25LexicalRetriever:
@@ -169,3 +170,39 @@ class TestBM25LexicalRetriever:
         assert len(results.data) == 1
         # Should apply default top_k=5
         assert len(results.data[0]["results"]) <= 5
+
+    def test_serialized_roundtrip_restores_configuration_and_requires_corpus(self):
+        """Restore configuration, but keep the corpus as a runtime resource."""
+        retriever = BM25LexicalRetriever(k1=1.2, b=0.4)
+        retriever.add(
+            [
+                "python programming language",
+                "machine learning with python",
+                "java programming language",
+            ]
+        )
+        serialized = retriever.serialize()
+
+        assert "documents" not in serialized["state"]
+        restored = Retriever.from_serialized(
+            serialized["provider"],
+            serialized["retriever_type"],
+            serialized["state"],
+        )
+
+        assert restored.k1 == 1.2
+        assert restored.b == 0.4
+        assert restored.documents == []
+
+        # The restored configuration is usable once the caller supplies the
+        # corpus again; serialization intentionally does not persist it.
+        restored.add(
+            [
+                "python programming language",
+                "machine learning with python",
+                "java programming language",
+            ]
+        )
+        response = restored("machine learning", top_k=1)
+
+        assert response.data[0].results[0].data == "machine learning with python"

@@ -25,7 +25,6 @@ from msgflux.exceptions import (
     TaskInterruptRequestedError,
     TaskPauseRequestedError,
 )
-from msgflux.models.response import ModelStreamResponse
 from msgflux.nn.extensions.base import (
     AgentExtension,
     AgentExtensionHandle,
@@ -544,7 +543,7 @@ class AgentLifecycleMixin:
         )
 
     def _transform_module_output(self, output: Any) -> Any:
-        if isinstance(output, ModelStreamResponse):
+        if self._stream_response_from_result(output) is not None:
             return output
         context = self._run_lifecycle_hooks(
             "transform_output",
@@ -772,7 +771,7 @@ class AgentLifecycleMixin:
         return error.error
 
     async def _atransform_module_output(self, output: Any) -> Any:
-        if isinstance(output, ModelStreamResponse):
+        if self._stream_response_from_result(output) is not None:
             return output
         context = await self._arun_lifecycle_hooks(
             "transform_output",

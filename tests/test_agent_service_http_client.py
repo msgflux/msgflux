@@ -152,6 +152,32 @@ async def test_http_methods_encode_requests_and_decode_records():
     assert seen[-1].url.path == "/v1/threads/t/runs/run/resume"
 
 
+@pytest.mark.parametrize("identifier", [".", ".."])
+@pytest.mark.asyncio
+async def test_dot_segment_identifiers_are_encoded_as_opaque_path_segments(identifier):
+    seen = []
+
+    def handler(request):
+        seen.append(request.url.raw_path)
+        return _json_response(
+            request,
+            {
+                "thread_id": identifier,
+                "run_id": identifier,
+                "status": "completed",
+                "output": "encoded",
+            },
+        )
+
+    async with httpx2.AsyncClient(transport=httpx2.MockTransport(handler)) as http:
+        client = AgentServiceClient("http://service", token="secret", client=http)
+        result = await client.run_result(identifier, identifier)
+
+    encoded = "%2E" if identifier == "." else "%2E%2E"
+    assert seen == [f"/v1/threads/{encoded}/runs/{encoded}/result".encode()]
+    assert result.output == "encoded"
+
+
 @pytest.mark.asyncio
 async def test_open_thread_can_omit_agent_id_for_service_default():
     def handler(request):

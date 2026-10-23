@@ -256,3 +256,15 @@ the Gateway.
 `description`, `time_constraints`, and the Gateway's `fallback` policy.
 `ModelGateway.from_serialized(...)` also accepts older state without the policy
 field and restores it with `fallback=True`.
+
+A gateway roundtrip restores each model from its serialized provider configuration
+and retains deployment names, descriptions, scheduling constraints, and fallback
+policy. The input state remains unchanged:
+
+```python
+state = gateway.serialize()
+restored = mf.ModelGateway.from_serialized(state)
+```
+
+This recreates the gateway and its models; provider initialization rebuilds the
+runtime transports.
