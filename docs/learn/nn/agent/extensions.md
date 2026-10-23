@@ -328,6 +328,10 @@ agent = nn.Agent(
 )
 ```
 
+With `config={"return_messages": True}`, a mapping returned from the feedback
+hook keeps its own keys and gains a `messages` entry. Scalar return values use
+the standard `response`/`messages` envelope, matching other non-tool responses.
+
 Replacing `tool_feedback` also removes the standard return behavior. If a
 custom extension should only add a new mode, give it another name and install
 it alongside `DefaultToolFeedbackExtension`.
