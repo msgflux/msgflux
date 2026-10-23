@@ -1,6 +1,7 @@
 import asyncio
 import threading
 from dataclasses import replace
+from unittest.mock import Mock
 
 import msgspec
 import pytest
@@ -489,6 +490,101 @@ async def test_extension_removal_preserves_active_run_snapshot():
     assert await active_run == "ok"
     assert "active snapshot" in (model.calls[1]["system_prompt"] or "")
     assert "extension_tool" not in agent.tool_library.library
+
+
+class _RunRecordingExtension(AgentExtension):
+    def __init__(self):
+        super().__init__("recording")
+        self.runs = []
+
+    def record(self, _payload):
+        self.runs.append(get_execution_context()["scope"].run_id)
+
+    def hooks(self):
+        return (Hook(event="before_run", handler=self.record),)
+
+
+def _nested_tool_response():
+    response = ModelResponse()
+    response.set_response_type("tool_call")
+    calls = ToolCallAggregator()
+    calls.process(0, "nested-call", "nested_call", msgspec.json.encode({}).decode())
+    response.add(calls)
+    response.metadata = {}
+    return response
+
+
+def test_removed_extension_does_not_reach_nested_new_scope():
+    agent = Agent(name="agent", model=Mock(model_type="chat_completion"))
+    extension = _RunRecordingExtension()
+    handle = agent.register_extension("recording", extension)
+    state = {"nested": False}
+
+    def nested_call():
+        state["nested"] = True
+        return agent(
+            "child",
+            scope=ExecutionScope(thread_id="child-thread", run_id="child-run"),
+        )
+
+    agent.tool_library.add(nested_call)
+
+    def forward(**_kwargs):
+        scope = get_execution_context()["scope"]
+        if scope.run_id == "outer-run" and not state["nested"]:
+            handle.remove()
+            return _nested_tool_response()
+        return _text_response(f"answer:{scope.run_id}")
+
+    agent.generator.forward = forward
+
+    assert (
+        agent(
+            "outer",
+            scope=ExecutionScope(thread_id="outer-thread", run_id="outer-run"),
+        )
+        == "answer:outer-run"
+    )
+    assert extension.runs == ["outer-run"]
+    assert not handle.active
+    assert "recording" not in agent._pending_extensions
+
+
+@pytest.mark.asyncio
+async def test_removed_extension_does_not_reach_nested_async_new_scope():
+    agent = Agent(name="agent", model=Mock(model_type="chat_completion"))
+    extension = _RunRecordingExtension()
+    handle = agent.register_extension("recording", extension)
+    state = {"nested": False}
+
+    async def nested_call():
+        state["nested"] = True
+        return await agent.acall(
+            "child",
+            scope=ExecutionScope(thread_id="child-thread", run_id="child-run"),
+        )
+
+    agent.tool_library.add(nested_call)
+
+    async def aforward(**_kwargs):
+        scope = get_execution_context()["scope"]
+        if scope.run_id == "outer-run" and not state["nested"]:
+            handle.remove()
+            return _nested_tool_response()
+        return _text_response(f"answer:{scope.run_id}")
+
+    agent.generator.aforward = aforward
+
+    assert (
+        await agent.acall(
+            "outer",
+            scope=ExecutionScope(thread_id="outer-thread", run_id="outer-run"),
+        )
+        == "answer:outer-run"
+    )
+    assert extension.runs == ["outer-run"]
+    assert not handle.active
+    assert "recording" not in agent._pending_extensions
 
 
 @pytest.mark.asyncio
