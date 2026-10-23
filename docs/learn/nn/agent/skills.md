@@ -31,6 +31,10 @@ Inspect correctness first, then tests and edge cases.
 `name` must use lowercase letters, numbers, and single hyphens and is limited
 to 64 characters. `description` is required and limited to 1024 characters.
 The optional `license`, `compatibility`, and `metadata` fields are retained.
+Each `SKILL.md` must be a regular file no larger than 256 KiB. YAML aliases are
+not supported in skill frontmatter; ordinary scalar and list metadata remain
+supported. Calling `mf.parse_skill_file(path)` directly also requires a regular
+file; a symlink in the final path component is rejected.
 
 Set `include_in_prompt: false` in the frontmatter when a skill should remain
 discoverable but its name and description should be omitted from the initial
@@ -59,6 +63,10 @@ agent = nn.Agent(
 
 msgFlux does not scan conventional directories implicitly. Pass explicit paths
 or opt in with `mf.default_skill_paths()`.
+
+An explicitly configured root may itself be a symlink and is resolved before
+discovery. Symlinked skill directories and `SKILL.md` files below that root are
+skipped, so discovery does not follow child links outside the configured root.
 
 `skills={...}` on `Agent` remains a silent compatibility alias for
 `extensions=[SkillsExtension(...)]` while the extension API stabilizes. New
@@ -147,10 +155,15 @@ skills = mf.SkillsExtension(
 
 On registration, the extension creates or refreshes the parent directories and
 `index.md`. The deterministic file contains each deferred skill's name and
-description. The system prompt includes only its resolved location and tells
+description. The system prompt includes only its absolute location and tells
 the model to search the index with an available filesystem tool, then call
 `skill(name)` to load the selected workflow. The extension does not repeat
 frontmatter in the index or expose the full skill body there.
+
+The index is updated with an atomic replacement. A small regular existing index
+may be read to avoid an unnecessary rewrite; symlinks and non-regular or
+oversized files are replaced without reading through them. A directory at the
+index path is an error and is left untouched.
 
 Use `discovery=None` only when the application supplies another discovery
 mechanism. Deferred skills still have the `skill` loader, but omitted names

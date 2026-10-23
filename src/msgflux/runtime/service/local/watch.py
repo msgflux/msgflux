@@ -1,6 +1,6 @@
 """Observe an existing thread without submitting or interrupting work."""
 
-from msgflux._cli_output import write_observation
+from msgflux._private.cli_output import write_observation
 from msgflux.runtime.service.http import AgentServiceClient
 
 
