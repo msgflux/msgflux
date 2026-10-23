@@ -116,6 +116,14 @@ def _coding_agent(store, scripted_forward):
     return agent
 
 
+def _managed_coding_agent(agent_dir, scripted_forward):
+    model = Mock()
+    model.model_type = "chat_completion"
+    agent = Agent(name="coding", model=model, agent_dir=agent_dir)
+    agent.generator.aforward = AsyncMock(side_effect=scripted_forward)
+    return agent
+
+
 @pytest.mark.asyncio
 async def test_new_session_resumes_durable_thread_and_snapshot_history():
     store = InMemoryCheckpointStore()
@@ -338,6 +346,66 @@ async def test_detaching_observer_does_not_cancel_service_owned_run():
     assert any(event.type == "run.end" for event in replayed)
     assert await reattached.snapshot()
     await session.aclose()
+
+
+@pytest.mark.asyncio
+async def test_managed_checkpoint_import_persists_admission_after_close(tmp_path):
+    agent_dir = tmp_path / "agent"
+    agent_dir.mkdir()
+
+    async def pause(**_kwargs):
+        raise TaskPauseRequestedError(message="seed pause")
+
+    first = CodingSession(
+        _managed_coding_agent(agent_dir, pause), thread_id="import-thread"
+    )
+    try:
+        admitted = await first.prompt("seed", request_id="seed")
+        assert (await first.wait("seed")).status == "paused"
+    finally:
+        await first.aclose()
+
+    # Simulate a checkpoint that predates the admission journal. Recovery must
+    # import its admission into the managed journal before writing run state.
+    journal = agent_dir / "runtime" / "service.sqlite3"
+    assert journal.is_file()
+    journal.unlink()
+
+    resumed_calls = []
+
+    async def answer(**kwargs):
+        resumed_calls.append(kwargs["messages"].to_chatml())
+        return _text_response("resumed answer")
+
+    second = CodingSession(
+        _managed_coding_agent(agent_dir, answer), thread_id="import-thread"
+    )
+    try:
+        resumed = await second.resume(admitted.run_id, worker_stopped=True)
+        settled = await second.wait(resumed.request_id)
+        assert settled.status == "completed"
+        assert journal.is_file()
+    finally:
+        await second.aclose()
+
+    reopened = CodingSession(
+        _managed_coding_agent(
+            agent_dir, lambda **_kwargs: _text_response("must not run")
+        ),
+        thread_id="import-thread",
+    )
+    try:
+        result = await reopened.result(admitted.run_id)
+        receipt = await reopened.receipt(resumed.request_id)
+        again = await reopened.resume(admitted.run_id)
+
+        assert result.status == "completed"
+        assert result.output == "resumed answer"
+        assert receipt.status == "completed"
+        assert again == receipt
+        assert len(resumed_calls) == 1
+    finally:
+        await reopened.aclose()
 
 
 @pytest.mark.asyncio
