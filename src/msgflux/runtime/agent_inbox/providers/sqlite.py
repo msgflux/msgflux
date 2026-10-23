@@ -11,6 +11,7 @@ from threading import RLock
 from typing import Any, Iterable, List, Mapping
 from uuid import uuid4
 
+from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.data.stores.registry import register_store
 from msgflux.runtime.agent_inbox.base import (
     _USER_CONTENT_SOURCES,
@@ -84,6 +85,7 @@ class SQLiteAgentInboxStore(AgentInboxStore):
         self.path = path
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
+        prepare_sqlite_file(path)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.executescript(_CREATE_INBOX_TABLES)

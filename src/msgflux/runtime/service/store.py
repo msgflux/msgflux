@@ -10,6 +10,7 @@ from time import monotonic, sleep
 
 import msgspec
 
+from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.runtime.context import new_run_id
 from msgflux.runtime.permissions import ResourcePermission
 from msgflux.runtime.service.records import (
@@ -59,6 +60,7 @@ class SQLiteServiceStore:
     def __init__(self, path: str | Path = ":memory:") -> None:
         self._lock = RLock()
         self._path = None if str(path) == ":memory:" else Path(path).resolve()
+        prepare_sqlite_file(path)
         self._connection = sqlite3.connect(str(path), check_same_thread=False)
         try:
             self._connection.execute("PRAGMA busy_timeout=30000")
