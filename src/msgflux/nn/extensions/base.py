@@ -32,9 +32,6 @@ _CURRENT_EXTENSION_STATE = contextvars.ContextVar(
 def _extension_snapshot(agent: Agent, names: frozenset[str]):
     current = _CURRENT_EXTENSION_SNAPSHOTS.get() or {}
     agent_id = id(agent)
-    if agent_id in current:
-        yield current[agent_id]
-        return
     updated = dict(current)
     updated[agent_id] = names
     token = _CURRENT_EXTENSION_SNAPSHOTS.set(updated)
