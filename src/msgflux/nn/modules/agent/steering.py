@@ -87,8 +87,28 @@ class AgentSteeringMixin:
                 "Resume after releasing its inbox claim or updating notification hooks."
             )
 
+    def _drain_pending_controls(self, messages, runtime_vars):
+        inbox = self._get_effective_agent_inbox()
+        if inbox is None:
+            return
+        if not any(notice.source == "control" for notice in inbox.peek()):
+            return
+        # Completion is the final safe boundary for run-scoped controls. Deliver
+        # them now so a late pause/interrupt stops this run instead of the next.
+        self._drain_inbox_into_messages(messages, vars=runtime_vars)
+
+    async def _adrain_pending_controls(self, messages, runtime_vars):
+        inbox = self._get_effective_agent_inbox()
+        if inbox is None:
+            return
+        if not any(notice.source == "control" for notice in inbox.peek()):
+            return
+        await self._adrain_inbox_into_messages(messages, vars=runtime_vars)
+
     def _ready_to_complete(self, messages, runtime_vars, *, force=False):
         if self._seal_steering(messages, force=force):
+            if not force:
+                self._drain_pending_controls(messages, runtime_vars)
             return True
         pending = self._pending_steering_ids(messages)
         self._drain_inbox_into_messages(messages, vars=runtime_vars)
@@ -100,6 +120,8 @@ class AgentSteeringMixin:
 
     async def _aready_to_complete(self, messages, runtime_vars, *, force=False):
         if self._seal_steering(messages, force=force):
+            if not force:
+                await self._adrain_pending_controls(messages, runtime_vars)
             return True
         pending = self._pending_steering_ids(messages)
         await self._adrain_inbox_into_messages(messages, vars=runtime_vars)
