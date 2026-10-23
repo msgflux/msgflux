@@ -71,6 +71,11 @@ class BeautifulSoupHtmlParser(BaseParser, HtmlParser):
         """Initialize parser state."""
         pass
 
+    @staticmethod
+    def _is_html_content(data: str) -> bool:
+        """Return whether a string is inline HTML rather than a path or URL."""
+        return data.lstrip().startswith("<")
+
     def __call__(self, data: Union[str, bytes], **kwargs) -> ParserResponse:
         """Parse an HTML document.
 
@@ -94,9 +99,12 @@ class BeautifulSoupHtmlParser(BaseParser, HtmlParser):
                 If data type is not supported.
         """
         # Validate file type if it's a path
-        if isinstance(data, str) and not data.startswith(("http://", "https://")):
-            if "." in data:  # Has extension
-                self._validate_file_type(data, [".html", ".htm"])
+        if (
+            isinstance(data, str)
+            and not data.startswith(("http://", "https://"))
+            and not self._is_html_content(data)
+        ):
+            self._validate_file_type(data, [".html", ".htm"])
 
         # Parse the document
         result = self._parse(data)
@@ -130,7 +138,7 @@ class BeautifulSoupHtmlParser(BaseParser, HtmlParser):
                 # Load from URL
                 file_bytes = self._load_file(data)
                 content = file_bytes.decode("utf-8")
-            elif data.startswith(("<!DOCTYPE", "<html", "<?xml")):
+            elif self._is_html_content(data):
                 # Already HTML content
                 content = data
             else:
@@ -200,61 +208,122 @@ class BeautifulSoupHtmlParser(BaseParser, HtmlParser):
         """
         markdown = []
 
+        def render_inline_children(node, *, skip=()) -> str:
+            """Render inline descendants iteratively without block wrappers."""
+            buffers = [[]]
+            stack = [("node", child) for child in reversed(list(node.children))]
+            while stack:
+                kind, value = stack.pop()
+                if kind == "close_link":
+                    text = "".join(buffers.pop()).strip()
+                    if text and value:
+                        buffers[-1].append(f"[{text}]({value})")
+                    elif text:
+                        buffers[-1].append(text)
+                    continue
+
+                child = value
+                if child.name is None:
+                    buffers[-1].append(str(child))
+                elif child.name in skip:
+                    continue
+                elif child.name == "br":
+                    buffers[-1].append("\n")
+                elif child.name == "code":
+                    buffers[-1].append(f"`{child.get_text()}`")
+                elif child.name == "a":
+                    buffers.append([])
+                    stack.append(("close_link", child.get("href", "")))
+                    for nested in reversed(list(child.children)):
+                        stack.append(("node", nested))
+                else:
+                    for nested in reversed(list(child.children)):
+                        stack.append(("node", nested))
+
+            return "".join(buffers[0])
+
+        def find_outer_lists(node):
+            """Return nested lists in document order without entering them."""
+            found = []
+            stack = list(reversed(list(node.children)))
+            while stack:
+                child = stack.pop()
+                if child.name in ["ul", "ol"]:
+                    found.append(child)
+                elif child.name is not None:
+                    for nested in reversed(list(child.children)):
+                        stack.append(nested)
+            return found
+
+        def render_blocks(node) -> None:
+            """Render block descendants iteratively in document order."""
+            stack = list(reversed(list(node.children)))
+            while stack:
+                child = stack.pop()
+                if child.name is None:
+                    text = str(child).strip()
+                    if text:
+                        markdown.append(text)
+                    continue
+
+                name = child.name
+                if name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
+                    text = render_inline_children(child).strip()
+                    if text:
+                        level = int(name[1])
+                        markdown.append(f"\n\n{'#' * level} {text}\n")
+
+                elif name == "p":
+                    text = render_inline_children(child).strip()
+                    if text:
+                        markdown.append(f"\n\n{text}\n")
+
+                elif name == "br":
+                    markdown.append("\n")
+
+                elif name in ["ul", "ol"]:
+                    # Lists are handled by their li children
+                    markdown.append("\n")
+                    stack.extend(reversed(list(child.children)))
+
+                elif name == "li":
+                    text = render_inline_children(child, skip=("ul", "ol")).strip()
+                    if text and child.parent:
+                        if child.parent.name == "ol":
+                            markdown.append(f"\n1. {text}")
+                        else:
+                            markdown.append(f"\n- {text}")
+                    for nested in reversed(find_outer_lists(child)):
+                        stack.extend(reversed(list(nested.children)))
+
+                elif name == "a":
+                    text = render_inline_children(child).strip()
+                    href = child.get("href", "")
+                    if text and href:
+                        markdown.append(f"[{text}]({href})")
+                    elif text:
+                        markdown.append(text)
+
+                elif name == "code":
+                    text = child.get_text()
+                    markdown.append(f"`{text}`")
+
+                elif name == "pre":
+                    text = child.get_text()
+                    markdown.append(f"\n```\n{text}\n```\n")
+
+                elif name == "blockquote":
+                    text = child.get_text().strip()
+                    if text:
+                        quoted = "\n".join(f"> {line}" for line in text.split("\n"))
+                        markdown.append(f"\n{quoted}\n")
+
+                else:
+                    stack.extend(reversed(list(child.children)))
+
         # Process body (or entire soup if no body)
         body = soup.find("body") or soup
-
-        for element in body.descendants:
-            if element.name is None:
-                # Text node
-                text = str(element).strip()
-                if text:
-                    markdown.append(text)
-
-            elif element.name in ["h1", "h2", "h3", "h4", "h5", "h6"]:
-                level = int(element.name[1])
-                text = element.get_text(strip=True)
-                if text:
-                    markdown.append(f"\n\n{'#' * level} {text}\n")
-
-            elif element.name == "p":
-                text = element.get_text(strip=True)
-                if text:
-                    markdown.append(f"\n\n{text}\n")
-
-            elif element.name == "br":
-                markdown.append("\n")
-
-            elif element.name in ["ul", "ol"]:
-                # Lists are handled by their li children
-                markdown.append("\n")
-
-            elif element.name == "li":
-                text = element.get_text(strip=True)
-                if text and element.parent:
-                    if element.parent.name == "ol":
-                        markdown.append(f"\n1. {text}")
-                    else:
-                        markdown.append(f"\n- {text}")
-
-            elif element.name == "a":
-                text = element.get_text(strip=True)
-                href = element.get("href", "")
-                if text and href:
-                    markdown.append(f"[{text}]({href})")
-
-            elif element.name == "code":
-                text = element.get_text()
-                markdown.append(f"`{text}`")
-
-            elif element.name == "pre":
-                text = element.get_text()
-                markdown.append(f"\n```\n{text}\n```\n")
-
-            elif element.name == "blockquote":
-                text = element.get_text(strip=True)
-                if text:
-                    quoted = "\n".join(f"> {line}" for line in text.split("\n"))
-                    markdown.append(f"\n{quoted}\n")
+        render_blocks(body)
 
         # Clean up the output
         result = "".join(markdown)

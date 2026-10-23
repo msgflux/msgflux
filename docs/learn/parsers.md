@@ -240,15 +240,21 @@ parser = mf.Parser.html("beautifulsoup")
 response = parser(html_content)
 
 print(response.data["text"])
-# ## Hello World
+# # Hello World
 #
 # This is a paragraph.
+# [Click here](https://example.com)
 
 print(response.data["links"])
 # [{"text": "Click here", "url": "https://example.com"}]
 
 print(response.data["metadata"].title)  # "My Page"
 ```
+
+String input that starts with `<` (ignoring leading whitespace) is parsed as
+HTML content. Other strings are treated as a local file path or an `http(s)` URL.
+Headings, paragraphs, list items, code blocks, and links are emitted once in
+document order.
 
 **`data` keys:** `text`, `links`, `images`, `metadata`
 
@@ -291,3 +297,53 @@ print(response.data["body"])                # "Hi Bob, this is a test email."
 **`data` keys:** `text`, `headers`, `body`, `html_body`, `attachments`, `metadata`
 
 **`metadata` fields:** `has_html`, `num_attachments`, `is_multipart`, `content_type`
+
+---
+
+## 10. Text Chunking
+
+Every parser inherits `chunk_text()` for character-based splitting and
+`chunk_by_tokens()` for token-based splitting. Token chunking uses `tiktoken`
+when available and falls back to an approximate character count otherwise.
+`max_tokens` must be a positive integer, and `overlap_tokens` must be a
+non-negative integer smaller than `max_tokens` so each chunk advances.
+
+```python
+import msgflux as mf
+
+parser = mf.Parser.csv("csv")
+chunks = parser.chunk_by_tokens(
+    "A long document to split into overlapping pieces.",
+    max_tokens=512,
+    overlap_tokens=50,
+)
+```
+
+This example uses a parser instance's inherited helper to target 512 tokens per
+chunk with a 50-token overlap. Without `tiktoken`, the fallback estimates token
+sizes from characters instead of counting tokens exactly.
+
+## 10. **Serialization**
+
+Parsers serialize their configuration, so you can recreate a configured parser
+later without repeating every option:
+
+```python
+import msgflux as mf
+
+parser = mf.Parser.csv("csv", delimiter=";", table_format="html")
+serialized = parser.serialize()
+
+restored = mf.Parser.from_serialized(
+    provider=serialized["provider"],
+    parser_type=serialized["parser_type"],
+    params=serialized["state"],
+)
+
+response = restored(b"name;score\nAda;10\n")
+print(response.data["metadata"].table_format)  # "html"
+```
+
+`from_serialized` restores configuration only. Runtime resources that are
+excluded from serialized state, such as clients, are not persisted. Pass the
+mapping under `serialized["state"]` as `params`.

@@ -19,7 +19,9 @@ from msgflux.runtime.service import (
     AgentService,
     AgentSession,
     SessionCachePolicy,
+    SessionLease,
     ServiceBusyError,
+    ServiceConflictError,
     ServiceRecoveryRequiredError,
     SQLiteServiceStore,
 )
@@ -491,6 +493,106 @@ async def test_same_thread_acquire_is_singleflight_without_blocking_other_thread
         await service.aclose()
         for agent in agents:
             await agent.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("shared_wrapper", [False, True])
+async def test_rejected_duplicate_binding_keeps_accepted_agent_open(shared_wrapper):
+    shared_agent, _model = _agent("duplicate-survival", lambda **_kwargs: _response())
+    shared_session = AgentSession(shared_agent, on_close=shared_agent.aclose)
+
+    def factory(_thread):
+        if shared_wrapper:
+            return shared_session
+        return AgentSession(shared_agent, on_close=shared_agent.aclose)
+
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("main", factory)
+    first = await service.open_thread("main", thread_id="duplicate-survival-first")
+    second = await service.open_thread("main", thread_id="duplicate-survival-second")
+    try:
+        lease = await service.acquire_session(first.thread_id)
+        await lease.aclose()
+
+        with pytest.raises(ServiceConflictError, match="isolate Agents"):
+            await service.acquire_session(second.thread_id)
+        assert shared_agent._resources_closed is False
+        assert set(service._sessions) == {first.thread_id}
+    finally:
+        await service.aclose()
+        assert shared_agent._resources_closed is True
+        await shared_agent.aclose()
+
+
+@pytest.mark.asyncio
+async def test_concurrent_duplicate_binding_is_rejected_atomically():
+    arrived = 0
+    scoped = 0
+    all_arrived = asyncio.Event()
+    all_scoped = asyncio.Event()
+    release_factories = asyncio.Event()
+    shared_agent, _model = _agent("duplicate-race", lambda **_kwargs: _response())
+
+    def scope_factory(scope):
+        nonlocal scoped
+        scoped += 1
+        if scoped == 2:
+            all_scoped.set()
+        return scope
+
+    async def factory(thread):
+        nonlocal arrived
+        arrived += 1
+        if arrived == 2:
+            all_arrived.set()
+        await release_factories.wait()
+        return AgentSession(
+            shared_agent,
+            scope_factory=scope_factory,
+            on_close=shared_agent.aclose,
+        )
+
+    service = AgentService(store=SQLiteServiceStore())
+    service.register("main", factory)
+    first = await service.open_thread("main", thread_id="race-first")
+    second = await service.open_thread("main", thread_id="race-second")
+    tasks = []
+    leases = []
+    try:
+        tasks = [
+            asyncio.create_task(service.acquire_session(first.thread_id)),
+            asyncio.create_task(service.acquire_session(second.thread_id)),
+        ]
+        await asyncio.wait_for(all_arrived.wait(), timeout=3)
+
+        # Both factories have registered their loads. Holding the cache lock
+        # while they return makes both non-atomic legacy checks pass before
+        # either entry can be published.
+        await service._cache._lock.acquire()
+        release_factories.set()
+        await asyncio.wait_for(all_scoped.wait(), timeout=3)
+        service._cache._lock.release()
+
+        results = await asyncio.wait_for(
+            asyncio.gather(*tasks, return_exceptions=True), timeout=3
+        )
+        leases = [item for item in results if isinstance(item, SessionLease)]
+        errors = [item for item in results if isinstance(item, BaseException)]
+        assert len(leases) == 1
+        assert len(errors) == 1 and isinstance(errors[0], ServiceConflictError)
+        assert len(service._sessions) == 1
+        assert shared_agent._resources_closed is False
+    finally:
+        release_factories.set()
+        if service._cache._lock.locked():
+            service._cache._lock.release()
+        if tasks:
+            await asyncio.gather(*tasks, return_exceptions=True)
+        for lease in leases:
+            await lease.aclose()
+        await service.aclose()
+        assert shared_agent._resources_closed is True
+        await shared_agent.aclose()
 
 
 @pytest.mark.asyncio

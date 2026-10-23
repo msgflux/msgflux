@@ -7,6 +7,7 @@ import pytest
 
 from msgflux.runtime.service.records import (
     ServiceBusyError,
+    ServiceConflictError,
     ServiceRecoveryRequiredError,
 )
 from msgflux.runtime.service.session_cache import _SessionCache
@@ -305,6 +306,43 @@ async def test_unloaded_thread_generations_do_not_accumulate_per_thread_state():
     assert cache._entries == {}
     assert cache._loads == {}
     assert not hasattr(cache, "_generations")
+
+
+@pytest.mark.asyncio
+async def test_publish_validation_rejects_without_closing_or_leaking_reservations():
+    closed = []
+
+    class Session:
+        def __init__(self, name):
+            self.name = name
+
+        async def on_close(self):
+            closed.append(self.name)
+
+    def validate(session):
+        if session.name == "duplicate":
+            raise ServiceConflictError("Factories must isolate Agents by thread")
+
+    cache = _SessionCache(
+        Session,
+        lambda *_: None,
+        validate=validate,
+    )
+    first = await cache.acquire("first")
+    await first.aclose()
+
+    with pytest.raises(ServiceConflictError, match="isolate Agents"):
+        await cache.acquire("duplicate")
+    assert closed == []
+    assert set(cache.sessions) == {"first"}
+    assert cache._loads == {}
+    assert cache._load_waiters == {}
+
+    # The rejected load's reservation was removed by the existing failure path.
+    third = await cache.acquire("third")
+    await third.aclose()
+    await cache.close_all()
+    assert closed == ["first", "third"]
 
 
 @pytest.mark.asyncio
