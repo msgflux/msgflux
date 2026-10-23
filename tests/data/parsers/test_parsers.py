@@ -259,6 +259,126 @@ def test_html_raw_string():
     assert "Direct HTML" in response.data["text"]
 
 
+def test_html_raw_string_with_period_is_content():
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    response = parser("<html><body><p>Version 1.0.</p></body></html>")
+
+    assert response.data["text"] == "Version 1.0."
+
+
+def test_html_text_is_not_duplicated():
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    response = parser(
+        b"<html><body>"
+        b"<h1>Heading</h1>"
+        b"<p>Paragraph text.</p>"
+        b"<ul><li>First item</li><li>Second item</li></ul>"
+        b"</body></html>"
+    )
+
+    text = response.data["text"]
+    assert text.count("Heading") == 1
+    assert text.count("Paragraph text.") == 1
+    assert text.count("First item") == 1
+    assert text.count("Second item") == 1
+    assert text == "# Heading\n\nParagraph text.\n\n- First item\n- Second item"
+
+
+def test_html_inline_link_is_rendered_once():
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    response = parser(
+        b'<html><body><p>See <a href="https://example.com">example</a> now.</p>'
+        b"</body></html>"
+    )
+
+    text = response.data["text"]
+    assert text == "See [example](https://example.com) now."
+    assert text.count("[example]") == 1
+
+
+def test_html_pre_and_code_are_emitted_once():
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    response = parser(b"<html><body><pre><code>x = 1</code></pre></body></html>")
+
+    text = response.data["text"]
+    assert text == "```\nx = 1\n```"
+    assert text.count("x = 1") == 1
+
+
+def test_html_deep_block_nesting_does_not_recurse():
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    depth = 1200
+    response = parser(
+        (
+            "<html><body>"
+            + "<div>" * depth
+            + "<p>leaf</p>"
+            + "</div>" * depth
+            + "</body></html>"
+        ).encode()
+    )
+
+    assert response.data["text"] == "leaf"
+
+
+def test_html_deep_inline_nesting_does_not_recurse():
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    depth = 1200
+    response = parser(
+        (
+            "<html><body><p>"
+            + "<span>" * depth
+            + "leaf"
+            + "</span>" * depth
+            + "</p></body></html>"
+        ).encode()
+    )
+
+    assert response.data["text"] == "leaf"
+
+
+@pytest.mark.parametrize(
+    ("html", "expected"),
+    [
+        (
+            b"<ul><li>parent<ul><li>child</li></ul></li></ul>",
+            "- parent\n- child",
+        ),
+        (
+            b"<ul><li>parent<div><ul><li>child</li></ul></div></li></ul>",
+            "- parent\n- child",
+        ),
+        (
+            b"<ul><li>parent<div><ul><li>child<div><ul><li>grandchild"
+            b"</li></ul></div></li></ul></div></li></ul>",
+            "- parent\n- child\n- grandchild",
+        ),
+        (
+            b"<ul><li>parent<div><ul><li>child</li></ul></div></li>"
+            b"<li>sibling</li></ul>",
+            "- parent\n- child\n- sibling",
+        ),
+        (
+            b"<ul><li>parent<div><ul><li>first</li></ul></div>"
+            b"<div><ul><li>second</li></ul></div></li></ul>",
+            "- parent\n- first\n- second",
+        ),
+    ],
+)
+def test_html_nested_lists_are_preserved_once(html, expected):
+    pytest.importorskip("bs4")
+    parser = mf.Parser.html("beautifulsoup")
+    response = parser(html)
+
+    assert response.data["text"] == expected
+
+
 # ---------------------------------------------------------------------------
 # Email
 # ---------------------------------------------------------------------------

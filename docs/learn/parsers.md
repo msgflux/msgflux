@@ -240,15 +240,21 @@ parser = mf.Parser.html("beautifulsoup")
 response = parser(html_content)
 
 print(response.data["text"])
-# ## Hello World
+# # Hello World
 #
 # This is a paragraph.
+# [Click here](https://example.com)
 
 print(response.data["links"])
 # [{"text": "Click here", "url": "https://example.com"}]
 
 print(response.data["metadata"].title)  # "My Page"
 ```
+
+String input that starts with `<` (ignoring leading whitespace) is parsed as
+HTML content. Other strings are treated as a local file path or an `http(s)` URL.
+Headings, paragraphs, list items, code blocks, and links are emitted once in
+document order.
 
 **`data` keys:** `text`, `links`, `images`, `metadata`
 
