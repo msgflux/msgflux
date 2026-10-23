@@ -22,6 +22,17 @@
         model = mf.Model.chat_completion("groq/openai/gpt-oss-120b")
         ```
 
+    === "Meta"
+
+        Authenticate by setting the `META_API_KEY` env variable (Meta Model API).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(META_API_KEY="...")
+        model = mf.Model.chat_completion("meta/muse-spark-1.3")
+        ```
+
     === "Ollama"
 
         Install [Ollama](https://ollama.ai) and pull your model first:
