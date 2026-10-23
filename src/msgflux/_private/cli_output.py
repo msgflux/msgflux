@@ -5,6 +5,21 @@ from collections.abc import Mapping
 
 from msgflux.utils.msgspec import msgspec_dumps
 
+_CONTROL_ESCAPES = {"\n": r"\n", "\r": r"\r", "\t": r"\t"}
+
+
+def escape_human_text(value: str) -> str:
+    """Render terminal controls literally so human output stays inert."""
+    return "".join(
+        _CONTROL_ESCAPES.get(character)
+        or (
+            f"\\x{ord(character):02x}"
+            if ord(character) < 0x20 or 0x7F <= ord(character) <= 0x9F
+            else character
+        )
+        for character in value
+    )
+
 
 def _human_lines(value):
     if isinstance(value, Mapping) and value:

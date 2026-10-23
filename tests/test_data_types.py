@@ -12,6 +12,7 @@ from pathlib import Path
 import pytest
 
 from msgflux.data.types import Audio, File, Image, Video
+from msgflux.utils.validation import is_base64
 
 
 class TestImage:
@@ -209,6 +210,135 @@ class TestFile:
             Path(temp_path).unlink()
 
 
+class TestHttpNamedSources:
+    """URL classification for local names, remote URLs, and base64 payloads."""
+
+    MEDIA_CASES = [
+        (Image, "image_url", "data:image/", ".jpg", b"\xff\xd8\xff"),
+        (Video, "video_url", "data:video/", ".mp4", b"\x00\x00\x00\x1c"),
+    ]
+
+    @pytest.mark.parametrize(
+        ("media_type", "block_type", "data_prefix", "suffix", "payload"),
+        MEDIA_CASES,
+    )
+    @pytest.mark.parametrize("relative", [False, True], ids=["absolute", "relative"])
+    def test_local_file_with_http_in_name_is_encoded(
+        self,
+        media_type,
+        block_type,
+        data_prefix,
+        suffix,
+        payload,
+        relative,
+        tmp_path,
+        monkeypatch,
+        mocker,
+    ):
+        monkeypatch.chdir(tmp_path)
+        mode = "relative" if relative else "absolute"
+        name = f"http-{mode}-{media_type.__name__.lower()}{suffix}"
+        file_path = Path(name) if relative else tmp_path / name
+        file_path.write_bytes(payload)
+        source = name if relative else str(file_path)
+        http_get = mocker.patch(
+            "httpx2.get",
+            side_effect=AssertionError("local file must not be fetched over HTTP"),
+        )
+
+        result = media_type(source, force_encode=False)()
+
+        http_get.assert_not_called()
+        assert result["type"] == block_type
+        assert result[block_type]["url"].startswith(data_prefix)
+        assert (
+            base64.b64decode(result[block_type]["url"].split(";base64,", 1)[1])
+            == payload
+        )
+
+    @pytest.mark.asyncio
+    @pytest.mark.parametrize(
+        ("media_type", "block_type", "data_prefix", "suffix", "payload"),
+        MEDIA_CASES,
+    )
+    @pytest.mark.parametrize("relative", [False, True], ids=["absolute", "relative"])
+    async def test_local_file_with_http_in_name_is_encoded_async(
+        self,
+        media_type,
+        block_type,
+        data_prefix,
+        suffix,
+        payload,
+        relative,
+        tmp_path,
+        monkeypatch,
+    ):
+        monkeypatch.chdir(tmp_path)
+        mode = "relative" if relative else "absolute"
+        name = f"http-{mode}-async-{media_type.__name__.lower()}{suffix}"
+        file_path = Path(name) if relative else tmp_path / name
+        file_path.write_bytes(payload)
+        source = name if relative else str(file_path)
+
+        def fail_async_client(*args, **kwargs):
+            raise AssertionError("local file must not be fetched over HTTP")
+
+        monkeypatch.setattr("httpx2.AsyncClient", fail_async_client)
+
+        result = await media_type(source, force_encode=False).acall()
+
+        assert result["type"] == block_type
+        assert result[block_type]["url"].startswith(data_prefix)
+        assert (
+            base64.b64decode(result[block_type]["url"].split(";base64,", 1)[1])
+            == payload
+        )
+
+    @pytest.mark.parametrize(
+        ("media_type", "block_type", "url"),
+        [
+            (Image, "image_url", "https://example.com/photo.jpg"),
+            (Video, "video_url", "https://example.com/video.mp4"),
+        ],
+    )
+    def test_remote_url_is_kept_without_fetch(
+        self, media_type, block_type, url, mocker
+    ):
+        http_get = mocker.patch(
+            "httpx2.get",
+            side_effect=AssertionError("remote URL must not be fetched"),
+        )
+
+        result = media_type(url, force_encode=False)()
+
+        http_get.assert_not_called()
+        assert result["type"] == block_type
+        assert result[block_type]["url"] == url
+
+    @pytest.mark.parametrize(
+        ("media_type", "block_type", "data_prefix"),
+        [
+            (Image, "image_url", "data:image/"),
+            (Video, "video_url", "data:video/"),
+        ],
+    )
+    def test_base64_starting_with_http_is_data_uri(
+        self, media_type, block_type, data_prefix, mocker
+    ):
+        assert is_base64("http")
+        http_get = mocker.patch(
+            "httpx2.get",
+            side_effect=AssertionError("base64 payload must not be fetched"),
+        )
+
+        result = media_type("http", force_encode=False)()
+
+        http_get.assert_not_called()
+        assert result["type"] == block_type
+        assert result[block_type]["url"].startswith(data_prefix)
+        assert result[block_type]["url"].endswith(";base64,http")
+
+
 MEDIA_CASES = [
     (Image, ".png", lambda block: block["image_url"]["url"]),
     (Audio, ".mp3", lambda block: block["input_audio"]["data"]),
@@ -257,9 +387,13 @@ class TestMediaTypeBase:
         """Test that URLs are correctly detected."""
         img_url = Image("https://example.com/photo.jpg")
         img_local = Image("/path/to/photo.jpg")
+        img_http_named = Image("http-photo.jpg")
 
         assert img_url._is_url(img_url.source)
         assert not img_local._is_url(img_local.source)
+        assert not img_http_named._is_url(img_http_named.source)
+        assert not img_http_named._is_url("http")
+        assert img_url._is_url(b"https://example.com/photo.jpg")
 
     def test_force_encode_parameter(self):
         """Test that force_encode works correctly."""
