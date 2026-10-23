@@ -38,7 +38,9 @@ async def show_result(client: AgentServiceClient, args) -> None:
         except ServiceRecoveryRequiredError as error:
             result = await client.run_result(result.thread_id, result.run_id)
             if result.status != "completed":
-                result = msgspec.structs.replace(result, error=str(error))
+                result = msgspec.structs.replace(
+                    result, error=result.error or str(error)
+                )
     if args.json:
         sys.stdout.write(msgspec_dumps(result) + "\n")
     elif result.status == "completed":
