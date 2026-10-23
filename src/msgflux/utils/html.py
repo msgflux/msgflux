@@ -1,6 +1,7 @@
 """HTML text extraction using semantic chunking."""
 
 import re
+from html.parser import HTMLParser
 
 # --- Chunking constants (ported from jina.ai tokenizer) ---
 MAX_HEADING_LENGTH = 7
@@ -101,16 +102,50 @@ _chunk_regex = re.compile(
 )
 
 # --- HTML stripping ---
-_REMOVE_BLOCKS = re.compile(
-    r"<(script|style|head|noscript|svg)[^>]*>[\s\S]*?</\1>",
-    re.IGNORECASE,
-)
-_BLOCK_TAGS = re.compile(
-    r"</?(?:div|p|h[1-6]|br|hr|li|ul|ol|table|tr|td|th|blockquote"
-    r"|pre|section|article|header|footer|nav|main|aside|figure|figcaption)[^>]*>",
-    re.IGNORECASE,
-)
-_INLINE_TAGS = re.compile(r"<[^>]+>")
+_SUPPRESSED_TAGS = {"script", "style", "head", "noscript", "svg"}
+_HEAD_CONTENT_TAGS = {
+    "base",
+    "basefont",
+    "bgsound",
+    "head",
+    "link",
+    "meta",
+    "noscript",
+    "script",
+    "style",
+    "template",
+    "title",
+}
+_BLOCK_TAGS = {
+    "div",
+    "p",
+    "h1",
+    "h2",
+    "h3",
+    "h4",
+    "h5",
+    "h6",
+    "br",
+    "hr",
+    "li",
+    "ul",
+    "ol",
+    "table",
+    "tr",
+    "td",
+    "th",
+    "blockquote",
+    "pre",
+    "section",
+    "article",
+    "header",
+    "footer",
+    "nav",
+    "main",
+    "aside",
+    "figure",
+    "figcaption",
+}
 _NUMERIC_ENTITY = re.compile(r"&#(\d+);|&#x([0-9a-fA-F]+);")
 _NAMED_ENTITIES: dict[str, str] = {
     "&amp;": "&",
@@ -150,11 +185,76 @@ def _decode_entity(m: re.Match) -> str:
     return entity
 
 
+class _HTMLTextParser(HTMLParser):
+    """Collect visible text while filtering non-content HTML elements."""
+
+    def __init__(self) -> None:
+        super().__init__(convert_charrefs=False)
+        self.parts: list[str] = []
+        self._suppressed_tag: str | None = None
+        self._suppressed_depth = 0
+
+    def handle_starttag(self, tag: str, _attrs: list[tuple[str, str | None]]) -> None:
+        if self._suppressed_tag == "head" and tag not in _HEAD_CONTENT_TAGS:
+            self._suppressed_tag = None
+            self._suppressed_depth = 0
+        if self._suppressed_tag is not None:
+            if tag == self._suppressed_tag:
+                self._suppressed_depth += 1
+            return
+        if tag in _SUPPRESSED_TAGS:
+            self._suppressed_tag = tag
+            self._suppressed_depth = 1
+        elif tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_endtag(self, tag: str) -> None:
+        if self._suppressed_tag is not None:
+            if tag == self._suppressed_tag:
+                self._suppressed_depth -= 1
+                if self._suppressed_depth == 0:
+                    self._suppressed_tag = None
+            return
+        if tag in _BLOCK_TAGS:
+            self.parts.append("\n")
+
+    def handle_startendtag(
+        self, tag: str, _attrs: list[tuple[str, str | None]]
+    ) -> None:
+        if tag not in _SUPPRESSED_TAGS:
+            self.handle_starttag(tag, _attrs)
+
+    def handle_data(self, data: str) -> None:
+        if self._suppressed_tag is None:
+            self.parts.append(data)
+
+    def handle_charref(self, name: str) -> None:
+        # strip_html escapes source ampersands as &#38; before parsing so the
+        # legacy entity decoder sees the original reference lexemes afterward.
+        if self._suppressed_tag is None:
+            if name == "38":
+                self.parts.append("&")
+            else:
+                self.parts.append(f"&#{name};")
+
+
 def strip_html(html: str) -> str:
     """Remove HTML markup and decode entities, returning plain text."""
-    text = _REMOVE_BLOCKS.sub("", html)
-    text = _BLOCK_TAGS.sub("\n", text)
-    text = _INLINE_TAGS.sub("", text)
+    parser = _HTMLTextParser()
+    protected_source = html.replace("&", "&#38;")
+    parser.feed(protected_source)
+
+    # Older HTMLParser.close() rescans an unfinished comment for each "<".
+    # Locate the pending suffix through public positions and ignore it at EOF.
+    line, column = parser.getpos()
+    line_start = 0
+    for _ in range(line - 1):
+        line_start = protected_source.index("\n", line_start) + 1
+    unconsumed_start = line_start + column
+    if not protected_source.startswith("<!--", unconsumed_start):
+        parser.close()
+
+    text = "".join(parser.parts)
     text = _NAMED_ENTITY_RE.sub(_decode_entity, text)
     text = _MULTI_SPACE.sub(" ", text)
     text = _MULTI_NEWLINE.sub("\n\n", text)

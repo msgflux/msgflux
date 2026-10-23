@@ -165,6 +165,11 @@ to filter or extract a smaller portion. Image reads retain their separate
 
 `WebFetchTool` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing. Text extraction preserves long lines without whitespace by splitting them into bounded chunks instead of dropping the remainder.
 
+On the raw-HTML fallback, unclosed `script`, `style`, `head`, `noscript`, or
+`svg` blocks are suppressed through the end of the document. A `head` also ends
+implicitly at a `body` start or the first tag outside head content (such as
+`p` or `div`), so following flow content is retained.
+
 ```python
 import msgflux as mf
 import msgflux.nn as nn
