@@ -487,13 +487,28 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         thread_id: str,
         run_id: str,
     ) -> Mapping[str, Any] | None:
-        row = self._conn.execute(
-            _SELECT_STATE,
-            (namespace, thread_id, run_id),
-        ).fetchone()
-        if row is None:
-            return None
-        return self._denormalize_state(namespace, thread_id, row[0])
+        # State and item rows must come from one snapshot; an independent
+        # delete/clear between reads would otherwise look like corruption.
+        started = not self._conn.in_transaction
+        try:
+            if started:
+                self._conn.execute("BEGIN")
+            row = self._conn.execute(
+                _SELECT_STATE,
+                (namespace, thread_id, run_id),
+            ).fetchone()
+            state = (
+                None
+                if row is None
+                else self._denormalize_state(namespace, thread_id, row[0])
+            )
+            if started:
+                self._conn.commit()
+            return state
+        except BaseException as error:
+            if started:
+                self._rollback_preserving_error(error)
+            raise
 
     @_locked
     def append_event(
