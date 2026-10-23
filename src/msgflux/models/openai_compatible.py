@@ -290,7 +290,28 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
     usage_codec: UsageCodec = default_usage_codec
 
     def _initialize(self):
+        self._initialize_chat_transport()
+        self.api_mode_capabilities = self.capabilities.mode(self.api_mode)
+        self.api_adapter = self.api_mode_capabilities.adapter
+        self._uses_canonical_history = self.api_adapter.canonical_history
+        self.reasoning_codec = (
+            getattr(self, "reasoning_codec", None)
+            or self.api_mode_capabilities.reasoning_codec
+            or self.capabilities.default_reasoning_codec
+        )
         self._initialize_runtime()
+
+    def _initialize_chat_transport(self) -> None:
+        selected_transport = self.chat_transport
+        self.chat_transport = (
+            selected_transport()
+            if isinstance(selected_transport, type)
+            else selected_transport
+        )
+        if not isinstance(self.chat_transport, ChatTransport):
+            raise TypeError(
+                "`chat_transport` must be a ChatTransport instance or class"
+            )
 
     def supports_native_tool_search(self) -> bool:
         """Return whether this model/API pair supports hosted tool search."""
@@ -794,16 +815,9 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 "`model_capabilities` must be ChatModelCapabilities or None"
             )
         self.model_capabilities = model_capabilities or ChatModelCapabilities()
-        selected_transport = chat_transport or self.chat_transport
-        self.chat_transport = (
-            selected_transport()
-            if isinstance(selected_transport, type)
-            else selected_transport
-        )
-        if not isinstance(self.chat_transport, ChatTransport):
-            raise TypeError(
-                "`chat_transport` must be a ChatTransport instance or class"
-            )
+        if chat_transport is not None:
+            self.chat_transport = chat_transport
+        self._initialize_chat_transport()
         self._set_credential_resolver(credential_resolver)
         selected_api_mode = api_mode or self.capabilities.default_api_mode
         if selected_api_mode not in self.capabilities.supported_api_modes:

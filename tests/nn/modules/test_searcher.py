@@ -1,5 +1,6 @@
 """Tests for msgflux.nn.modules.searcher module."""
 
+import copy
 import pytest
 from unittest.mock import Mock
 
@@ -535,6 +536,34 @@ class TestSearcherWithRealBM25:
         result = searcher("Python")
 
         assert len(result) == 1
+        assert "Python" in result[0]["results"][0]["data"]
+
+    def test_state_dict_roundtrip_restores_retriever_config(self):
+        """Searcher state dict restores retriever config without its corpus."""
+        from msgflux.data.retrievers.retriever import Retriever
+
+        documents = [
+            "Python is a programming language",
+            "Rust is fast and memory safe",
+        ]
+        source = Searcher(
+            retriever=Retriever.lexical("bm25", k1=1.2, b=0.4),
+            config={"top_k": 1},
+        )
+        source.retriever.add(documents)
+        state = source.state_dict()
+        snapshot = copy.deepcopy(state)
+
+        target = Searcher(retriever=Retriever.lexical("bm25"))
+        target.load_state_dict(state)
+
+        assert state == snapshot
+        assert target.retriever.k1 == 1.2
+        assert target.retriever.b == 0.4
+        assert target.retriever.documents == []
+
+        target.retriever.add(documents)
+        result = target("Python")
         assert "Python" in result[0]["results"][0]["data"]
 
     @pytest.mark.asyncio

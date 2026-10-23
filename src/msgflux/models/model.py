@@ -71,11 +71,7 @@ class Model:
             An instance of the appropriate model class with restored state
         """
         model_cls = cls._get_model_class(model_type, provider)
-        # Create instance without calling __init__
-        instance = object.__new__(model_cls)
-        # Restore the instance state
-        instance.from_serialized(state)
-        return instance
+        return model_cls.from_serialized(state)
 
     @classmethod
     def chat_completion(cls, model_path: str, **kwargs) -> ChatCompletionModel:
