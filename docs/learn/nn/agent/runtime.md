@@ -3102,6 +3102,10 @@ runtime identity to the destination run. A preserved scope tree retains its
 active branch; an ordinary history starts at `root`. Resuming the fork writes
 to the target run, never to its source. `load_latest_run()` selects the latest
 updated **run**, not a context branch; the active branch lives in run metadata.
+The SQLite store selects and restores that run from one read snapshot. If
+another connection deletes it during the read, the current call can still return
+the selected snapshot; a subsequent call observes the deletion and selects the
+latest remaining run.
 
 ## Context scopes
 
