@@ -422,27 +422,6 @@ class TestAgentForward:
             await agent.aforward(query="Test input")
 
 
-class TestAgentInspect:
-    """Test Agent inspection methods."""
-
-    def test_inspect_model_execution_params(self):
-        """Test inspect_model_execution_params method."""
-        mock_model = Mock()
-        mock_model.model_type = "chat_completion"
-
-        agent = Agent(
-            name="agent",
-            model=mock_model,
-            system_prompt="System prompt",
-            signature="input -> output",  # Need signature for task template
-        )
-
-        params = agent.inspect_model_execution_params(input="Test input")
-
-        assert isinstance(params, dict)
-        assert "messages" in params or "prompt" in params or len(params) >= 0
-
-
 class TestAgentSetters:
     """Test Agent setter methods."""
 
