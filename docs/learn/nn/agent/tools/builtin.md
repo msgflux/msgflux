@@ -163,7 +163,7 @@ to filter or extract a smaller portion. Image reads retain their separate
 
 ## WebFetchTool
 
-`WebFetchTool` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing.
+`WebFetchTool` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing. Text extraction preserves long lines without whitespace by splitting them into bounded chunks instead of dropping the remainder.
 
 ```python
 import msgflux as mf

@@ -233,6 +233,42 @@ class TestWebFetchToolFallback:
         with pytest.raises(RuntimeError, match="Failed to fetch"):
             tool("https://example.com")
 
+    def test_fallback_preserves_long_unbroken_line(self, mocker):
+        raw_text = "A" * 2000
+        mock_response = mocker.Mock()
+        mock_response.text = raw_text
+        mocker.patch(
+            "msgflux.tools.builtin.web_fetch.httpx2.get",
+            side_effect=[httpx2.HTTPError("parser down"), mock_response],
+        )
+
+        tool = WebFetchTool()
+        result = tool("https://example.com")
+
+        assert result.replace("\n", "") == raw_text
+
+    @pytest.mark.asyncio
+    async def test_async_fallback_preserves_long_unbroken_line(self, mocker):
+        raw_text = "A" * 2000
+        mock_response = mocker.Mock()
+        mock_response.text = raw_text
+
+        mock_client = mocker.AsyncMock()
+        mock_client.get = mocker.AsyncMock(
+            side_effect=[httpx2.HTTPError("parser down"), mock_response]
+        )
+        mock_client.__aenter__ = mocker.AsyncMock(return_value=mock_client)
+        mock_client.__aexit__ = mocker.AsyncMock(return_value=None)
+        mocker.patch(
+            "msgflux.tools.builtin.web_fetch.httpx2.AsyncClient",
+            return_value=mock_client,
+        )
+
+        tool = WebFetchTool()
+        result = await tool.acall("https://example.com")
+
+        assert result.replace("\n", "") == raw_text
+
     @pytest.mark.asyncio
     async def test_async_fallback_called_on_parser_failure(self, mocker):
         raw_html = "<html><body><p>Hello</p></body></html>"
