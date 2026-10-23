@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from contextlib import asynccontextmanager
+from contextlib import aclosing, asynccontextmanager
 from pathlib import Path
 from typing import Any, Literal, NoReturn
 from urllib.parse import quote
@@ -107,6 +107,7 @@ class RemoteThreadWatcher:
     def __init__(self, response, snapshot: SnapshotRecord, events) -> None:
         self.snapshot = snapshot
         self._response = response
+        self._source_events = events
         self._events = self._iter_events(events)
         self._closed = False
 
@@ -121,6 +122,9 @@ class RemoteThreadWatcher:
         except StopAsyncIteration:
             await self.aclose()
             raise
+        finally:
+            if self._closed:
+                await self._close_events()
 
     async def _iter_events(self, events):
         async for name, data in events:
@@ -138,7 +142,18 @@ class RemoteThreadWatcher:
     async def aclose(self) -> None:
         if not self._closed:
             self._closed = True
-            await self._response.aclose()
+            try:
+                await self._response.aclose()
+            finally:
+                await self._close_events()
+
+    async def _close_events(self) -> None:
+        # An in-flight read owns the generator until __anext__ finishes.
+        if not self._events.ag_running:
+            try:
+                await self._events.aclose()
+            finally:
+                await self._source_events.aclose()
 
 
 class AgentServiceClient:
@@ -431,6 +446,7 @@ class AgentServiceClient:
             timeout=httpx2.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
         )
         response = await self._client.send(request, stream=True)
+        events = None
         try:
             await self._raise_for_response(response)
             if "text/event-stream" not in response.headers.get("content-type", ""):
@@ -460,7 +476,11 @@ class AgentServiceClient:
             finally:
                 await watcher.aclose()
         except BaseException:
-            await response.aclose()
+            try:
+                await response.aclose()
+            finally:
+                if events is not None and not events.ag_running:
+                    await events.aclose()
             raise
 
     async def _json(self, method: str, path: str, result_type, body=None):
@@ -502,23 +522,24 @@ def _error_payload(response: httpx2.Response) -> ErrorResponse:
 
 
 async def _sse_events(lines):
-    event_name = "message"
-    data: list[str] = []
-    async for raw in lines:
-        line = raw.rstrip("\r")
-        if not line:
-            if data:
-                yield event_name, "\n".join(data)
-            event_name, data = "message", []
-            continue
-        if line.startswith(":"):
-            continue
-        field, separator, value = line.partition(":")
-        if separator and value.startswith(" "):
-            value = value[1:]
-        if field == "event":
-            event_name = value
-        elif field == "data":
-            data.append(value)
-    if data:
-        yield event_name, "\n".join(data)
+    async with aclosing(lines):
+        event_name = "message"
+        data: list[str] = []
+        async for raw in lines:
+            line = raw.rstrip("\r")
+            if not line:
+                if data:
+                    yield event_name, "\n".join(data)
+                event_name, data = "message", []
+                continue
+            if line.startswith(":"):
+                continue
+            field, separator, value = line.partition(":")
+            if separator and value.startswith(" "):
+                value = value[1:]
+            if field == "event":
+                event_name = value
+            elif field == "data":
+                data.append(value)
+        if data:
+            yield event_name, "\n".join(data)
