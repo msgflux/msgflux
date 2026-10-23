@@ -1,11 +1,27 @@
 """Tests for data parsers."""
 
 import base64
+from contextlib import contextmanager
 from io import BytesIO
+import sys
+import types
 
 import pytest
 
 import msgflux as mf
+
+
+def _install_fake_tiktoken(monkeypatch):
+    class Encoding:
+        def encode(self, text):
+            return list(text)
+
+        def decode(self, tokens):
+            return "".join(tokens)
+
+    tiktoken = types.ModuleType("tiktoken")
+    tiktoken.get_encoding = lambda _name: Encoding()
+    monkeypatch.setitem(sys.modules, "tiktoken", tiktoken)
 
 
 # ---------------------------------------------------------------------------
@@ -160,6 +176,29 @@ def test_csv_html_format(csv_bytes):
     assert "<th>" in response.data["text"]
 
 
+def test_csv_serialized_roundtrip_restores_usable_parser():
+    parser = mf.Parser.csv(
+        "csv",
+        delimiter=";",
+        has_header=True,
+        table_format="html",
+        encoding="utf-8",
+        quotechar="'",
+    )
+    serialized = parser.serialize()
+
+    restored = mf.Parser.from_serialized(
+        serialized["provider"], serialized["parser_type"], serialized["state"]
+    )
+    response = restored(b"name;score\nAda;10\nGrace;9\n")
+
+    assert response.response_type == "csv_parse"
+    assert response.data["metadata"].delimiter == ";"
+    assert response.data["metadata"].table_format == "html"
+    assert "<table>" in response.data["text"]
+    assert "Ada" in response.data["text"]
+
+
 # ---------------------------------------------------------------------------
 # HTML
 # ---------------------------------------------------------------------------
@@ -259,6 +298,57 @@ def test_email_text_is_markdown(email_bytes):
 
     assert "# Email" in response.data["text"]
     assert "**From:**" in response.data["text"]
+
+
+# ---------------------------------------------------------------------------
+# Text chunking
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("max_tokens", "overlap_tokens", "message"),
+    [
+        (0, 0, "max_tokens"),
+        (-1, 0, "max_tokens"),
+        (1.5, 0, "max_tokens"),
+        (True, 0, "max_tokens"),
+        (4, -1, "overlap_tokens"),
+        (4, 1.5, "overlap_tokens"),
+        (4, False, "overlap_tokens"),
+        (4, 4, "smaller than"),
+        (4, 5, "smaller than"),
+    ],
+)
+def test_chunk_by_tokens_rejects_invalid_bounds(max_tokens, overlap_tokens, message):
+    parser = mf.Parser.csv("csv")
+
+    with pytest.raises(ValueError, match=message):
+        parser.chunk_by_tokens(
+            "some text", max_tokens=max_tokens, overlap_tokens=overlap_tokens
+        )
+
+
+def test_chunk_by_tokens_makes_progress_and_preserves_boundaries(monkeypatch):
+    _install_fake_tiktoken(monkeypatch)
+    parser = mf.Parser.csv("csv")
+
+    assert parser.chunk_by_tokens("abcdefgh", max_tokens=4, overlap_tokens=1) == [
+        "abcd",
+        "defg",
+        "gh",
+    ]
+    assert parser.chunk_by_tokens("abcd", max_tokens=4, overlap_tokens=1) == ["abcd"]
+    assert parser.chunk_by_tokens("", max_tokens=4, overlap_tokens=1) == [""]
+
+
+def test_chunk_by_tokens_fallback_accepts_valid_bounds(monkeypatch):
+    monkeypatch.setitem(sys.modules, "tiktoken", None)
+    parser = mf.Parser.csv("csv")
+
+    assert parser.chunk_by_tokens("abcdefgh", max_tokens=2, overlap_tokens=0) == [
+        "abcdefgh"
+    ]
+    assert parser.chunk_by_tokens("", max_tokens=2, overlap_tokens=0) == []
 
 
 # ---------------------------------------------------------------------------
@@ -447,6 +537,49 @@ def test_pptx_metadata(pptx_bytes):
 # ---------------------------------------------------------------------------
 
 
+def _xlsx_payload(populate):
+    openpyxl = pytest.importorskip("openpyxl")
+    workbook = openpyxl.Workbook()
+    populate(workbook.active)
+    buf = BytesIO()
+    workbook.save(buf)
+    return buf.getvalue()
+
+
+def _xlsx_sheet(populate):
+    openpyxl = pytest.importorskip("openpyxl")
+    return openpyxl.load_workbook(
+        BytesIO(_xlsx_payload(populate)), data_only=True
+    ).active
+
+
+class _RowAccessBudgetError(RuntimeError):
+    pass
+
+
+@contextmanager
+def _worksheet_row_budget(limit):
+    pytest.importorskip("openpyxl")
+    from openpyxl.worksheet.worksheet import Worksheet
+
+    original = Worksheet.__getitem__
+    accesses = []
+
+    def guarded(sheet, key):
+        accesses.append(key)
+        if len(accesses) > limit:
+            raise _RowAccessBudgetError(
+                f"worksheet row accesses exceeded the {limit} access budget"
+            )
+        return original(sheet, key)
+
+    Worksheet.__getitem__ = guarded
+    try:
+        yield accesses
+    finally:
+        Worksheet.__getitem__ = original
+
+
 def test_xlsx_response_structure(xlsx_bytes):
     pytest.importorskip("openpyxl")
     parser = mf.Parser.xlsx("openpyxl")
@@ -482,3 +615,136 @@ def test_xlsx_metadata(xlsx_bytes):
     response = parser(xlsx_bytes)
 
     assert response.data["metadata"].num_sheets == 1
+
+
+def test_xlsx_find_tables_compact_sheet_with_blank_gap():
+    pytest.importorskip("openpyxl")
+
+    def populate(ws):
+        ws.append(["Name", "Value"])
+        ws.append(["Alice", 42])
+        ws.append([None, None])
+        ws.append(["Bob", 7])
+
+    parser = mf.Parser.xlsx("openpyxl")
+    assert parser._find_tables(_xlsx_sheet(populate)) == [(1, 2), (4, 4)]
+
+    text = parser(_xlsx_payload(populate)).data["text"]
+    assert text.count("<!-- Table number:") == 2
+    assert "Position: (1, 2)" in text
+    assert "Position: (4, 4)" in text
+    assert "Alice" in text
+    assert "Bob" in text
+
+
+def test_xlsx_find_tables_ignores_style_only_cells():
+    pytest.importorskip("openpyxl")
+    from openpyxl.styles import PatternFill
+
+    fill = PatternFill("solid", fgColor="FFFF00")
+
+    def populate(ws):
+        ws.append(["Name", "Value"])
+        ws.append(["Alice", 42])
+        for coordinate in ("A4", "B4", "A7"):
+            ws[coordinate].fill = fill
+
+    parser = mf.Parser.xlsx("openpyxl")
+    assert parser._find_tables(_xlsx_sheet(populate)) == [(1, 2)]
+
+    text = parser(_xlsx_payload(populate)).data["text"]
+    assert text.count("<!-- Table number:") == 1
+    assert "Position: (1, 2)" in text
+
+
+def test_xlsx_find_tables_preserves_false_and_zero():
+    pytest.importorskip("openpyxl")
+
+    def populate(ws):
+        ws.append(["Flag", "Value"])
+        ws.append([False, 0])
+
+    parser = mf.Parser.xlsx("openpyxl")
+    assert parser._find_tables(_xlsx_sheet(populate)) == [(1, 2)]
+
+    text = parser(_xlsx_payload(populate)).data["text"]
+    assert "False" in text
+    assert "0" in text
+    assert "Position: (1, 2)" in text
+
+
+def test_xlsx_find_tables_handles_merged_cells():
+    pytest.importorskip("openpyxl")
+
+    def populate(ws):
+        ws["A1"] = "merged"
+        ws.merge_cells("A1:C2")
+        ws["A3"] = "after"
+
+    parser = mf.Parser.xlsx("openpyxl")
+    assert parser._find_tables(_xlsx_sheet(populate)) == [(1, 1), (3, 3)]
+
+    text = parser(_xlsx_payload(populate)).data["text"]
+    assert "Position: (1, 1)" in text
+    assert "Position: (3, 3)" in text
+    assert "merged" in text
+    assert "after" in text
+
+
+def test_xlsx_find_tables_all_blank_sheet():
+    pytest.importorskip("openpyxl")
+    parser = mf.Parser.xlsx("openpyxl")
+    assert parser._find_tables(_xlsx_sheet(lambda ws: None)) == []
+
+    text = parser(_xlsx_payload(lambda ws: None)).data["text"]
+    assert "<!-- Table number:" not in text
+    assert "|" not in text
+
+
+def test_xlsx_find_tables_far_row_and_column():
+    pytest.importorskip("openpyxl")
+
+    def populate(ws):
+        ws.cell(row=1_048_576, column=16_384, value="far")
+
+    parser = mf.Parser.xlsx("openpyxl")
+    assert parser._find_tables(_xlsx_sheet(populate)) == [(1_048_576, 1_048_576)]
+
+
+def test_xlsx_find_tables_does_not_materialize_sparse_rows():
+    pytest.importorskip("openpyxl")
+
+    def populate(ws):
+        ws.cell(row=1, column=1, value="first")
+        ws.cell(row=1_048_576, column=1, value="sparse")
+
+    parser = mf.Parser.xlsx("openpyxl")
+
+    sparse_sheet = _xlsx_sheet(populate)
+    before = set(sparse_sheet._cells)
+    with _worksheet_row_budget(8):
+        assert parser._find_tables(sparse_sheet) == [
+            (1, 1),
+            (1_048_576, 1_048_576),
+        ]
+    assert set(sparse_sheet._cells) == before
+
+
+def test_xlsx_public_parse_sparse_final_row_within_row_budget():
+    pytest.importorskip("openpyxl")
+
+    def populate(ws):
+        ws.cell(row=1_048_576, column=1, value="sparse")
+
+    payload = _xlsx_payload(populate)
+    parser = mf.Parser.xlsx("openpyxl")
+
+    with _worksheet_row_budget(4) as accesses:
+        response = parser(payload)
+
+    assert len(accesses) <= 4
+    text = response.data["text"]
+    assert "Position: (1048576, 1048576)" in text
+    assert "sparse" in text
+    assert response.data["metadata"].num_sheets == 1
+    assert response.data["images"] == {}

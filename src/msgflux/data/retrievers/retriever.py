@@ -61,11 +61,7 @@ class Retriever:
             An instance of the appropriate retriever class with restored state.
         """
         retriever_cls = cls._get_retriever_class(retriever_type, provider)
-        # Create instance without calling __init__
-        instance = object.__new__(retriever_cls)
-        # Restore the instance state
-        instance.from_serialized(params)
-        return instance
+        return retriever_cls.from_serialized(params)
 
     @classmethod
     def lexical(cls, provider: str, **kwargs) -> LexicalRetriever:
