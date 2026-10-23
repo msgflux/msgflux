@@ -64,7 +64,7 @@ class OAuth2Auth(BaseAuth):
         self._token_type = token_type
         self._refresh_callback = refresh_callback
 
-        if expires_in:
+        if expires_in is not None:
             self.set_expiration(expires_in)
 
     def apply_auth(self, headers: Dict[str, str]) -> Dict[str, str]:
@@ -101,9 +101,14 @@ class OAuth2Auth(BaseAuth):
                 if "refresh_token" in result:
                     self._refresh_token = result["refresh_token"]
 
-                # Update expiration
-                if "expires_in" in result:
-                    self.set_expiration(result["expires_in"])
+                # Update expiration. A successful refresh without a lifetime
+                # means the new expiration is unknown; clear any previous
+                # deadline so the token is not refreshed on every request.
+                expires_in = result.get("expires_in")
+                if expires_in is None:
+                    self._expires_at = None
+                else:
+                    self.set_expiration(expires_in)
 
                 self._last_refresh = datetime.now()  # noqa: DTZ005
                 return True
@@ -129,5 +134,5 @@ class OAuth2Auth(BaseAuth):
         self._access_token = access_token
         if refresh_token:
             self._refresh_token = refresh_token
-        if expires_in:
+        if expires_in is not None:
             self.set_expiration(expires_in)
