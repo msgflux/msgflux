@@ -8,6 +8,7 @@ from pathlib import Path
 from threading import RLock
 from typing import Callable
 
+from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.data.stores.registry import register_store
 from msgflux.runtime.approvals.base import ApprovalStore, UpdateApproval
 from msgflux.runtime.approvals.records import (
@@ -56,6 +57,7 @@ class SQLiteApprovalStore(ApprovalStore):
         self.path = path
         self._lock = RLock()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        prepare_sqlite_file(path)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")

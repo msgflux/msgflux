@@ -283,6 +283,22 @@ they do not require a separate SQLite file. An explicitly configured child store
 overrides inheritance. Durable background scheduling additionally needs a durable
 task store; this layout alone does not restore in-memory task records.
 
+### Direct SQLite Adapter Files
+
+The built-in SQLite checkpoint, task, inbox, approval, admission, and workspace
+registry adapters also create databases privately at previously absent paths.
+On POSIX, those new files use mode `0600`, including when the process umask removes
+owner access; SQLite's new WAL and shared-memory sidecars inherit the database
+permissions.
+
+Opening an existing database preserves its permissions, contents, and inode.
+Existing links are passed through to SQLite, including dangling links; their
+targets do not receive this creation policy. The adapters do not change
+parent-directory permissions. Applications that
+manage existing shared databases retain responsibility for their access modes;
+`AgentResources` continues to apply its stricter private-directory and file
+checks to managed Agent state.
+
 ## Store Results Incrementally
 
 ```python

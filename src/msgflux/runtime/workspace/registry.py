@@ -11,6 +11,7 @@ from uuid import uuid4
 
 import msgspec
 
+from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.runtime.workspace.contracts import WorkspaceIdentity
 from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 
@@ -66,6 +67,7 @@ class SQLiteWorkspaceRegistry:
         self.path = str(path)
         Path(self.path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
+        prepare_sqlite_file(self.path)
         self._conn = sqlite3.connect(self.path, timeout=30, check_same_thread=False)
         try:
             self._conn.execute("PRAGMA busy_timeout=30000")

@@ -10,6 +10,7 @@ from uuid import uuid4
 
 import msgspec
 
+from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.exceptions import TaskIdCollisionError
 from msgflux.tasks.dataclasses import TaskActivity, TaskProgress, TaskRecord
 from msgflux.tasks.lease import TaskLease
@@ -81,6 +82,7 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         self._lock = RLock()
         self._clock = time.time
+        prepare_sqlite_file(path)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
