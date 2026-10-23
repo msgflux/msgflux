@@ -244,6 +244,7 @@ class AgentService:
             busy_reason=lambda thread_id, session: self._release_reason(
                 thread_id, session, mark_closing=False
             ),
+            validate=self._validate_session_identity,
         )
         self._producer_tasks: dict[asyncio.Task, _Worker] = {}
         self._workers: dict[tuple[str, str], _Worker] = {}
@@ -404,6 +405,14 @@ class AgentService:
                 f"Cannot load workspace for thread {thread_id!r}: {error}"
             ) from error
 
+    def _agent_is_loaded(self, session: AgentSession) -> bool:
+        return any(item.agent is session.agent for item in self._sessions.values())
+
+    def _validate_session_identity(self, session: AgentSession) -> None:
+        """Reject a duplicate Agent atomically with cache publication."""
+        if self._agent_is_loaded(session):
+            raise ServiceConflictError("Factories must isolate Agents by thread")
+
     async def _create_session(self, thread_id: str) -> AgentSession:
         self._require_open()
         thread = self.store.thread(thread_id)
@@ -413,7 +422,7 @@ class AgentService:
             session = await session
         if not isinstance(session, AgentSession):
             raise TypeError("factory must return AgentSession")
-        if any(item.agent is session.agent for item in self._sessions.values()):
+        if self._agent_is_loaded(session):
             raise ServiceConflictError("Factories must isolate Agents by thread")
         try:
             scope = session.scope(thread_id)
