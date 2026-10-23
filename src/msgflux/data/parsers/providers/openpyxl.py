@@ -173,6 +173,10 @@ class OpenPyxlXlsxParser(BaseParser, XlsxParser):
     def _find_tables(self, sheet) -> List[Tuple[int, int]]:
         """Find table boundaries in a sheet.
 
+        Boundaries are maximal runs of rows containing at least one non-None
+        cell value. The stored cell map is used so sparse rows do not cause
+        blank cells to be materialized.
+
         Args:
             sheet:
                 Openpyxl worksheet object.
@@ -180,26 +184,22 @@ class OpenPyxlXlsxParser(BaseParser, XlsxParser):
         Returns:
             List of tuples (start_row, end_row) for each table found.
         """
-        tables = []
-        in_table = False
-        start_row = 0
+        # The parser intentionally loads workbooks in normal (not read-only)
+        # mode and already relies on normal worksheet internals for images.
+        # Public row access such as ``sheet[row]`` materializes blank cells up
+        # to ``max_column`` and is prohibitive for sparse sheets.
+        # ``_cells`` retains style-only cells and merged non-anchor cells with
+        # a None value, matching the previous empty-row rule.
+        populated_rows = sorted(
+            {cell.row for cell in sheet._cells.values() if cell.value is not None}
+        )
 
-        for row in range(1, sheet.max_row + 1):
-            # Check if row is empty
-            row_is_empty = all(cell.value is None for cell in sheet[row])
-
-            if not row_is_empty and not in_table:
-                # Start of new table
-                in_table = True
-                start_row = row
-            elif row_is_empty and in_table:
-                # End of current table
-                in_table = False
-                tables.append((start_row, row - 1))
-
-        # Add last table if incomplete
-        if in_table:
-            tables.append((start_row, sheet.max_row))
+        tables: List[Tuple[int, int]] = []
+        for row in populated_rows:
+            if tables and row == tables[-1][1] + 1:
+                tables[-1] = (tables[-1][0], row)
+            else:
+                tables.append((row, row))
 
         return tables
 
