@@ -26,6 +26,13 @@ def is_builtin_type(obj: Any):
     return isinstance(obj, builtin_types)
 
 
+def is_http_url(value: Any) -> bool:
+    """Return whether a value is an explicit HTTP(S) URL."""
+    if isinstance(value, bytes):
+        return value.startswith((b"http://", b"https://"))
+    return isinstance(value, str) and value.startswith(("http://", "https://"))
+
+
 def is_base64(string) -> bool:
     if not isinstance(string, str):
         return False

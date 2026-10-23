@@ -1,6 +1,5 @@
 """Audio data type for multimodal processing."""
 
-from functools import lru_cache
 from pathlib import Path
 from typing import Any, Dict
 
@@ -9,16 +8,6 @@ from msgflux.utils.chat import ChatBlock
 from msgflux.utils.encode import aencode_data_to_base64, encode_data_to_base64
 from msgflux.utils.inspect import get_mime_type
 from msgflux.utils.validation import is_base64
-
-
-@lru_cache(maxsize=32)
-def _cached_encode(source: str) -> str:
-    """Cache encoding to avoid re-encoding same files.
-
-    Note: Cache size is limited to 32 entries to avoid high memory usage
-    with large audio files.
-    """
-    return encode_data_to_base64(source)
 
 
 class Audio(MediaType):
@@ -74,7 +63,7 @@ class Audio(MediaType):
         if is_base64(source):
             return source
 
-        return _cached_encode(source)
+        return encode_data_to_base64(source)
 
     async def _encode_async(self) -> str:
         """Encode audio asynchronously.
