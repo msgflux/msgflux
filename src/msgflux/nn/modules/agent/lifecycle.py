@@ -45,6 +45,7 @@ from msgflux.nn.modules.agent.context import (
     _agent_context,
     _BeforeRunEndHookError,
     _require_lifecycle_payload,
+    _same_agent_invocation,
 )
 from msgflux.nn.modules.container import ModuleDict
 from msgflux.runtime.abort import AbortSignal
@@ -382,18 +383,24 @@ class AgentLifecycleMixin:
             return name in self.extensions
 
     @contextmanager
-    def _extension_run_snapshot(self):
+    def _extension_run_snapshot(self, scope=None):
         current = _get_extension_snapshot(self)
+        existing = (_CURRENT_AGENT_CONTEXT.get() or {}).get(id(self))
+        requested_scope = (
+            scope if scope is not None else get_execution_context()["scope"]
+        )
+        reuse_current = current is not None and (
+            existing is None
+            or _same_agent_invocation(existing["scope"], requested_scope)
+        )
         with self._extension_lock:
-            names = current if current is not None else frozenset(self.extensions)
+            names = current if reuse_current else frozenset(self.extensions)
             for name in names:
                 self._extension_refcounts[name] = (
                     self._extension_refcounts.get(name, 0) + 1
                 )
         snapshot_context = (
-            _extension_snapshot(self, names)
-            if current is None
-            else nullcontext(current)
+            nullcontext(current) if reuse_current else _extension_snapshot(self, names)
         )
         try:
             with snapshot_context:
@@ -453,7 +460,7 @@ class AgentLifecycleMixin:
         scope = self._workspace_scope(kwargs.get("scope"))
         if scope is not None:
             kwargs["scope"] = scope
-        with self._resource_context(kwargs), self._extension_run_snapshot():
+        with self._resource_context(kwargs), self._extension_run_snapshot(scope):
             with (
                 execution_context(scope=kwargs.get("scope")),
                 _agent_context(
@@ -470,7 +477,7 @@ class AgentLifecycleMixin:
         scope = self._workspace_scope(kwargs.get("scope"))
         if scope is not None:
             kwargs["scope"] = scope
-        with self._resource_context(kwargs), self._extension_run_snapshot():
+        with self._resource_context(kwargs), self._extension_run_snapshot(scope):
             with (
                 execution_context(scope=kwargs.get("scope")),
                 _agent_context(
@@ -498,7 +505,7 @@ class AgentLifecycleMixin:
     def _event_stream_execution_context(self, kwargs: Dict[str, Any]):
         with (
             self._resource_context(kwargs),
-            self._extension_run_snapshot(),
+            self._extension_run_snapshot(kwargs.get("scope")),
             _agent_context(
                 self,
                 scope=kwargs.get("scope") or get_execution_context()["scope"],
