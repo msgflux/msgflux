@@ -9,7 +9,7 @@ from typing import TYPE_CHECKING, Any, Iterable, Iterator, List, Literal, Mappin
 from msgflux._private.chat_items import legacy_item_id, new_item_id
 from msgflux.core.examples import Example
 from msgflux.data.types import Audio, File, Image, MediaType, Video
-from msgflux.models.tool_transport import history_adapter, native_item_types
+from msgflux.models.tool_transport import history_adapter, pending_tool_calls
 from msgflux.runtime.context import (
     _CURRENT_NAMESPACE,
     _CURRENT_THREAD_ID,
@@ -725,33 +725,12 @@ class ChatMessages:
         *,
         reason: str | None = None,
     ) -> int:
-        open_call_ids: list[str] = []
-        native_calls = {}
-        closed_call_ids: set[str] = set()
-        for item in self._items:
-            if item.get("type") in {"function_call", *native_item_types()}:
-                call_id = item.get("call_id") or item.get("id")
-                if isinstance(call_id, str) and call_id:
-                    open_call_ids.append(call_id)
-                    if item.get("type") in native_item_types():
-                        native_calls[call_id] = item
-                continue
-            if item.get("type") in {
-                "function_call_output",
-                *native_item_types(output=True),
-            }:
-                call_id = item.get("call_id")
-                if isinstance(call_id, str) and call_id:
-                    closed_call_ids.add(call_id)
-
-        missing_call_ids = [
-            call_id for call_id in open_call_ids if call_id not in closed_call_ids
-        ]
-        for call_id in missing_call_ids:
-            if call_id in native_calls:
-                item = native_calls[call_id]
+        pending_calls = pending_tool_calls(self._items)
+        for call_id, item in pending_calls.items():
+            adapter = history_adapter(item)
+            if adapter is not None:
                 self.append(
-                    history_adapter(item).interrupted(
+                    adapter.interrupted(
                         item,
                         reason or "Tool call interrupted; effects may be unconfirmed.",
                     )
@@ -765,7 +744,7 @@ class ChatMessages:
                     "status": "interrupted",
                 }
             )
-        return len(missing_call_ids)
+        return len(pending_calls)
 
     @staticmethod
     def _interrupted_tool_call_output(reason: str | None = None) -> dict[str, str]:

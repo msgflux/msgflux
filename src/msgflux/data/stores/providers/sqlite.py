@@ -36,6 +36,7 @@ from msgflux._private.chat_items import (
     restore_item_occurrence,
     split_item_occurrence,
 )
+from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.data.stores.base import (
     CheckpointCommit,
     CheckpointStore,
@@ -196,6 +197,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self.path = path
         self._lock = RLock()
         Path(path).parent.mkdir(parents=True, exist_ok=True)
+        prepare_sqlite_file(path)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
         self._conn.execute("PRAGMA foreign_keys=ON")
