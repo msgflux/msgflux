@@ -2,7 +2,11 @@ import json
 
 import pytest
 
-from msgflux._private.cli_output import format_observation, write_observation
+from msgflux._private.cli_output import (
+    escape_human_text,
+    format_observation,
+    write_observation,
+)
 from msgflux.runtime.service.records import EventRecord, SnapshotRecord
 from msgflux.utils.msgspec import msgspec_dumps
 
@@ -14,6 +18,14 @@ def event(event_type, data, source_path=()):
         data=data,
         run_id="run-example",
         source_path=source_path,
+    )
+
+
+def test_human_text_escapes_terminal_controls_and_preserves_unicode():
+    text = "ok\x1b[31mRED\x1b[0m\nnext\r\ttab\x00\x07\x7f\x9d café"
+
+    assert escape_human_text(text) == (
+        r"ok\x1b[31mRED\x1b[0m\nnext\r\ttab\x00\x07\x7f\x9d café"
     )
 
 

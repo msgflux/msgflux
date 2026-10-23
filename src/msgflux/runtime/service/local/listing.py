@@ -6,6 +6,7 @@ import asyncio
 import sys
 from collections import Counter
 
+from msgflux._private.cli_output import escape_human_text
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -17,7 +18,10 @@ def _write_listing(name, rows, columns, *, as_json):
         sys.stdout.write(f"No {name}.\n")
         return
     cells = [[label for _key, label in columns]] + [
-        [str(row[key]) if row[key] is not None else "-" for key, _label in columns]
+        [
+            escape_human_text(str(row[key])) if row[key] is not None else "-"
+            for key, _label in columns
+        ]
         for row in rows
     ]
     widths = [max(map(len, column)) for column in zip(*cells, strict=True)]

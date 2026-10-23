@@ -797,9 +797,13 @@ endpoint is present. After updating a checkout, explicitly restart its daemon
 from that checkout with `msgflux service restart`; listing never upgrades or
 restarts a running server automatically.
 
-Human output uses aligned tables. JSON contains `{"agents": [...]}` or
-`{"threads": [...]}`. An empty list exits successfully; an unavailable service
-or invalid arguments produce an error on stderr and a nonzero exit code.
+Human output uses aligned tables. Untrusted identifiers and paths are rendered
+with terminal controls escaped as literal `\n`, `\r`, `\t`, or `\xNN` sequences,
+so server-provided data cannot inject escape sequences, erase rows, or break
+alignment. Printable Unicode is preserved. JSON contains `{"agents": [...]}` or
+`{"threads": [...]}` with the original strings unchanged. An empty list exits
+successfully; an unavailable service or invalid arguments produce an error on
+stderr and a nonzero exit code.
 
 ## Inspect An Agent's Loaded Defaults
 
