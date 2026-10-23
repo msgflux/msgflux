@@ -1712,6 +1712,14 @@ To stop instead, omit `results` and pass `abandon=True`. The run becomes
 `interrupted`; observations explicitly report unconfirmed effects, not success.
 This does not undo effects or authorize replay in another run.
 
+Reconciliation also retires every call ID in that batch for this run, whether
+results were confirmed or the batch was abandoned. A later response that repeats
+one of those IDs is blocked before a new approval request or tool dispatch,
+including when the call was an unprotected sibling. A distinct run has its own
+retirement state; a protected call there needs a new approval. This fence is
+checkpoint state, not a journal status change or a transaction spanning both
+stores.
+
 An identical `decision_id` and payload returns the original receipt; a conflicting
 reuse or stale revision raises `CheckpointConflictError`. Concurrent callers may
 retry the identical decision after a conflict. Revision checks fence old

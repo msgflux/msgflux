@@ -15,6 +15,42 @@ from msgflux.utils.msgspec import msgspec_loads
 
 PENDING_KEY = "pending_approvals"
 RECEIPTS_KEY = "approval_reconciliations"
+RETIRED_TOOL_CALL_IDS_KEY = "retired_tool_call_ids"
+_MISSING = object()
+
+
+def _retired_tool_call_ids(extensions):
+    """Read the run-local retirement fence, failing closed on ambiguous state."""
+    if not isinstance(extensions, Mapping):
+        return set(), True
+    marker = extensions.get(RETIRED_TOOL_CALL_IDS_KEY, _MISSING)
+    if marker is not _MISSING:
+        if (
+            not isinstance(marker, list)
+            or any(type(call_id) is not str or not call_id for call_id in marker)
+            or marker != sorted(set(marker))
+        ):
+            return set(), True
+        return set(marker), False
+
+    receipts = extensions.get(RECEIPTS_KEY, {})
+    if not isinstance(receipts, Mapping):
+        return set(), True
+    retired = set()
+    for receipt in receipts.values():
+        if not isinstance(receipt, Mapping):
+            return set(), True
+        results = receipt.get("results", _MISSING)
+        if results is None and receipt.get("abandon") is True:
+            # Legacy abandoned receipts omit the IDs; do not assume replay is safe.
+            return set(), True
+        if not isinstance(results, Mapping) or any(
+            type(call_id) is not str or not call_id or type(result) is not str
+            for call_id, result in results.items()
+        ):
+            return set(), True
+        retired.update(results)
+    return retired, False
 
 
 def inspect_batch(store, namespace, thread_id, run_id):
@@ -151,6 +187,10 @@ def reconcile_batch(  # noqa: C901
     call_ids = [intent["id"] for intent in pending["intents"]]
     if not abandon and set(results) != set(call_ids):
         raise ValueError("Reconciliation requires results for the entire batch")
+    retired_ids, fail_closed = _retired_tool_call_ids(extensions)
+    if fail_closed:
+        raise ValueError("Approval retirement state is malformed or ambiguous")
+    extensions[RETIRED_TOOL_CALL_IDS_KEY] = sorted(retired_ids | set(call_ids))
     messages = ChatMessages()
     messages._hydrate_state(state["messages"])
     if messages.get_active_turn() is None:

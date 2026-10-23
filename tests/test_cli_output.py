@@ -2,7 +2,7 @@ import json
 
 import pytest
 
-from msgflux._cli_output import format_observation, write_observation
+from msgflux._private.cli_output import format_observation, write_observation
 from msgflux.runtime.service.records import EventRecord, SnapshotRecord
 from msgflux.utils.msgspec import msgspec_dumps
 
