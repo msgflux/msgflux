@@ -197,6 +197,7 @@ class ChatStreamAccumulator:
         provider: str | None = None,
         api_mode: str | None = None,
         provider_state: Any = None,
+        replace_arguments: bool = False,
     ) -> None:
         with self._lock:
             item = self._tool_calls.get(index)
@@ -213,8 +214,10 @@ class ChatStreamAccumulator:
                 item["call_id"] = call_id
             if name:
                 item["name"] = name
-            if arguments:
-                item["arguments"] += arguments
+            if arguments is not None:
+                item["arguments"] = (
+                    arguments if replace_arguments else item["arguments"] + arguments
+                )
             if provider_state is not None:
                 item["provider_state"] = {
                     "provider": provider,

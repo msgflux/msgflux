@@ -68,6 +68,24 @@ class ToolCallAggregator:
                 "arguments": arguments,
             }
 
+    def finalize(
+        self,
+        call_index: int,
+        tool_id: Optional[str],
+        name: Optional[str],
+        arguments: str,
+    ) -> None:
+        """Replace delta-built arguments with an authoritative final snapshot.
+
+        Responses streams send the complete function-call item in
+        ``response.output_item.done``. Replacing instead of appending keeps the
+        final intent aligned with the provider snapshot without inventing or
+        repairing JSON.
+        """
+        if call_index in self.tool_calls:
+            self.tool_calls[call_index]["arguments"] = ""
+        self.process(call_index, tool_id, name, arguments)
+
     def get_calls(self) -> List[tuple[str, str, Any]]:
         """Returns the function name and arguments in a dict format."""
         tool_callings = []
