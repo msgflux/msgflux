@@ -119,6 +119,12 @@ print(result.final_answer) # "x = -3.75"
 
 **ReAct** (Reasoning + Acting) is a dynamic schema designed for agents that need to use tools. Instead of reasoning in a single pass, the model interleaves `thought` (internal planning), `actions` (tool calls), and `observations` (tool results) in an iterative loop — repeating until it has enough information to produce a `final_answer`.
 
+Observations preserve tool values, including `0`, `False`, empty strings, lists,
+and mappings. For example, a counting tool returning zero produces
+`{"tool": "count_matches", "result": 0}` in the next model request and saved
+history. When a tool fails without a result, its observation contains the error
+message.
+
 ```
                     Input
                       │
