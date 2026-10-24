@@ -753,6 +753,26 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             raise
 
     @_locked
+    def load_latest_run(
+        self,
+        namespace: str,
+        thread_id: str,
+    ) -> Mapping[str, Any] | None:
+        # Selection and hydration must observe the same committed snapshot.
+        started = not self._conn.in_transaction
+        try:
+            if started:
+                self._conn.execute("BEGIN")
+            state = super().load_latest_run(namespace, thread_id)
+            if started:
+                self._conn.commit()
+            return state
+        except BaseException as error:
+            if started:
+                self._rollback_preserving_error(error)
+            raise
+
+    @_locked
     def list_runs(
         self,
         namespace: str,
