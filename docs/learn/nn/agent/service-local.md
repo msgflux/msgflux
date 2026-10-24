@@ -1024,6 +1024,9 @@ fails or is interrupted; it does not resume work or approve pending operations.
 Ctrl+C stops waiting without interrupting the agent and exits with code `130`.
 An unfinished run without a worker owned by the connected service requires host
 recovery; waiting cannot adopt it after a restart.
+If the run settles while recovery is being checked, the result retains its
+recorded failure cause. When no error is recorded, the diagnostic explains why
+the connected service cannot wait for that attempt.
 
 These commands require an active, authenticated service and never start one.
 Use `--runtime-dir PATH` to select another local service. For recovery diagnostics,
