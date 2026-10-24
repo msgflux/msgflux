@@ -647,45 +647,45 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         at_item_id: str | None = None,
         position: Literal["before", "at"] = "at",
     ) -> Mapping[str, Any]:
-        row = self._conn.execute(
-            _SELECT_STATE,
-            (namespace, source_thread_id, source_run_id),
-        ).fetchone()
-        if row is None:
-            raise ValueError(
-                f"Checkpoint run `{source_run_id}` not found in thread "
-                f"`{source_thread_id}`."
-            )
-
-        source_state = self._denormalize_state(
-            namespace,
-            source_thread_id,
-            row[0],
-        )
-        state = self._prepare_fork_state(
-            source_state,
-            at_item_id=at_item_id,
-            position=position,
-        )
-        if status is not None:
-            state["status"] = status
-        self._set_fork_metadata(
-            state,
-            namespace=namespace,
-            source_thread_id=source_thread_id,
-            source_run_id=source_run_id,
-            target_thread_id=target_thread_id,
-            target_run_id=target_run_id,
-            at_item_id=at_item_id,
-        )
-        messages = state.get("messages")
-        if isinstance(messages, dict):
-            messages["thread_id"] = target_thread_id
-        now = time.time()
-
         cur = self._conn.cursor()
         try:
-            cur.execute("BEGIN")
+            # Keep source hydration and target publication in one transaction.
+            cur.execute("BEGIN IMMEDIATE")
+            row = cur.execute(
+                _SELECT_STATE,
+                (namespace, source_thread_id, source_run_id),
+            ).fetchone()
+            if row is None:
+                raise ValueError(
+                    f"Checkpoint run `{source_run_id}` not found in thread "
+                    f"`{source_thread_id}`."
+                )
+
+            source_state = self._denormalize_state(
+                namespace,
+                source_thread_id,
+                row[0],
+            )
+            state = self._prepare_fork_state(
+                source_state,
+                at_item_id=at_item_id,
+                position=position,
+            )
+            if status is not None:
+                state["status"] = status
+            self._set_fork_metadata(
+                state,
+                namespace=namespace,
+                source_thread_id=source_thread_id,
+                source_run_id=source_run_id,
+                target_thread_id=target_thread_id,
+                target_run_id=target_run_id,
+                at_item_id=at_item_id,
+            )
+            messages = state.get("messages")
+            if isinstance(messages, dict):
+                messages["thread_id"] = target_thread_id
+            now = time.time()
             normalized = self._normalize_state(
                 namespace,
                 target_thread_id,
