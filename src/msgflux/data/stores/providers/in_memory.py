@@ -391,6 +391,14 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 committed["_checkpoint"]["head_item_id"],
             )
 
+    def load_latest_run(
+        self,
+        namespace: str,
+        thread_id: str,
+    ) -> Mapping[str, Any] | None:
+        with self._lock:
+            return super().load_latest_run(namespace, thread_id)
+
     def list_runs(
         self,
         namespace: str,
