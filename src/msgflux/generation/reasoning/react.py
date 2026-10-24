@@ -251,7 +251,9 @@ class ReAct(Struct, ToolFlowControl):
                 observations.append(
                     {
                         "tool": act.get("name"),
-                        "result": call.result or call.error,
+                        "result": call.result
+                        if call.result is not None
+                        else call.error,
                     }
                 )
         raw_response["observations"] = observations
