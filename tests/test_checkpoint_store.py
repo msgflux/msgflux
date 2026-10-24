@@ -1,3 +1,5 @@
+import sqlite3
+
 import pytest
 import msgspec
 
@@ -753,3 +755,45 @@ def test_checkpoint_store_rejects_boundary_between_tool_call_and_output():
             target_run_id="unsafe",
             at_item_id=messages[0]["item_id"],
         )
+
+
+def test_sqlite_fork_reserves_source_while_hydrating(tmp_path):
+    path = str(tmp_path / "fork-snapshot.sqlite3")
+    writer = SQLiteCheckpointStore(path)
+    reader = SQLiteCheckpointStore(path)
+    writer._conn.execute("PRAGMA busy_timeout=0")
+    messages = _message_state("source")
+    writer.save_state(
+        "agent:test", "session_1", "source", {"status": "paused", "messages": messages}
+    )
+    original = reader._denormalize_state
+    blocked = []
+
+    def delete_during_source_read(namespace, thread_id, state_text):
+        if not blocked:
+            try:
+                writer.delete_run(namespace, thread_id, "source")
+            except sqlite3.OperationalError as error:
+                assert error.sqlite_errorcode == sqlite3.SQLITE_BUSY
+                blocked.append(True)
+            else:
+                blocked.append(False)
+        return original(namespace, thread_id, state_text)
+
+    reader._denormalize_state = delete_during_source_read
+    try:
+        forked = reader.fork_run(
+            "agent:test",
+            "session_1",
+            "source",
+            target_thread_id="fork_thread",
+            target_run_id="fork",
+        )
+        assert blocked == [True]
+        assert forked["messages"]["items"] == messages["items"]
+        assert writer.delete_run("agent:test", "session_1", "source")
+        assert reader.load_state("agent:test", "session_1", "source") is None
+        assert reader.load_state("agent:test", "fork_thread", "fork") == forked
+    finally:
+        reader.close()
+        writer.close()
