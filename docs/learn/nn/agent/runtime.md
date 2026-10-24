@@ -2527,6 +2527,12 @@ uses no diff. Supply a V4A **body**, not a multi-file `*** Begin Patch` envelope
 a standard numbered unified diff. Function transport preserves extra runtime
 selectors such as `run_in_background` instead of silently dropping them, although
 approval policies require prepared file changes to execute in foreground.
+Native shell and apply-patch outputs describe completed foreground results.
+Tools configured with `background=True`, `detached=True`, or another dispatch
+policy use function calling so their immediate task reference or empty result
+can be represented. Entries in both catalog forms carry the compiled dispatch name in
+their `dispatch` field; this selects the transport without changing execution
+policy.
 
 The parser is adapted from the OpenAI Agents SDK reference, with its MIT notice
 preserved and parser records implemented as `msgspec.Struct`. It supports context

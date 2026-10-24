@@ -109,6 +109,7 @@ class ToolCatalogEntry(msgspec.Struct, frozen=True, kw_only=True):
     namespace: str | None = None
     catalog_role: str | None = None
     kind: str = "tool"
+    dispatch: str = "foreground"
     deferred: bool = False
     loaded: bool = False
     display_name: str | None = None
@@ -136,6 +137,9 @@ class ToolCatalogEntry(msgspec.Struct, frozen=True, kw_only=True):
                 _require_name(self.catalog_role, "catalog_role"),
             )
         msgspec.structs.force_setattr(self, "kind", _require_name(self.kind, "kind"))
+        msgspec.structs.force_setattr(
+            self, "dispatch", _require_name(self.dispatch, "dispatch")
+        )
         msgspec.structs.force_setattr(
             self,
             "input_schema",
@@ -180,6 +184,7 @@ class ToolCatalogEntry(msgspec.Struct, frozen=True, kw_only=True):
             namespace=definition.metadata.get("execution_namespace"),
             catalog_role=definition.metadata.get("catalog_role"),
             kind=definition.kind,
+            dispatch=definition.dispatch.name,
             deferred=definition.loading.deferred,
             loaded=loaded,
             display_name=definition.display_name,
