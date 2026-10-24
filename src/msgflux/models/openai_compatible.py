@@ -2859,6 +2859,8 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             return {}
         routes = {}
         for entry in self._catalog_tool_entries(catalog):
+            if entry.dispatch != "foreground":
+                continue
             for adapter in getattr(self, "native_tool_adapters", ()):
                 if entry.kind != adapter.kind or not adapter.supports(entry):
                     continue

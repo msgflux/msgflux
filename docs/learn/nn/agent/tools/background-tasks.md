@@ -12,6 +12,11 @@ declares the corresponding capability.
 Use background tasks when a tool may be slow, long-running, interruptible, or
 useful to monitor separately from the current model turn.
 
+Local shell and apply-patch tools use ordinary function calling when configured
+for background or detached dispatch. Their immediate response is a dispatch
+result, while native foreground protocols expect the completed tool result.
+See [native tool transports](../runtime.md#native-local-shell-in-openai-responses) for transport selection.
+
 The main pieces are:
 
 | Piece | Purpose |
