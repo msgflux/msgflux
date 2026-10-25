@@ -374,19 +374,49 @@ class TestModelStreamResponse:
         assert stream.reasoning_summary_event.is_set() is True
         assert stream.has_reasoning_summary is False
 
-    def test_model_stream_response_rejects_chunks_after_channel_close(self):
-        stream = ModelStreamResponse(mode="sync")
-        stream.add_reasoning("thinking")
+    @pytest.mark.parametrize("mode", ["sync", "async"])
+    def test_model_stream_response_rejects_chunks_after_channel_close(self, mode):
+        stream = ModelStreamResponse(mode=mode)
         stream.finish_reasoning()
+        stream.finish_reasoning_summary()
 
+        # A rejected late write to each closed channel must not mutate the
+        # canonical snapshot or its channel flag.
+        reasoning_baseline = stream.chat_accumulator.snapshot()
+        assert stream.has_reasoning is False
         with pytest.raises(RuntimeError, match="closed stream"):
             stream.add_reasoning("late thinking")
+        assert stream.chat_accumulator.snapshot() == reasoning_baseline
+        assert stream.has_reasoning is False
+
+        assert stream.has_reasoning_summary is False
+        with pytest.raises(RuntimeError, match="closed stream"):
+            stream.add_reasoning_summary("late summary")
+        assert stream.chat_accumulator.snapshot() == reasoning_baseline
+        assert stream.has_reasoning_summary is False
 
         stream.add("answer")
         stream.finish()
+        settled_baseline = stream.chat_accumulator.snapshot()
+
+        with pytest.raises(RuntimeError, match="closed stream"):
+            stream.add_commentary("late commentary")
+        assert stream.commentary == []
+        assert stream.chat_accumulator.snapshot() == settled_baseline
+
+        # Empty commentary stays a no-op even after finish.
+        stream.add_commentary("")
+        assert stream.commentary == []
 
         with pytest.raises(RuntimeError, match="closed stream"):
             stream.add("late answer")
+        assert stream.data == "answer"
+        assert stream.chat_accumulator.snapshot() == settled_baseline
+        assert [
+            item["content"]
+            for item in stream.chat_accumulator.snapshot()
+            if item.get("type") == "message"
+        ] == ["answer"]
 
     def test_model_stream_response_finalizer_added_after_finish_runs_once(self):
         stream = ModelStreamResponse(mode="sync")
