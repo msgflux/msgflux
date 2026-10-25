@@ -96,6 +96,11 @@ When `stream=True`, the agent returns a `ModelStreamResponse` instead of a plain
 | `response.metadata` | Usage and request timing — set when the stream finishes. `None` while streaming, useful as a completion signal. |
 | `response.first_chunk_event` | Signals the first reasoning/content output, or terminal completion/error if no output arrives. |
 
+Once `finish()` or a channel close has completed, later provider writes to that
+channel are rejected. A rejected write leaves the already-received
+`response.data`, canonical history, reasoning flags, and commentary unchanged;
+`add_commentary("")` remains a no-op.
+
 ## Streaming with Reasoning
 
 When the model supports reasoning (`return_reasoning=True`), the compatibility

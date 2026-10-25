@@ -721,6 +721,9 @@ class BaseStreamResponse(CoreResponse):
 
     def add(self, data: Any, *, accumulate_history: bool = True):
         """Add data to the content stream queue in a thread-safe way."""
+        with self._queue_lock:
+            if self._content_closed:
+                raise RuntimeError("Cannot add content chunk to a closed stream.")
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
 
@@ -751,6 +754,9 @@ class BaseStreamResponse(CoreResponse):
         item_id: str | None = None,
     ):
         """Add data to the reasoning stream queue in a thread-safe way."""
+        with self._reasoning_queue_lock:
+            if self._reasoning_closed:
+                raise RuntimeError("Cannot add reasoning chunk to a closed stream.")
         if data is not None:
             if history_kind == "summary":
                 self.chat_accumulator.add_reasoning(summary=str(data), item_id=item_id)
@@ -776,6 +782,9 @@ class BaseStreamResponse(CoreResponse):
         """Publish a user-visible intermediate assistant message."""
         if not data:
             return
+        with self._event_queue_lock:
+            if self._events_closed:
+                raise RuntimeError("Cannot add an event to a closed stream.")
         self.commentary.append(data)
         if not self.first_chunk_event.is_set():
             self.first_chunk_event.set()
@@ -783,6 +792,11 @@ class BaseStreamResponse(CoreResponse):
 
     def add_reasoning_summary(self, data: Any, *, item_id: str | None = None):
         """Add a summary delta without presenting it as chain-of-thought."""
+        with self._reasoning_summary_queue_lock:
+            if self._reasoning_summary_closed:
+                raise RuntimeError(
+                    "Cannot add reasoning-summary chunk to a closed stream."
+                )
         if data is not None:
             self.chat_accumulator.add_reasoning(summary=str(data), item_id=item_id)
             self.has_reasoning_summary = True
