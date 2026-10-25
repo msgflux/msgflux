@@ -2065,7 +2065,10 @@ class Module:
                 await Module._aclose_event_stream(response, event_stream, primary_error)
             finally:
                 if not response._is_finalized():
-                    response.finish(status="interrupted")
+                    # Keep the consumer's primary failure on the response so a
+                    # direct content consumer observes it instead of a normal
+                    # end-of-stream (and so finalizer failures group with it).
+                    response.finish(error=primary_error, status="interrupted")
                     await response._await_pending_finalizers(primary_error)
         finally:
             response._run_consumer_finalizers()

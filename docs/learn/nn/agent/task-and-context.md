@@ -793,6 +793,11 @@ The final assistant response is **never added automatically** — append it manu
         `result.response` and reuse `result.messages` after it settles. The
         completed stream already commits the assistant reply to that history.
 
+        If an extension's incremental output transformation fails, `consume()`
+        yields any buffered chunks and then raises the same error. When
+        checkpointing is enabled, the interrupted checkpoint retains the
+        received text.
+
         ```python
         # pip install msgflux
         import asyncio
