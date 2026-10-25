@@ -205,6 +205,62 @@ class TestReActToolFlowControl:
 
         assert len(result) == 1
         assert result[0]["role"] == "assistant"
+        assert [
+            step["thought"] for step in msgspec.json.decode(result[0]["content"])
+        ] == ["First step", "Second step"]
+
+    @pytest.mark.parametrize(
+        "content",
+        [
+            pytest.param("Ordinary assistant summary", id="text"),
+            pytest.param('{"status": "ok"}', id="json-object"),
+            pytest.param(None, id="null"),
+            pytest.param("[]", id="empty-list"),
+            pytest.param('[{"name": "not-a-react-step"}]', id="other-list"),
+            pytest.param([{"type": "text", "text": "blocks"}], id="content-list"),
+        ],
+    )
+    def test_build_history_preserves_non_react_assistant_content(self, content):
+        """Ordinary assistant content must not be overwritten or decoded as state."""
+        raw_response = {
+            "thought": "Next step",
+            "actions": [{"name": "search", "arguments": {"q": "test"}}],
+            "observations": [{"tool": "search", "result": "found"}],
+            "final_answer": None,
+        }
+        messages = [{"role": "assistant", "content": content}]
+
+        result = ReAct.build_history(raw_response, messages)
+
+        assert len(result) == 2
+        assert result[0] == {"role": "assistant", "content": content}
+        assert result[1]["role"] == "assistant"
+        assert msgspec.json.decode(result[1]["content"]) == [
+            {
+                "thought": "Next step",
+                "actions": [{"name": "search", "arguments": {"q": "test"}}],
+                "observations": [{"tool": "search", "result": "found"}],
+            }
+        ]
+
+    @pytest.mark.asyncio
+    async def test_async_build_history_preserves_ordinary_assistant_content(self):
+        """The async default must preserve scope summaries like the sync path."""
+        raw_response = {
+            "thought": "After summary",
+            "actions": [{"name": "close_context_scope", "arguments": {}}],
+            "observations": [{"tool": "close_context_scope", "result": None}],
+            "final_answer": None,
+        }
+        messages = [{"role": "assistant", "content": "Source summary"}]
+
+        result = await ReAct.abuild_history(raw_response, messages)
+
+        assert result[0] == {"role": "assistant", "content": "Source summary"}
+        assert len(result) == 2
+        assert msgspec.json.decode(result[1]["content"])[0]["thought"] == (
+            "After summary"
+        )
 
     @pytest.mark.asyncio
     async def test_async_methods_work(self):

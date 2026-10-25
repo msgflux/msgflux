@@ -125,6 +125,12 @@ and mappings. For example, a counting tool returning zero produces
 history. When a tool fails without a result, its observation contains the error
 message.
 
+ReAct stores its accumulated steps in assistant history. If a later ordinary
+assistant message appears, such as the summary written when a nested context
+scope closes, ReAct appends the next step as a new assistant message instead of
+overwriting or decoding that content. Existing valid step lists continue to
+accumulate in place.
+
 ```
                     Input
                       │
