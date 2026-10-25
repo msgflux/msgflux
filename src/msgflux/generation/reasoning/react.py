@@ -259,6 +259,24 @@ class ReAct(Struct, ToolFlowControl):
         raw_response["observations"] = observations
         return raw_response
 
+    @staticmethod
+    def _decode_history_state(content: Any) -> Optional[List[Mapping[str, Any]]]:
+        """Return a trailing ReAct step list, or ``None`` for other content."""
+        if not isinstance(content, str):
+            return None
+        try:
+            state = msgspec.json.decode(content)
+        except msgspec.DecodeError:
+            return None
+        if not isinstance(state, list) or not state:
+            return None
+        step_keys = {"thought", "actions", "observations"}
+        if not all(
+            isinstance(step, Mapping) and step_keys.issubset(step) for step in state
+        ):
+            return None
+        return state
+
     @classmethod
     def build_history(
         cls,
@@ -275,13 +293,12 @@ class ReAct(Struct, ToolFlowControl):
             "observations": raw_response.get("observations", []),
         }
         if messages and messages[-1].get("role") == "assistant":
-            last_react_msg = messages[-1].get("content")
-            react_state = msgspec.json.decode(last_react_msg)
-            react_state.append(step)
-            messages[-1] = ChatBlock.assist(react_state)
-        else:
-            react_state = [step]
-            messages.append(ChatBlock.assist(react_state))
+            react_state = cls._decode_history_state(messages[-1].get("content"))
+            if react_state is not None:
+                react_state.append(step)
+                messages[-1] = ChatBlock.assist(react_state)
+                return messages
+        messages.append(ChatBlock.assist([step]))
         return messages
 
 

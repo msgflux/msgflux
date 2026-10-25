@@ -41,6 +41,12 @@ Its responsibilities are:
 The async methods mirror the same contract. Most flow controls can reuse the
 default async implementations.
 
+`build_history` receives the full conversation, not only flow-owned messages.
+For example, ReAct accumulates its JSON step list only when the trailing
+assistant content is a valid ReAct state. When an ordinary assistant message
+intervenes, such as a context-scope summary, it appends a new step message and
+leaves the existing content intact.
+
 ## Lifecycle
 
 The loop looks like this:
