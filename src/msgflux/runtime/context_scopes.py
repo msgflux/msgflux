@@ -210,7 +210,15 @@ class ContextScopeController:
         # Keep closed branches durable for inspection and recovery.
         scopes["branches"][active]["closed"] = True
         scopes["revision"] += 1
+        turn_events = [item for item in messages._items if item.get("type") == "turn"]
         messages._items = deepcopy(parent_branch["items"])
+        # Branch views hide child conversation, not the shared run lifecycle.
+        # A later turn (including a fork's destination turn) may have started
+        # after this parent snapshot was recorded.
+        parent_ids = {item.get("item_id") for item in messages._items}
+        for item in turn_events:
+            if item.get("item_id") not in parent_ids:
+                messages.append(item)
         close_summary = summary or f"Context scope `{frame['name']}` completed."
         messages.add_assistant_response(content=close_summary)
         self._sync_active(messages, scopes)

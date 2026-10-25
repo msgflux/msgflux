@@ -241,8 +241,9 @@ thread, position, and content; no checkpoint schema version is introduced.
 `CheckpointStore.fork_run(..., at_item_id=..., position="before" | "at")`
 creates an append-only branch at an exact occurrence. A boundary is accepted
 only when it does not leave a turn active or separate a tool call from its
-output. This makes the branch reproducible and prevents malformed provider
-history.
+output. An explicit prefix must also include the origin item of its active
+context scope, so closing the scope cannot restore messages beyond the cut.
+These checks make the branch reproducible and prevent malformed provider history.
 
 Future compaction should append an operation that defines a new view, while
 moderation or alternative history should fork from the exact `item_id` being

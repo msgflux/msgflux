@@ -3113,6 +3113,13 @@ another connection deletes it during the read, the current call can still return
 the selected snapshot; a subsequent call observes the deletion and selects the
 latest remaining run.
 
+An explicit prefix fork must include the origin item of its active context
+scope. A cut before that origin raises `ValueError` without creating the
+destination run: the preserved scope tree would otherwise restore messages
+beyond the selected boundary when closed. To branch before a scope was opened,
+fork an earlier run checkpoint that does not contain that scope, if one is
+available.
+
 ## Context scopes
 
 Context scopes are nested conversation branches within the same execution. They
@@ -3120,6 +3127,9 @@ keep the same thread, run, and budgets. The built-in tools return a transition
 command; the Agent applies it only after every tool call and output in the
 current batch has settled. Opening a scope records the parent prefix and starts
 a child branch. Closing returns to the parent and copies a summary into it.
+Turn lifecycle events remain visible when returning to the parent, including
+turns started after the scope opened. Continuing a thread or resuming a fork
+therefore keeps the current run identity when the scope closes.
 Closing an already closed or root scope is idempotent, while closing a non-active
 name raises a conflict.
 

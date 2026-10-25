@@ -391,6 +391,19 @@ class CheckpointStore(ABC):
         end_index = matches[0] + (1 if position == "at" else 0)
         selected_items = deepcopy(items[:end_index])
         cls._validate_fork_boundary(selected_items)
+        scopes = (
+            messages.get("metadata", {}).get("runtime", {}).get("context_scopes", {})
+        )
+        active = scopes.get("active", "root")
+        if active != "root":
+            origin = scopes.get("branches", {}).get(active, {}).get("origin_item_id")
+            if origin is not None and not any(
+                item.get("item_id") == origin for item in selected_items
+            ):
+                raise ValueError(
+                    "Cannot fork before the active context scope origin; choose a "
+                    "boundary that includes it or fork an earlier checkpoint."
+                )
 
         forked_messages = deepcopy(dict(messages))
         forked_messages["items"] = selected_items
