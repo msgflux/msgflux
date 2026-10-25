@@ -401,14 +401,17 @@ def mark_tool_outputs_recorded(
     terminal_limit: int = MAX_TERMINAL_RECEIPTS,
 ) -> list[dict[str, Any]]:
     """Mark receipts delivered only when output occurs after its intent offset."""
+    from msgflux.models.tool_transport import native_item_types  # noqa: PLC0415
+
     if not isinstance(messages, Sequence):
         raise TypeError("messages must be a sequence")
+    output_types = {"function_call_output", *native_item_types(output=True)}
     outputs: dict[str, list[int]] = {}
     for index, message in enumerate(messages):
         if not isinstance(message, Mapping):
             continue
         call_id = message.get("tool_call_id")
-        if message.get("type") == "function_call_output":
+        if message.get("type") in output_types:
             call_id = message.get("call_id", call_id)
         if isinstance(call_id, str):
             outputs.setdefault(call_id, []).append(index)

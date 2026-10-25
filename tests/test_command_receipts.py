@@ -132,3 +132,44 @@ async def _unknown(receipt):
     command = CommandExecution(receipt, lambda _receipt: None)
     await command.update("unknown")
     return command.receipt
+
+
+@pytest.mark.parametrize(
+    "output_type", ["shell_call_output", "apply_patch_call_output"]
+)
+def test_native_output_items_count_as_recorded_tool_output(output_type):
+    receipt = asyncio.run(_complete(_receipt()))
+    saved = retain_command_receipts([], receipt)
+    paired = [
+        {"role": "assistant", "content": "intent"},
+        {"role": "assistant", "content": "more"},
+        {"type": output_type, "call_id": "call-1", "output": []},
+    ]
+    recorded = mark_tool_outputs_recorded(saved, paired)
+    assert not unresolved_command_receipts(
+        [decode_command_receipt(item) for item in recorded]
+    )
+
+    older = [
+        {"type": output_type, "call_id": "call-1", "output": []},
+        {"role": "assistant", "content": "intent"},
+        {"role": "assistant", "content": "more"},
+    ]
+    assert unresolved_command_receipts(
+        [
+            decode_command_receipt(item)
+            for item in mark_tool_outputs_recorded(saved, older)
+        ]
+    )
+
+    arbitrary = [
+        {"role": "assistant", "content": "intent"},
+        {"role": "assistant", "content": "more"},
+        {"type": "custom_call_output", "call_id": "call-1", "output": []},
+    ]
+    assert unresolved_command_receipts(
+        [
+            decode_command_receipt(item)
+            for item in mark_tool_outputs_recorded(saved, arbitrary)
+        ]
+    )
