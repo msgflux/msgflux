@@ -282,6 +282,15 @@ attributes also include supported limits, sampling settings, stop sequences,
 and whether the request is streamed. Anthropic's native `stop_reason` is kept
 in `gen_ai.response.finish_reasons`.
 
+Gemini's native Interactions API reads the requested thinking level from
+`generation_config.thinking_level`. Model output and function-call steps are
+recorded as assistant output; thought summaries and opaque signatures are
+excluded from model spans. Streaming step deltas are assembled once, and
+cumulative usage snapshots replace earlier values. Native visible-output and
+thought-token counters contribute once to canonical output usage, with thinking
+also reported in `gen_ai.usage.reasoning.output_tokens`. Cache attributes are
+recorded only when Google supplies their counters.
+
 Model output can contain sensitive data and increase span size. Set
 `MSGFLUX_TELEMETRY_CAPTURE_MODEL_OUTPUT=false` to omit generated text and tool
 call arguments while retaining stop reasons and token usage. Prompts,

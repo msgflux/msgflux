@@ -163,3 +163,32 @@ def test_usage_codec_calculates_valid_cache_hit_percentage(raw, expected):
     usage = UsageCodec().normalize(raw)
 
     assert usage.cache_hit_percentage == expected
+
+
+@pytest.mark.parametrize("reported_total", [True, False])
+@pytest.mark.parametrize(
+    "cached,percentage", [(0, 0.0), (4, 66.66666666666666), (None, None)]
+)
+def test_gemini_interactions_usage_counts_thoughts_once(
+    cached, percentage, reported_total
+):
+    raw = {
+        "total_input_tokens": 6,
+        "total_output_tokens": 1,
+        "total_thought_tokens": 64,
+        "total_tokens": 71,
+    }
+    if not reported_total:
+        raw.pop("total_tokens")
+    if cached is not None:
+        raw["total_cached_tokens"] = cached
+    codec = UsageCodec()
+    usage = codec.normalize(raw)
+    assert usage.input_tokens == 6
+    assert usage.output_tokens == 65
+    assert usage.total_tokens == 71
+    assert usage.output_tokens_details.reasoning_tokens == 64
+    assert usage.input_tokens_details.cached_tokens == cached
+    assert usage.cache_hit_percentage == percentage
+    assert usage.raw == raw
+    assert codec.normalize(usage).output_tokens == 65

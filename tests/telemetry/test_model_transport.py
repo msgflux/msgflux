@@ -447,7 +447,8 @@ def test_tool_call_is_recorded_as_genai_output_part(spans):
     ]
 
 
-def test_streamed_tool_call_assembles_arguments(spans):
+@pytest.mark.parametrize("name_delta", [None, "", "get_weather"])
+def test_streamed_tool_call_assembles_arguments(spans, name_delta):
     frames = [
         {
             "choices": [
@@ -474,7 +475,13 @@ def test_streamed_tool_call_assembles_arguments(spans):
                     "index": 0,
                     "delta": {
                         "tool_calls": [
-                            {"index": 0, "function": {"arguments": '"Paris"}'}}
+                            {
+                                "index": 0,
+                                "function": {
+                                    "name": name_delta,
+                                    "arguments": '"Paris"}',
+                                },
+                            }
                         ]
                     },
                     "finish_reason": "tool_calls",
@@ -800,3 +807,220 @@ async def test_legacy_httpx_model_records_async_span(spans):
     assert result.data == ["yes"]
     (span,) = spans.get_finished_spans()
     assert span.attributes["gen_ai.request.model"] == "classifier"
+
+
+class _GeminiOwner(_Owner):
+    provider = "gemini"
+
+
+def _gemini_interaction_payload():
+    return {
+        "model": "gemini-3.6-flash",
+        "status": "requires_action",
+        "steps": [
+            {
+                "type": "thought",
+                "signature": "opaque-private",
+                "summary": [{"type": "text", "text": "private thought"}],
+            },
+            {
+                "type": "model_output",
+                "content": [{"type": "text", "text": "Checking."}],
+            },
+            {
+                "type": "function_call",
+                "id": "call1",
+                "name": "lookup",
+                "arguments": {"sku": "A"},
+            },
+        ],
+        "usage": {
+            "total_input_tokens": 6,
+            "total_output_tokens": 1,
+            "total_thought_tokens": 64,
+            "total_tokens": 71,
+            "total_cached_tokens": 0,
+        },
+    }
+
+
+def test_gemini_interactions_transport_records_native_usage_output_and_config(spans):
+    with httpx2.Client(
+        transport=httpx2.MockTransport(
+            lambda _: httpx2.Response(200, json=_gemini_interaction_payload())
+        )
+    ) as client:
+        HTTPTransport(client=client).request(
+            _GeminiOwner(),
+            "/v1/interactions",
+            json={
+                "model": "gemini-3.6-flash",
+                "input": "private prompt",
+                "store": False,
+                "generation_config": {
+                    "thinking_level": "low",
+                    "max_output_tokens": 512,
+                    "stop_sequences": ["END"],
+                },
+                "response_format": {"private-schema": True},
+            },
+        )
+    (span,) = spans.get_finished_spans()
+    assert span.attributes["gen_ai.operation.name"] == "chat"
+    assert span.attributes["gen_ai.request.reasoning.level"] == "low"
+    assert span.attributes["gen_ai.request.max_tokens"] == 512
+    assert span.attributes["gen_ai.request.stop_sequences"] == ("END",)
+    assert span.attributes["gen_ai.response.status"] == "requires_action"
+    assert span.attributes["gen_ai.response.finish_reasons"] == ("tool_calls",)
+    assert span.attributes["gen_ai.usage.input_tokens"] == 6
+    assert span.attributes["gen_ai.usage.output_tokens"] == 65
+    assert span.attributes["gen_ai.usage.reasoning.output_tokens"] == 64
+    assert span.attributes["gen_ai.usage.cache_read.input_tokens"] == 0
+    assert json.loads(span.attributes["gen_ai.output.messages"])[0]["parts"] == [
+        {"type": "text", "content": "Checking."},
+        {
+            "type": "tool_call",
+            "name": "lookup",
+            "id": "call1",
+            "arguments": {"sku": "A"},
+        },
+    ]
+    assert "private" not in repr(span.attributes)
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("provider", ["gemini", "anthropic"])
+@pytest.mark.parametrize("async_mode", [False, True])
+async def test_native_provider_stream_traces_actual_expanded_tool_chunks(
+    spans, monkeypatch, provider, async_mode
+):
+    monkeypatch.setenv("GEMINI_API_KEY", "offline-key")
+    monkeypatch.setenv("ANTHROPIC_API_KEY", "offline-key")
+    if provider == "gemini":
+        from msgflux.models.providers.gemini import GeminiChatCompletion
+
+        model = GeminiChatCompletion("gemini-test", retry=False)
+        events = [
+            {
+                "event_type": "interaction.created",
+                "interaction": {
+                    "id": "i1",
+                    "model": "served-model",
+                    "status": "in_progress",
+                },
+            },
+            {
+                "event_type": "step.start",
+                "index": 0,
+                "step": {
+                    "type": "function_call",
+                    "name": "lookup",
+                    "id": "call1",
+                    "arguments": {},
+                },
+            },
+            {
+                "event_type": "step.delta",
+                "index": 0,
+                "delta": {"type": "arguments_delta", "arguments": '{"sku":'},
+            },
+            {
+                "event_type": "step.delta",
+                "index": 0,
+                "delta": {"type": "arguments_delta", "arguments": '"A"}'},
+            },
+            {"event_type": "step.stop", "index": 0},
+            {
+                "event_type": "interaction.completed",
+                "interaction": {
+                    "id": "i1",
+                    "model": "served-model",
+                    "status": "requires_action",
+                    "usage": _gemini_interaction_payload()["usage"],
+                },
+            },
+        ]
+        sync_stream = model._stream_interactions
+        async_stream = model._astream_interactions
+    else:
+        from msgflux.models.providers.anthropic import AnthropicChatCompletion
+
+        model = AnthropicChatCompletion("claude-test", retry=False)
+        events = [
+            {
+                "type": "message_start",
+                "message": {
+                    "id": "i1",
+                    "model": "served-model",
+                    "usage": {"input_tokens": 6, "output_tokens": 0},
+                },
+            },
+            {
+                "type": "content_block_start",
+                "index": 0,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "call1",
+                    "name": "lookup",
+                    "input": {},
+                },
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '{"sku":'},
+            },
+            {
+                "type": "content_block_delta",
+                "index": 0,
+                "delta": {"type": "input_json_delta", "partial_json": '"A"}'},
+            },
+            {"type": "content_block_stop", "index": 0},
+            {
+                "type": "message_delta",
+                "delta": {"stop_reason": "tool_use"},
+                "usage": {"output_tokens": 65},
+            },
+            {"type": "message_stop"},
+        ]
+        sync_stream = model._stream_chunks
+        async_stream = model._astream_chunks
+    content = "".join(
+        "event: "
+        + event.get("event_type", event.get("type", "message"))
+        + "\ndata: "
+        + json.dumps(event)
+        + "\n\n"
+        for event in events
+    )
+
+    def handler(_):
+        return httpx2.Response(
+            200, text=content, headers={"content-type": "text/event-stream"}
+        )
+
+    if async_mode:
+        async with httpx2.AsyncClient(
+            transport=httpx2.MockTransport(handler)
+        ) as client:
+            model.http_transport = HTTPTransport(async_client=client, max_retries=0)
+            chunks = [chunk async for chunk in async_stream({"model": model.model_id})]
+    else:
+        with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+            model.http_transport = HTTPTransport(client=client, max_retries=0)
+            chunks = list(sync_stream({"model": model.model_id}))
+    assert chunks
+    (span,) = spans.get_finished_spans()
+    assert json.loads(span.attributes["gen_ai.output.messages"])[0]["parts"] == [
+        {
+            "type": "tool_call",
+            "name": "lookup",
+            "id": "call1",
+            "arguments": {"sku": "A"},
+        },
+    ]
+    assert span.attributes["gen_ai.usage.output_tokens"] == 65
+    if provider == "gemini":
+        assert span.attributes["gen_ai.response.status"] == "requires_action"
+        assert span.attributes["gen_ai.response.model"] == "served-model"
+        assert span.attributes["gen_ai.response.id"] == "i1"
