@@ -51,7 +51,66 @@ OpenAI performs the search inside the same Responses request. Its
 `tool_search_call` and `tool_search_output` items are retained in
 `ChatMessages`, followed by the normal function call that msgFlux executes.
 
-The model implementation checks both the active model and API mode through
+Anthropic Messages uses its native server-side search tool instead:
+
+```python
+[
+    {
+        "type": "tool_search_tool_bm25_20251119",
+        "name": "tool_search_tool_bm25",
+    },
+    {
+        "name": "query_finance_report",
+        "description": "Query archived finance reports for a company.",
+        "input_schema": {"type": "object", "properties": {}},
+        "defer_loading": True,
+    },
+]
+```
+
+Anthropic documents both a regex and a BM25 search variant. msgFlux uses the
+BM25 variant because the generic `tool_search` contract is a natural-language
+query rather than a regular expression.
+
+The same `@mf.tool_config(defer_loading=True)` definition drives both hosted
+protocols; no Anthropic-specific tool option is required. Anthropic receives
+every candidate function definition on every request, including deferred ones,
+because the server needs them to expand discovered tools. Deferred declarations
+keep `defer_loading: true` after local loading; an explicitly selected tool is
+exposed directly, and the search tool itself is never deferred. Function
+`input_schema` objects are passed through unchanged and are
+not regenerated when the deferral flag is added. Keeping the declarations stable
+preserves prompt-cache prefixes and the validity of signed thinking on later turns.
+
+Anthropic mode also keeps automatic tool guidance stable. The optional changing
+tool-budget warning is omitted from its system prompt; `max_tool_turns` is still
+enforced. Application changes to the system prompt, tools, or earlier messages can
+invalidate signed thinking. Keep those prefixes append-only; see
+[Anthropic's thinking guide](https://platform.claude.com/docs/en/build-with-claude/thinking).
+
+Anthropic returns `server_tool_use` and `tool_search_tool_result` blocks with
+nested `tool_reference` entries. msgFlux retains those blocks in
+`ChatMessages` as `tool_search_call` and `tool_search_output` items, and stores
+the ordered assistant blocks as opaque Anthropic provider state so a later
+request replays the assistant content unchanged. The same blocks are preserved
+when the response is streamed. The server search is never executed as a client
+function, and no `tool_result` is sent for its `srvtoolu_...` identifier.
+
+Anthropic model support is caller responsibility. Use `native_tools=False` when
+the selected model does not document support for the tool-search variants:
+
+```python
+model = mf.Model.chat_completion(
+    "anthropic/claude-haiku-5-5",
+    native_tools=False,
+)
+```
+
+msgFlux does not substitute a different or more expensive model when hosted
+search is unavailable. With `native_tools=False`, the generic `native_tools`
+switch keeps the portable path described below.
+
+The OpenAI implementation checks both the active model and API mode through
 `supports_native_tool_search()`. Unknown models, Chat Completions, and providers
 without hosted search use the portable fallback: msgFlux exposes its local
 `tool_search` function first, then exposes a selected tool on the next model

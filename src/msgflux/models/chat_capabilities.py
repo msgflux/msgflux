@@ -19,6 +19,7 @@ class ChatAPIModeCapabilities(msgspec.Struct, frozen=True, kw_only=True):
     encrypted_reasoning: bool = False
     assistant_commentary: bool = False
     request_reasoning_effort: bool = False
+    requires_stable_system_prompt: bool = False
     context_adapter: ChatContextAdapter | None = None
 
     def __post_init__(self) -> None:

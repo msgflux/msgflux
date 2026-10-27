@@ -114,6 +114,21 @@
         )
         ```
 
+    === "Anthropic"
+
+        Authenticate by setting the `ANTHROPIC_API_KEY` env variable. Uses
+        the native Messages API (thinking blocks are replayed verbatim
+        for multi-turn and tool flows).
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(ANTHROPIC_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "anthropic/claude-haiku-5-5", reasoning_effort="low"
+        )
+        ```
+
     === "Other providers"
 
         msgFlux supports 12+ providers. Any provider with an OpenAI-compatible API works:

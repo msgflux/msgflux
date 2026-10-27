@@ -1184,6 +1184,23 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             kwargs["_request_model_metadata"] = metadata
         return await self._aexecute_model(**kwargs)
 
+    def _process_stream_native_items(self, chunk, stream_response) -> None:
+        """Ingest optional provider-native history carried by stream chunks."""
+        history_items = getattr(chunk, "history_items", None)
+        if isinstance(history_items, (list, tuple)):
+            for item in history_items:
+                if isinstance(item, Mapping):
+                    stream_response.chat_accumulator.add_item(item)
+        native_assistant = getattr(chunk, "native_assistant", None)
+        if isinstance(native_assistant, Mapping):
+            stream_response.chat_accumulator.attach_native_assistant(
+                provider=self.provider,
+                api_mode=self.api_mode,
+                provider_state=native_assistant,
+            )
+            if stream_response.response_type is None:
+                stream_response.set_response_type("text_generation")
+
     def _execute_model(self, **kwargs):
         request_metadata = kwargs.pop("_request_model_metadata", None)
         self._raise_if_aborted()
@@ -1910,6 +1927,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 if chunk.choices:
                     choice = chunk.choices[0]
                     delta = choice.delta
+                    self._process_stream_native_items(chunk, stream_response)
                     fr = self._extract_finish_reason(choice)
                     if fr is not None:
                         finish_reason = fr
@@ -2041,6 +2059,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
                 if chunk.choices:
                     choice = chunk.choices[0]
                     delta = choice.delta
+                    self._process_stream_native_items(chunk, stream_response)
                     fr = self._extract_finish_reason(choice)
                     if fr is not None:
                         finish_reason = fr
