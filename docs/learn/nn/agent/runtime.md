@@ -1868,9 +1868,26 @@ resuming; this low-level API does not discover policy revisions automatically.
 
 `prepare_write(path, content)` creates or overwrites text;
 `prepare_edit(path, old, new)` requires exactly one match, including overlapping
-matches, and never guesses whitespace; `prepare_delete(path)` includes the deleted
-text in the proposal. No-op proposals and non-UTF-8 files are rejected. The async
-counterparts are `aprepare_write`, `aprepare_edit`, `aprepare_delete` and `aapply`.
+matches, and never guesses whitespace; `prepare_edit(path, old, new,
+replace_all=True)` replaces every non-overlapping occurrence and requires at
+least one; `prepare_delete(path)` includes the deleted text in the proposal.
+No-op proposals and non-UTF-8 files are rejected. The async counterparts are
+`aprepare_write`, `aprepare_edit`, `aprepare_edits`, `aprepare_delete` and
+`aapply`.
+
+`EditTool` can prepare several exact edits to one file as a single proposal. Its
+`edits` list contains ordered `TextEdit(old, new, replace_all=False)` entries.
+Each entry is applied to the evolving text in order, so a later `old` can match
+text produced by an earlier entry. `WorkspaceEditor.prepare_edits(path, edits)`
+uses the same bounded path. The complete before/after pair is computed from one
+snapshot, checkpointed as one review, and applied once. If any entry is invalid
+or cannot match as requested, preparation raises and the file remains unchanged.
+
+Each step is measured in UTF-8 bytes against `max_edit_bytes` before its
+replacement is constructed. This also rejects an oversized intermediate result
+when later edits would shrink it below the limit; it does not only check the
+final file. This does not turn separate calls or files into a transaction, and
+it does not add stronger local filesystem atomicity.
 
 Preparation and application require live read and write (or delete) grants for
 the exact path. Previews expose existing contents, so read permission is required
@@ -2349,10 +2366,12 @@ Local enumeration never follows symbolic links. Links, multiply-linked files,
 special files and cross-mount entries are classified as `other`, not safe files
 to traverse. These checks do not turn the local backend into an OS sandbox.
 
-`WriteTool()` exposes only `path` and `content`; `EditTool()`
-exposes only `path`, `old` and `new`. Both are class-based tools with explicit
-public annotations and `Write`/`Edit` display names. `DeleteTool()`
-exposes only `path`, with display name `Delete`. It deletes one UTF-8 file or
+`WriteTool()` exposes only `path` and `content`. `EditTool()` exposes `path`,
+optional legacy `old`/`new`, optional legacy `replace_all=False`, and an optional
+`edits` list of `TextEdit(old, new, replace_all=False)` entries. Exactly one form
+must be present. Both are class-based tools with explicit public annotations and
+`Write`/`Edit` display names. `DeleteTool()` exposes only `path`, with display
+name `Delete`. It deletes one UTF-8 file or
 one empty directory; binary files and recursive directory deletion are not
 supported. The workspace root and symlinks are always rejected. Removed text
 is included in the approval diff and compared again before deletion.
@@ -2407,8 +2426,10 @@ tool receives the prepared object through execution-local context, then applies
 it with the same backend conflict checks. Initial invalid edits return a blocked
 tool observation without writing or requesting approval. If an existing proposal
 can no longer be reproduced, the Agent pauses for host review instead of silently
-substituting a new diff. Multiple changes to the same file are not a transaction:
-prefer a new model turn after each accepted change to that file.
+substituting a new diff. Several exact edits to one file can be ordered in one
+`EditTool` call and are reviewed as one prepared change; a later invalid edit
+leaves the file unchanged. Separate calls or edits to different files remain
+separate approvals and are not a multi-file transaction.
 
 ```python
 from msgflux.exceptions import TaskPauseRequestedError

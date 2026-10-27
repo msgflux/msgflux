@@ -20,7 +20,7 @@ from msgflux.runtime import (
     AgentWorkspace,
     execution_context,
 )
-from msgflux.tools.builtin import DeleteTool, EditTool, WriteTool
+from msgflux.tools.builtin import DeleteTool, EditTool, TextEdit, WriteTool
 from msgflux.utils.msgspec import msgspec_dumps
 
 
@@ -124,18 +124,32 @@ def agent(checkpoints, journal):
 
 
 @pytest.mark.parametrize(
-    "name, args",
+    "name, args, expected",
     [
-        ("write", {"path": "a", "content": "new"}),
-        ("edit", {"path": "a", "old": "old", "new": "new"}),
-        ("delete", {"path": "a"}),
+        ("write", {"path": "a", "content": "new"}, "new"),
+        ("edit", {"path": "a", "old": "old", "new": "new"}, "new"),
+        (
+            "edit",
+            {
+                "path": "a",
+                "old": None,
+                "new": None,
+                "replace_all": None,
+                "edits": [
+                    {"old": "old", "new": "middle", "replace_all": True},
+                    {"old": "middle", "new": "new"},
+                ],
+            },
+            "new",
+        ),
+        ("delete", {"path": "a"}, None),
     ],
 )
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("persistent", [False, True])
 @pytest.mark.asyncio
 async def test_pause_preview_restart_and_single_consumption(
-    tmp_path, name, args, asynchronous, persistent
+    tmp_path, name, args, expected, asynchronous, persistent
 ):
     cp_path, ap_path = str(tmp_path / "cp.db"), str(tmp_path / "ap.db")
     checkpoints = (
@@ -156,12 +170,14 @@ async def test_pause_preview_restart_and_single_consumption(
         await invoke()
     with execution_context(scope=scope(fs)):
         assert fs.read_text("/a") == "old"
-    record = journal.pending("editor", "t", "r")[0]
+    records = journal.pending("editor", "t", "r")
+    assert len(records) == 1
+    record = records[0]
     preview = await current.ainspect_approval_preview("t", "r", record.request_id)
     assert preview.before == "old"
-    assert preview.after == (None if name == "delete" else "new")
+    assert preview.after == expected
     assert "-old" in preview.diff
-    assert ("+++ /dev/null" if name == "delete" else "+new") in preview.diff
+    assert ("+++ /dev/null" if name == "delete" else f"+{expected}") in preview.diff
     async with current.watch("t") as watcher:
         assert watcher.snapshot.approvals[0].request_id == record.request_id
     state = checkpoints.load_state("editor", "t", "r")
@@ -185,7 +201,7 @@ async def test_pause_preview_restart_and_single_consumption(
             with pytest.raises(FileNotFoundError):
                 fs.read_text("/a")
         else:
-            assert fs.read_text("/a") == "new"
+            assert fs.read_text("/a") == expected
     assert [event.status for event in journal.events("editor", record.request_id)] == [
         "pending",
         "approved",
@@ -206,6 +222,16 @@ async def test_pause_preview_restart_and_single_consumption(
     [
         ("write", {"path": "a", "content": "new"}),
         ("edit", {"path": "a", "old": "old", "new": "new"}),
+        (
+            "edit",
+            {
+                "path": "a",
+                "edits": [
+                    {"old": "old", "new": "middle"},
+                    {"old": "middle", "new": "new"},
+                ],
+            },
+        ),
     ],
 )
 def test_stale_file_never_reuses_approved_preview(name, args):
@@ -233,7 +259,7 @@ async def test_full_access_public_schemas_and_live_denial():
     library = ToolLibrary("files", [WriteTool(), EditTool()])
     for name, fields in (
         ("write", {"path", "content"}),
-        ("edit", {"path", "old", "new"}),
+        ("edit", {"path", "old", "new", "replace_all", "edits"}),
     ):
         definition = library.get_tool_definition(name)
         assert set(definition.input_schema["properties"]) == fields
@@ -242,16 +268,171 @@ async def test_full_access_public_schemas_and_live_denial():
             item.get("description")
             for item in definition.input_schema["properties"].values()
         )
+    edit_schema = library.get_tool_definition("edit").input_schema["properties"][
+        "edits"
+    ]["anyOf"][0]
+    assert edit_schema["type"] == "array"
+    assert edit_schema["items"]["required"] == ["new", "old", "replace_all"]
+    assert set(edit_schema["items"]["properties"]) == {
+        "new",
+        "old",
+        "replace_all",
+    }
+    assert edit_schema["items"]["properties"]["replace_all"] == {
+        "type": "boolean",
+        "default": False,
+    }
+    assert edit_schema["items"]["additionalProperties"] is False
     with execution_context(scope=scope(fs)):
         assert await library.arun("write", {"path": "a", "content": "new"}) == {
             "status": "completed"
         }
-        assert library.run("edit", {"path": "a", "old": "new", "new": "last"}) == {
+        assert library.run("edit", {"path": "a", "old": "new", "new": "middle"}) == {
             "status": "completed"
         }
+        assert await library.arun(
+            "edit",
+            {
+                "path": "a",
+                "old": None,
+                "new": None,
+                "replace_all": None,
+                "edits": [
+                    {"old": "middle", "new": "last"},
+                    {
+                        "old": "last",
+                        "new": "final",
+                        "replace_all": True,
+                    },
+                ],
+            },
+        ) == {"status": "completed"}
+        assert EditTool()(
+            "a",
+            edits=[TextEdit(old="final", new="done", replace_all=False)],
+        ) == {"status": "completed"}
+        assert fs.read_text("/a") == "done"
     with execution_context(scope=scope(fs, permissions=PermissionSet())):
         with pytest.raises(PermissionError):
             await library.arun("write", {"path": "a", "content": "forbidden"})
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_edit_tool_mixed_replacements_chain_on_evolving_text(asynchronous):
+    fs = InMemoryWorkspace("files", {"/a": b"one one\ntwo\nthree three\nremove-this\n"})
+    library = ToolLibrary("files", [EditTool()])
+    arguments = {
+        "path": "a",
+        "edits": [
+            {"old": "one", "new": "1", "replace_all": True},
+            {"old": "two", "new": "2"},
+            {"old": "1 1\n2", "new": "first"},
+            {"old": "three", "new": "3", "replace_all": True},
+            {"old": "remove-this\n", "new": ""},
+        ],
+    }
+    with execution_context(scope=scope(fs)):
+        result = (
+            await library.arun("edit", arguments)
+            if asynchronous
+            else library.run("edit", arguments)
+        )
+        assert result == {"status": "completed"}
+        assert fs.read_text("/a") == "first\n3 3\n"
+
+
+@pytest.mark.parametrize(
+    "arguments, error",
+    [
+        (
+            {
+                "path": "a",
+                "edits": [
+                    {"old": "one", "new": "1"},
+                    {"old": "missing", "new": "x", "replace_all": True},
+                ],
+            },
+            "at least once",
+        ),
+        (
+            {
+                "path": "a",
+                "edits": [
+                    {"old": "one", "new": "1"},
+                    {"old": "1", "new": "x x"},
+                    {"old": "x", "new": "y"},
+                ],
+            },
+            "exactly once",
+        ),
+    ],
+)
+def test_edit_batch_failure_leaves_the_snapshot_unchanged(arguments, error):
+    fs = InMemoryWorkspace("files", {"/a": b"one two"})
+    current_scope = scope(fs)
+    with execution_context(scope=current_scope):
+        with pytest.raises(ValueError, match=error):
+            EditTool().prepare_workspace_change(arguments, current_scope.workspace)
+        assert fs.read_text("/a") == "one two"
+
+
+@pytest.mark.parametrize(
+    "arguments",
+    [
+        {"path": "a"},
+        {"path": "a", "old": "one"},
+        {"path": "a", "new": "1"},
+        {"path": "a", "old": None, "new": None},
+        {
+            "path": "a",
+            "old": "one",
+            "new": "1",
+            "edits": [{"old": "one", "new": "1"}],
+        },
+        {"path": "a", "edits": []},
+        {"path": "a", "edits": "one"},
+        {"path": "a", "edits": [{"old": "", "new": "1"}]},
+        {"path": "a", "edits": [{"old": "one"}]},
+        {"path": "a", "edits": [{"old": "one", "new": "1", "extra": True}]},
+        {"path": "a", "edits": [{"old": "one", "new": "1", "replace_all": 1}]},
+        {"path": "a", "edits": [{"old": "one", "new": "1", "replace_all": "yes"}]},
+        {"path": "a", "old": "one", "new": "1", "replace_all": "yes"},
+        {"path": "a", "old": "one", "new": "1", "replace_all": 1},
+        {
+            "path": "a",
+            "edits": [{"old": "one", "new": "1"}],
+            "replace_all": True,
+        },
+    ],
+)
+def test_invalid_edit_arguments_fail_before_effects(arguments):
+    fs = InMemoryWorkspace("files", {"/a": b"one two"})
+    current_scope = scope(fs)
+    with execution_context(scope=current_scope):
+        with pytest.raises((TypeError, ValueError)):
+            EditTool().prepare_workspace_change(arguments, current_scope.workspace)
+        assert fs.read_text("/a") == "one two"
+
+
+def test_text_edit_and_legacy_direct_calls_validate_flags_strictly():
+    for arguments in (
+        {"old": "", "new": "x"},
+        {"old": 1, "new": "x"},
+        {"old": "x", "new": 1},
+        {"old": "x", "new": "y", "replace_all": 1},
+        {"old": "x", "new": "y", "replace_all": "yes"},
+    ):
+        with pytest.raises((TypeError, ValueError)):
+            TextEdit(**arguments)
+
+    fs = InMemoryWorkspace("files", {"/a": b"one two"})
+    current_scope = scope(fs)
+    with execution_context(scope=current_scope):
+        for keyword in ({"replace_all": 1}, {"replace_all": "yes"}):
+            with pytest.raises(TypeError):
+                EditTool()("a", "one", "1", **keyword)
+        assert fs.read_text("/a") == "one two"
 
 
 @pytest.mark.parametrize("mode", ["deny", "arguments", "cwd", "permissions"])
@@ -292,22 +473,48 @@ def test_changed_execution_cannot_escape_review(mode):
     assert journal.get("editor", record.request_id).status != "consumed"
 
 
-def test_invalid_edit_returns_observation_without_approval_or_effect():
+@pytest.mark.parametrize(
+    "text, arguments",
+    [
+        ("old old", {"path": "a", "old": "old", "new": "new"}),
+        (
+            "old only",
+            {
+                "path": "a",
+                "edits": [
+                    {"old": "old", "new": "middle"},
+                    {"old": "missing", "new": "new", "replace_all": True},
+                ],
+            },
+        ),
+        (
+            "old only",
+            {
+                "path": "a",
+                "edits": [
+                    {"old": "old", "new": "x x"},
+                    {"old": "x", "new": "y"},
+                ],
+            },
+        ),
+    ],
+)
+def test_invalid_edit_returns_observation_without_approval_or_effect(text, arguments):
     checkpoints, journal = InMemoryCheckpointStore(), InMemoryApprovalStore()
-    fs = InMemoryWorkspace("files", {"/a": b"old old"})
+    fs = InMemoryWorkspace("files", {"/a": text.encode()})
     current = agent(checkpoints, journal)
     current.generator.forward = Mock(
         side_effect=[
-            response("edit", {"path": "a", "old": "old", "new": "new"}),
+            response("edit", arguments),
             response(),
         ]
     )
     assert current("edit", scope=scope(fs)) == "done"
     assert journal.pending("editor", "t", "r") == []
     history = checkpoints.load_state("editor", "t", "r")["messages"]["items"]
-    assert "exactly once" in str(history)
+    assert "exactly once" in str(history) or "at least once" in str(history)
     with execution_context(scope=scope(fs)):
-        assert fs.read_text("/a") == "old old"
+        assert fs.read_text("/a") == text
 
 
 @pytest.mark.asyncio

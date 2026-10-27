@@ -5,8 +5,11 @@ from copy import deepcopy
 from pathlib import Path
 from typing import Optional, Union
 
+import msgspec
+
 from msgflux.data.types import Image
 from msgflux.runtime.workspace.api import AgentWorkspace, resolve_workspace
+from msgflux.runtime.workspace.changes import TextEdit
 from msgflux.runtime.workspace.environment import ProcessRequest
 from msgflux.runtime.workspace.filesystem import (
     _read_byte_limit_error,
@@ -418,48 +421,113 @@ class WriteTool(WorkspaceChangeTool):
         return await asyncio.to_thread(self, path, content, workspace=workspace)
 
 
+def _normalize_text_edits(value):
+    edits = msgspec.convert(value, type=list[TextEdit], strict=True)
+    if not edits:
+        raise ValueError("edits must be a non-empty list")
+    return tuple(edits)
+
+
 @tool_config(runtime_inputs=["workspace"], retry=False)
 class EditTool(WorkspaceChangeTool):
-    """Replace one exact, unambiguous text occurrence in a UTF-8 file.
+    """Replace exact, unambiguous text occurrences in a UTF-8 file.
+
+    Provide either ``old`` and ``new`` or a non-empty ``edits`` list, never
+    both. Edits apply in order to the evolving text, so a later ``old`` may
+    match text produced by an earlier edit. By default every ``old`` must occur
+    exactly once at its step; ``replace_all=True`` replaces every non-overlapping
+    occurrence and requires at least one. All edits are prepared from one file
+    snapshot for one review and one application; a later invalid edit leaves the
+    file unchanged.
 
     Args:
         path: File path, absolute or relative to the configured workspace cwd.
-        old: Non-empty text that must occur exactly once in the file.
-        new: Replacement text; an empty string removes the matched text.
+        old: Legacy replacement target; must occur exactly once in the file.
+        new: Legacy replacement text; empty removes the matched text.
+        replace_all: Legacy mode; replace all non-overlapping matches.
+        edits: Ordered TextEdit items with non-empty old and text new.
     """
 
     name = "edit"
     display_name = "Edit"
-    annotations = {"path": str, "old": str, "new": str, "return": dict[str, str]}
+    annotations = {
+        "path": str,
+        "old": Optional[str],
+        "new": Optional[str],
+        "replace_all": Optional[bool],
+        "edits": Optional[list[TextEdit]],
+        "return": dict[str, str],
+    }
 
     def prepare_workspace_change(self, arguments, workspace):
         workspace = resolve_workspace(workspace)
-        return workspace.editor.prepare_edit(
-            _tool_path(arguments["path"], workspace), arguments["old"], arguments["new"]
-        )
+        path = _tool_path(arguments["path"], workspace)
+        old, new = arguments.get("old"), arguments.get("new")
+        edits = arguments.get("edits")
+        replace_all = arguments.get("replace_all", False)
+        if replace_all is None:
+            replace_all = False
+        if type(replace_all) is not bool:
+            raise TypeError("replace_all must be a boolean")
+        has_legacy = old is not None or new is not None
+        if has_legacy and edits is not None:
+            raise ValueError("Provide either old/new or edits, not both")
+        if has_legacy:
+            if old is None or new is None:
+                raise ValueError("old and new must be provided together")
+            return workspace.editor.prepare_edit(
+                path, old, new, replace_all=replace_all
+            )
+        if edits is None:
+            raise ValueError("Provide old/new or a non-empty edits list")
+        if replace_all:
+            raise ValueError(
+                "Top-level replace_all cannot be combined with edits; "
+                "set replace_all on each TextEdit"
+            )
+        prepared = _normalize_text_edits(edits)
+        return workspace.editor.prepare_edits(path, prepared)
 
     def __call__(
         self,
         path: str,
-        old: str,
-        new: str,
+        old: Optional[str] = None,
+        new: Optional[str] = None,
         *,
+        replace_all: bool = False,
+        edits: Optional[list[TextEdit]] = None,
         workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
         return self._apply(
-            {"path": path, "old": old, "new": new},
+            {
+                "path": path,
+                "old": old,
+                "new": new,
+                "replace_all": replace_all,
+                "edits": edits,
+            },
             resolve_workspace(workspace),
         )
 
     async def acall(
         self,
         path: str,
-        old: str,
-        new: str,
+        old: Optional[str] = None,
+        new: Optional[str] = None,
         *,
+        replace_all: bool = False,
+        edits: Optional[list[TextEdit]] = None,
         workspace: Hidden[AgentWorkspace] = None,
     ) -> dict[str, str]:
-        return await asyncio.to_thread(self, path, old, new, workspace=workspace)
+        return await asyncio.to_thread(
+            self,
+            path,
+            old,
+            new,
+            replace_all=replace_all,
+            edits=edits,
+            workspace=workspace,
+        )
 
 
 @tool_config(runtime_inputs=["workspace"], retry=False)
@@ -503,4 +571,11 @@ class DeleteTool(WorkspaceChangeTool):
         return await asyncio.to_thread(self, path, workspace=workspace)
 
 
-__all__ = ["ReadFileTool", "BashTool", "WriteTool", "EditTool", "DeleteTool"]
+__all__ = [
+    "ReadFileTool",
+    "BashTool",
+    "WriteTool",
+    "TextEdit",
+    "EditTool",
+    "DeleteTool",
+]

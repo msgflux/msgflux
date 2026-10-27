@@ -85,7 +85,7 @@ async def test_workspace_tools_are_backend_neutral_and_read_bounds_work(
     for name, fields in (
         ("read", {"path", "offset", "limit"}),
         ("write", {"path", "content"}),
-        ("edit", {"path", "old", "new"}),
+        ("edit", {"path", "old", "new", "replace_all", "edits"}),
         ("apply_patch", {"operation", "path", "diff"}),
     ):
         assert (
@@ -98,11 +98,29 @@ async def test_workspace_tools_are_backend_neutral_and_read_bounds_work(
             assert read("a", offset=2, limit=1) == "two\n"
 
         for tool, arguments in (
-            (write, {"path": "a", "content": "changed"}),
-            (edit, {"path": "a", "old": "changed", "new": "CHANGED"}),
+            (write, {"path": "a", "content": "changed changed"}),
+            (
+                edit,
+                {
+                    "path": "a",
+                    "old": "changed",
+                    "new": "CHANGED",
+                    "replace_all": True,
+                },
+            ),
+            (
+                edit,
+                {
+                    "path": "a",
+                    "edits": [
+                        {"old": "CHANGED", "new": "X", "replace_all": True},
+                        {"old": "X X", "new": "middle"},
+                    ],
+                },
+            ),
             (
                 patch,
-                {"operation": "update", "path": "a", "diff": "@@\n-CHANGED\n+final"},
+                {"operation": "update", "path": "a", "diff": "@@\n-middle\n+final"},
             ),
         ):
             if asynchronous:

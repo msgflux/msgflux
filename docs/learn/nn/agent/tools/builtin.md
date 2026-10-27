@@ -74,6 +74,72 @@ is needed. If content appears after approval, deletion fails and the content is
 preserved. A local backend uses cooperative comparison, not a transaction
 against unrelated host processes.
 
+### Edit several exact matches in one call
+
+`EditTool` accepts exactly one input form: the legacy `path`, `old`, `new`
+arguments, or a non-empty `edits` list of `TextEdit` structs. `TextEdit` has
+`old`, `new`, and an optional `replace_all=False`. The legacy call also accepts
+`replace_all=False` as a keyword. An empty `new` deletes the matched text.
+
+Edits in a list run sequentially against the evolving text. A later `old` can
+therefore match text produced by an earlier edit. By default each `old` must
+match exactly once at its step, including the existing rejection of overlapping
+ambiguous matches. With `replace_all=True`, that step replaces every
+non-overlapping occurrence and requires at least one match.
+
+The whole batch is prepared from one file snapshot as one approval preview and
+one application. If an early edit succeeds in memory but a later edit is missing,
+ambiguous, or invalid, the file is not changed and no partial write occurs.
+Every step is checked against the environment's `max_edit_bytes` in UTF-8 bytes
+before that replacement is constructed. An oversized intermediate result rejects
+the whole batch even if later edits would shrink it below the limit. Permissions,
+stale-snapshot checks, and the backend's existing cooperative or
+compare-and-swap guarantee apply to the whole prepared change. This is not a
+stronger multi-file transaction.
+
+Application code can construct the typed entries directly:
+
+```python
+from msgflux.tools.builtin import EditTool, TextEdit
+
+improve = EditTool()
+edits = [
+    TextEdit(old="TODO", new="DONE", replace_all=True),
+    TextEdit(old="name = 'old'", new="name = 'new'"),
+    TextEdit(old="DONE\nname = 'new'", new="DONE: renamed"),
+]
+# Register ``improve`` on an Agent, or call it inside a live workspace scope.
+```
+
+The model-facing JSON form is equivalent. This call replaces every `TODO`,
+then replaces the unique `name` assignment, and finally depends on both earlier
+results:
+
+```json
+{
+  "path": "notes.txt",
+  "edits": [
+    {"old": "TODO", "new": "DONE", "replace_all": true},
+    {"old": "name = 'old'", "new": "name = 'new'"},
+    {"old": "DONE\nname = 'new'", "new": "DONE: renamed"}
+  ]
+}
+```
+
+Use the legacy form for one replacement, optionally replacing all matches:
+
+```python
+EditTool()("notes.txt", "TODO", "DONE", replace_all=True)
+```
+
+Do not combine legacy `old`/`new` with `edits`, set top-level
+`replace_all=True` alongside `edits`, or pass an empty edit list. Set
+`replace_all` on each `TextEdit` instead. Strict tool providers may send `null`
+for unused legacy fields, such as `old`, `new`, or `replace_all`, when `edits`
+is present; those nulls mean "omitted". Raw arguments and direct calls reject
+non-boolean flags; the pre-existing shared transport normalization may still
+coerce some primitive values before a tool receives them.
+
 ### List, glob and grep
 
 Install query dependencies with `uv add 'msgflux[coding]'` in your

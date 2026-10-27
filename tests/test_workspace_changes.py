@@ -168,6 +168,46 @@ def test_exact_edit_rejects_ambiguous_or_missing_matches(text, old):
         assert fs.read_text("/a") == text
 
 
+@pytest.mark.parametrize(
+    "text, old, new, expected",
+    [
+        ("a a", "a", "b", "b b"),
+        ("aaa", "aa", "X", "Xa"),
+        ("a-b-a", "a", "x", "x-b-x"),
+    ],
+)
+def test_replace_all_replaces_non_overlapping_matches(text, old, new, expected):
+    fs = InMemoryWorkspace("files", {"/a": text.encode()})
+    editor = WorkspaceEditor(fs, require_approval=False)
+    with execution_context(scope=scope(fs)):
+        editor.apply(editor.prepare_edit("/a", old, new, replace_all=True))
+        assert fs.read_text("/a") == expected
+
+
+def test_replace_all_requires_a_match_and_rejects_nonbool_flags():
+    fs = InMemoryWorkspace("files", {"/a": b"a a"})
+    editor = WorkspaceEditor(fs)
+    with execution_context(scope=scope(fs)):
+        with pytest.raises(ValueError, match="at least once"):
+            editor.prepare_edit("/a", "missing", "new", replace_all=True)
+        for flag in (1, 0, "yes", None):
+            with pytest.raises(TypeError, match="replace_all"):
+                editor.prepare_edit("/a", "a", "b", replace_all=flag)
+        assert fs.read_text("/a") == "a a"
+
+
+@pytest.mark.asyncio
+async def test_async_replace_all_round_trip():
+    fs = InMemoryWorkspace("files", {"/a": b"a a"})
+    editor = WorkspaceEditor(fs, require_approval=False)
+    with execution_context(scope=scope(fs)):
+        change = await editor.aprepare_edit("/a", "a", "b", replace_all=True)
+        assert change.before == "a a"
+        assert change.after == "b b"
+        await editor.aapply(change)
+        assert fs.read_text("/a") == "b b"
+
+
 def test_backend_without_atomic_support_fails_before_review():
     fs = InMemoryWorkspace("files", {"/a": b"old"})
     fs.supports_atomic_changes = False
