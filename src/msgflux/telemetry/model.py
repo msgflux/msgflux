@@ -18,7 +18,15 @@ from msgflux.models.usage import default_usage_codec
 
 def _operation(endpoint: str) -> str:
     path = endpoint.split("?", 1)[0].rstrip("/")
-    if path.endswith(("/chat/completions", "/responses", "/api/chat", "/v1/messages")):
+    if path.endswith(
+        (
+            "/chat/completions",
+            "/responses",
+            "/api/chat",
+            "/v1/messages",
+            "/interactions",
+        )
+    ):
         return "chat"
     if path.endswith("/embeddings"):
         return "embeddings"
@@ -52,6 +60,8 @@ def _stop_reason(payload: Any) -> str | None:
     status = _value(payload, "status")
     if status == "completed":
         return "stop"
+    if status == "requires_action":
+        return "tool_calls"
     if status == "incomplete":
         reason = _value(_value(payload, "incomplete_details"), "reason")
         return "length" if reason == "max_output_tokens" else reason or "incomplete"
@@ -70,6 +80,7 @@ class _OutputCollector:
         self.reasons: dict[int, str] = {}
 
     def record(self, payload: Any) -> None:
+        self._interaction_steps(payload)
         event_type = _value(payload, "type")
         if event_type == "response.output_text.delta":
             self._append(_value(payload, "output_index") or 0, _value(payload, "delta"))
@@ -103,6 +114,21 @@ class _OutputCollector:
         reason = _stop_reason(payload)
         if reason:
             self.reasons[0] = reason
+
+    def _interaction_steps(self, payload: Any) -> None:
+        steps = _value(payload, "steps")
+        if not isinstance(steps, list):
+            return
+        self.text.clear()
+        self.tool_calls.clear()
+        for index, step in enumerate(steps):
+            step_type = _value(step, "type")
+            if step_type == "model_output":
+                self.roles[0] = "assistant"
+                self._append(0, _text(_value(step, "content")))
+            elif step_type == "function_call":
+                self.roles[0] = "assistant"
+                self._tool_call(0, index, step, full=True)
 
     def _native_message(self, payload: Any, message: Any) -> None:
         self._append(0, _text(_value(message, "content")))
@@ -182,10 +208,15 @@ class _OutputCollector:
         function = _value(tool, "function") or tool
         for key in ("name", "arguments"):
             value = _value(function, key)
+            if key == "name" and not value:
+                continue
             if isinstance(value, Mapping):
                 call[key] = json.dumps(value, ensure_ascii=False)
             elif isinstance(value, str):
-                call[key] = value if full else call.get(key, "") + value
+                # Names are metadata; native adapters repeat them on argument deltas.
+                call[key] = (
+                    value if full or key == "name" else call.get(key, "") + value
+                )
 
     def _append(self, index: int, value: Any) -> None:
         if isinstance(value, str) and value:
@@ -240,6 +271,8 @@ class _OutputCollector:
 
 def _request_attributes(body: Any, provider: str | None) -> dict[str, Any]:
     attributes: dict[str, Any] = {}
+    settings = _value(body, "generation_config") if provider == "gemini" else body
+    settings = settings if settings is not None else body
     for field in (
         "temperature",
         "top_p",
@@ -249,16 +282,16 @@ def _request_attributes(body: Any, provider: str | None) -> dict[str, Any]:
         "presence_penalty",
         "seed",
     ):
-        value = _value(body, field)
+        value = _value(settings, field)
         if isinstance(value, (int, float)) and not isinstance(value, bool):
             attributes[f"gen_ai.request.{field}"] = value
     if "gen_ai.request.max_tokens" not in attributes:
         for field in ("max_output_tokens", "max_completion_tokens"):
-            value = _value(body, field)
+            value = _value(settings, field)
             if isinstance(value, int) and not isinstance(value, bool):
                 attributes["gen_ai.request.max_tokens"] = value
                 break
-    stop_sequences = _value(body, "stop_sequences") or _value(body, "stop")
+    stop_sequences = _value(settings, "stop_sequences") or _value(settings, "stop")
     if isinstance(stop_sequences, list) and all(
         isinstance(sequence, str) for sequence in stop_sequences
     ):
@@ -269,14 +302,22 @@ def _request_attributes(body: Any, provider: str | None) -> dict[str, Any]:
     return attributes
 
 
+def _request_reasoning_level(body: Any, provider: str | None) -> str | None:
+    values = (
+        _value(body, "reasoning_effort"),
+        _value(_value(body, "reasoning"), "effort"),
+        _value(_value(body, "output_config"), "effort"),
+        _value(_value(body, "generation_config"), "thinking_level")
+        if provider == "gemini"
+        else None,
+    )
+    return next((value for value in values if isinstance(value, str)), None)
+
+
 def _reasoning_attributes(
     attributes: dict[str, Any], body: Any, provider: str | None
 ) -> None:
-    reasoning_level = _value(body, "reasoning_effort")
-    if not isinstance(reasoning_level, str):
-        reasoning_level = _value(_value(body, "reasoning"), "effort")
-    if not isinstance(reasoning_level, str):
-        reasoning_level = _value(_value(body, "output_config"), "effort")
+    reasoning_level = _request_reasoning_level(body, provider)
     if isinstance(reasoning_level, str) and reasoning_level:
         attributes["gen_ai.request.reasoning.level"] = reasoning_level
     if provider == "anthropic":
@@ -318,6 +359,11 @@ def _record_payload(span: Any, payload: Any) -> None:
     event_type = _value(payload, "type")
     if event_type in {"response.completed", "response.incomplete", "response.failed"}:
         payload = _value(payload, "response") or payload
+    if _value(payload, "event_type") in {
+        "interaction.created",
+        "interaction.completed",
+    }:
+        payload = _value(payload, "interaction") or payload
     response_id = _value(payload, "id")
     response_model = _value(payload, "model")
     if response_id:

@@ -186,8 +186,8 @@ audio_model = mf.Model.chat_completion(
 ```
 
 Keeping this identity explicit prevents provider-only state from being replayed
-through an incompatible protocol. Anthropic Messages or Google Interactions can
-later add their own modes without changing the canonical `ChatMessages` history.
+through an incompatible protocol. Anthropic Messages and Google Interactions
+use their own modes while preserving the canonical `ChatMessages` history.
 
 For `api_mode="responses"`, msgFlux converts parameters at the Model boundary:
 
@@ -300,6 +300,116 @@ the provider's reported cached-token percentage. The first turn warms the
 cache; a later turn can reuse its unchanged prefix when the model and provider
 support prompt caching. The cache hit percentage depends on prompt length,
 provider routing, and cache lifetime. See [OpenRouter's prompt caching guide](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
+
+### Gemini Interactions
+
+The `gemini` provider uses Google's native
+[Interactions API](https://ai.google.dev/gemini-api/docs/interactions-overview)
+through the shared HTTPX2 transport. Set `GEMINI_API_KEY` for authentication;
+`GEMINI_BASE_URL` optionally overrides the API host. The Google SDK is not
+required. The API mode is `interactions`.
+
+```python
+import msgflux as mf
+
+mf.set_envs(GEMINI_API_KEY="...")
+model = mf.Model.chat_completion(
+    "gemini/gemini-3.6-flash",
+    reasoning_effort="low",
+    max_tokens=1024,
+)
+response = model("Explain what a database index does in two sentences.")
+print(response.consume())
+print(response.metadata.usage.output_tokens_details.reasoning_tokens)
+```
+
+This example requests low-effort thinking and reads the answer separately from
+its thinking-token count. Thinking levels depend on the selected model.
+Google returns thought summaries and opaque signatures as native steps;
+msgFlux keeps their native state in canonical history for the next turn.
+
+The provider accepts these native configuration options:
+
+| Option | Behavior |
+|--------|----------|
+| `api_version="v1"` | Selects the stable Interactions endpoint. |
+| `store=False` | Sends full history without retaining a server-side interaction. Setting `True` enables Google storage; it does not enable `previous_interaction_id` replay in this provider. |
+| `thinking_summaries="auto"` | Requests summaries; `"none"` omits them. Without an explicit value, summaries are requested when an effort is configured and reasoning is returned. |
+
+`reasoning_effort` uses native `minimal`, `low`, `medium`, or `high` levels;
+`xhigh` and `max` map to `high`. `none` is rejected because this API has no
+corresponding thinking level. Unsupported native options raise a local error.
+
+#### Function tools and conversation history
+
+```python
+import msgflux as mf
+
+
+def inventory_lookup(sku: str) -> str:
+    """Look up stock for an inventory SKU."""
+    return '{"available": 7}'
+
+
+library = mf.nn.ToolLibrary("inventory", [inventory_lookup])
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Look up stock for BOLT-17."}],
+    thread_id="inventory-42",
+)
+catalog = library.get_tool_catalog_view(messages)
+response = model(messages=messages, tool_catalog=catalog)
+outcomes = library.execute_intents(response.get_tool_intents())
+messages.extend(response.history_items)
+messages.extend(response.render_tool_outcomes(outcomes))
+print(model(messages=messages, tool_catalog=catalog).consume())
+```
+
+The example executes the requested local function and supplies its result on
+the next call. An `Agent` manages this loop automatically. Keep all returned
+`history_items`, including thought state and function call identifiers, when
+saving or restoring a conversation. Rebuilding history from answer text alone
+loses the state needed for faithful replay.
+
+The provider sends `store=false` and replays the full history by default.
+Durable Agent recovery continues to use msgFlux's checkpoint store. Google-side
+interaction storage and its retention period do not replace local checkpoints.
+
+#### Structured output
+
+```python
+import msgspec
+
+
+class InventoryReply(msgspec.Struct):
+    sku: str
+    available: int
+
+
+response = model(
+    "Return the inventory record for BOLT-17 with available count 7.",
+    generation_schema=InventoryReply,
+)
+print(response.consume().available)
+```
+
+This example sends a native JSON response schema and validates the returned
+record before exposing its fields. The model supports the same synchronous,
+asynchronous and streaming entry points described below; structured generation
+uses the shared non-streaming schema decoder.
+
+#### Token usage and cache reporting
+
+Interactions reports visible output and thought tokens separately. Canonical
+`output_tokens` includes both, while `output_tokens_details.reasoning_tokens`
+identifies the thinking portion. `usage.raw` retains Google's original counters.
+`input_tokens_details.cached_tokens` and `cache_hit_percentage` reflect what
+Google reports; missing counters remain unknown, and a reported zero remains
+zero. Cache availability depends on the model, account and request. A successful
+provider call does not require a cache hit.
+
+This integration focuses on model calls and local function tools. Managed
+Google agents and background execution have separate lifecycles and are outside
+this provider's current scope.
 
 ### Anthropic Messages
 

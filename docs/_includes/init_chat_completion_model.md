@@ -11,6 +11,20 @@
         model = mf.Model.chat_completion("openai/gpt-4.1-mini")
         ```
 
+    === "Gemini"
+
+        Authenticate with `GEMINI_API_KEY`. Gemini uses Google's native
+        Interactions API through the included HTTPX2 transport.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(GEMINI_API_KEY="...")
+        model = mf.Model.chat_completion(
+            "gemini/gemini-3.6-flash", reasoning_effort="low"
+        )
+        ```
+
     === "Groq"
 
         Authenticate by setting the `GROQ_API_KEY` env variable.

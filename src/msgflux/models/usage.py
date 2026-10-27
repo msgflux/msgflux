@@ -16,12 +16,14 @@ class UsageCodec:
         "prompt_tokens",
         "prompt_token_count",
         "prompt_eval_count",
+        "total_input_tokens",
     )
     output_token_fields = (
         "output_tokens",
         "completion_tokens",
         "candidates_token_count",
         "eval_count",
+        "total_output_tokens",
     )
     total_token_fields = ("total_tokens", "total_token_count")
     input_detail_fields = (
@@ -38,6 +40,20 @@ class UsageCodec:
 
         input_tokens = self._first_int(raw, self.input_token_fields)
         output_tokens = self._first_int(raw, self.output_token_fields)
+        if (
+            output_tokens is not None
+            and self._first_int(
+                raw,
+                (
+                    field
+                    for field in self.output_token_fields
+                    if field != "total_output_tokens"
+                ),
+            )
+            is None
+        ):
+            # Interactions reports visible output and thought tokens separately.
+            output_tokens += self._first_int(raw, ("total_thought_tokens",)) or 0
         total_tokens = self._first_int(raw, self.total_token_fields)
         if (
             total_tokens is None
@@ -55,6 +71,7 @@ class UsageCodec:
                 "cached_tokens",
                 "cache_read_input_tokens",
                 "cached_content_token_count",
+                "total_cached_tokens",
             ),
         )
 
@@ -99,6 +116,7 @@ class UsageCodec:
                                 "reasoning_tokens",
                                 "thoughts_token_count",
                                 "thinking_tokens",
+                                "total_thought_tokens",
                             ),
                         ),
                         "audio_tokens": self._detail_int(

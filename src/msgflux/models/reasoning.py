@@ -245,6 +245,68 @@ class TextResponsesReasoningCodec(ReasoningCodec):
         return response_item
 
 
+class GeminiInteractionsReasoningCodec(OpenAICompatibleReasoningCodec):
+    """Native Gemini Interactions thought steps.
+
+    The Interactions API returns reasoning as ordered ``thought`` steps with
+    an optional summary content list and an opaque ``signature``. Signatures
+    must be replayed verbatim on later turns, so the complete native step is
+    retained as provider state instead of being reconstructed from text.
+    Streaming deltas mark the end of a thought step with a ``thought_step``
+    payload carrying that same native step.
+    """
+
+    name = "gemini_interactions"
+
+    @staticmethod
+    def thought_step(payload: Any) -> Mapping[str, Any] | None:
+        step = ReasoningCodec._get(payload, "thought_step")
+        if isinstance(step, Mapping) and step.get("type") == "thought":
+            return step
+        if isinstance(payload, Mapping) and payload.get("type") == "thought":
+            return payload
+        return None
+
+    @classmethod
+    def summary_text(cls, step: Any) -> str | None:
+        summary = ReasoningCodec._get(step, "summary")
+        if isinstance(summary, str):
+            return summary or None
+        if not isinstance(summary, list):
+            return None
+        chunks: list[str] = []
+        for part in summary:
+            if ReasoningCodec._get(part, "type") != "text":
+                continue
+            text = ReasoningCodec._get(part, "text")
+            if isinstance(text, str):
+                chunks.append(text)
+        return "".join(chunks) or None
+
+    @staticmethod
+    def signature(step: Any) -> str | None:
+        signature = ReasoningCodec._get(step, "signature")
+        return signature if isinstance(signature, str) and signature else None
+
+    def extract_text(self, payload: Any) -> str | None:
+        step = self.thought_step(payload)
+        if step is not None and ReasoningCodec._get(payload, "type") == "thought":
+            return self.summary_text(step)
+        return super().extract_text(payload)
+
+    def extract_state(
+        self,
+        payload: Any,
+        *,
+        serialize: Callable[[Any], Any],
+    ) -> Any:
+        step = self.thought_step(payload)
+        if step is None:
+            return None
+        state = serialize(step)
+        return dict(state) if isinstance(state, Mapping) else None
+
+
 class OpenRouterResponsesReasoningCodec(OpenAIResponsesReasoningCodec):
     """Preserve opaque Responses reasoning and classify clear text by item."""
 
