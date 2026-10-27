@@ -898,6 +898,14 @@ class AnthropicChatCompletion(_BaseAnthropic, OpenAICompatibleChatCompletion):
             chunk["native_assistant"] = native_assistant
         return dotdict(chunk)
 
+    def _process_stream_tool_calls(self, delta, stream_response, aggregator):
+        # Canonical history already contains the assistant function_call from
+        # the streamed accumulator. Responses-style rendering returns only
+        # function_call_output items, avoiding the Chat Completions
+        # assistant/tool prelude that would replay a duplicate tool_use block.
+        aggregator.api_mode = "responses"
+        super()._process_stream_tool_calls(delta, stream_response, aggregator)
+
     @staticmethod
     def _new_stream_state() -> Dict[str, Any]:
         return {
