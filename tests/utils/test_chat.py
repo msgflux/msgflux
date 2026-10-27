@@ -251,6 +251,37 @@ def test_generate_json_schema_optional_tool_param_is_required_and_nullable():
     ]
 
 
+@pytest.mark.parametrize(
+    "annotation,expected",
+    [
+        (str | None, {"anyOf": [{"type": "string"}, {"type": "null"}]}),
+        (int | str, {"anyOf": [{"type": "integer"}, {"type": "string"}]}),
+        (
+            list[int | None],
+            {
+                "type": "array",
+                "items": {"anyOf": [{"type": "integer"}, {"type": "null"}]},
+            },
+        ),
+    ],
+)
+def test_tool_schema_supports_pep604_unions(annotation, expected):
+    assert hint_to_schema(annotation) == expected
+
+
+def test_modern_optional_tool_has_same_schema_as_typing_optional():
+    class ModernOptionalTool(MyOptionalTool):
+        def get_module_annotations(self):
+            return {"a": str, "b": int | None}
+
+        def forward(self, a: str, b: int | None = None):
+            return a, b
+
+    assert generate_json_schema(ModernOptionalTool()) == generate_json_schema(
+        MyOptionalTool()
+    )
+
+
 def test_generate_json_schema_default_tool_param_is_required_and_nullable():
     schema = generate_json_schema(MyDefaultTool())
     params = schema["parameters"]
