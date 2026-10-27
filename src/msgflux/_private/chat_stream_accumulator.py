@@ -252,6 +252,59 @@ class ChatStreamAccumulator:
                 },
             )
 
+    def attach_native_assistant(
+        self,
+        *,
+        provider: str,
+        api_mode: str,
+        provider_state: Mapping[str, Any],
+    ) -> None:
+        """Attach provider-native assistant state to one replayable item.
+
+        Tool turns keep the native state on the first function call so later
+        calls merge into the same assistant message. Text turns keep it on the
+        assistant message. Accumulated text messages are removed because the
+        native state already carries the ordered assistant content.
+        """
+        with self._lock:
+            state = {
+                "provider": provider,
+                "api_mode": api_mode,
+                "data": deepcopy(dict(provider_state)),
+            }
+            function_calls = [
+                item for item in self._items if item.get("type") == "function_call"
+            ]
+            if function_calls:
+                target = function_calls[0]
+                self._items = [
+                    item for item in self._items if item.get("type") != "message"
+                ]
+            else:
+                target = next(
+                    (
+                        item
+                        for item in reversed(self._items)
+                        if item.get("type") == "message"
+                        and item.get("role") == "assistant"
+                    ),
+                    None,
+                )
+                if target is None:
+                    target = {"type": "message", "role": "assistant", "content": ""}
+                    self._items.append(target)
+                else:
+                    self._items = [
+                        item
+                        for item in self._items
+                        if item is target
+                        or not (
+                            item.get("type") == "message"
+                            and item.get("role") == "assistant"
+                        )
+                    ]
+            target["provider_state"] = state
+
     def snapshot(
         self,
         *,

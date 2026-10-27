@@ -95,7 +95,11 @@ class UsageCodec:
                         "reasoning_tokens": self._detail_int(
                             raw,
                             output_details,
-                            ("reasoning_tokens", "thoughts_token_count"),
+                            (
+                                "reasoning_tokens",
+                                "thoughts_token_count",
+                                "thinking_tokens",
+                            ),
                         ),
                         "audio_tokens": self._detail_int(
                             raw, output_details, ("audio_tokens",)

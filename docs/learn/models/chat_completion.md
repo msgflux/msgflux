@@ -301,6 +301,87 @@ cache; a later turn can reuse its unchanged prefix when the model and provider
 support prompt caching. The cache hit percentage depends on prompt length,
 provider routing, and cache lifetime. See [OpenRouter's prompt caching guide](https://openrouter.ai/docs/guides/best-practices/prompt-caching).
 
+### Anthropic Messages
+
+The `anthropic` provider uses Anthropic's native Messages API. Set
+`ANTHROPIC_API_KEY` for authentication; `ANTHROPIC_BASE_URL` optionally overrides
+the API host. No Anthropic SDK dependency is required.
+
+```python
+import msgflux as mf
+
+mf.set_envs(ANTHROPIC_API_KEY="...")
+model = mf.Model.chat_completion(
+    "anthropic/claude-haiku-5-5",
+    reasoning_effort="low",
+    max_tokens=1024,
+)
+response = model("Explain what a database index does in two sentences.")
+print(response.consume())
+```
+
+This example selects adaptive thinking with low effort and limits generated
+tokens. The provider supports synchronous and asynchronous calls, streaming,
+images, client function tools, and native tool search. Function schemas retain
+their explicit `strict` setting; tool arguments are reconstructed once from
+streamed JSON fragments. Incomplete stored arguments raise an error instead of
+being replaced with an empty object.
+
+Thinking capabilities depend on the selected model. Haiku 5.5 supports adaptive
+thinking through `reasoning_effort`; it rejects manual `reasoning_max_tokens`
+budgets. Non-default sampling settings such as `temperature` and `top_p` are
+also model-dependent. The provider surfaces API errors and never switches to a
+different model. See [Anthropic's thinking guide](https://platform.claude.com/docs/en/build-with-claude/thinking).
+
+#### Prompt caching and usage
+
+```python
+from pathlib import Path
+
+reference = Path("reference.md").read_text()
+cached_model = mf.Model.chat_completion(
+    "anthropic/claude-haiku-5-5", prompt_cache=True, max_tokens=256
+)
+for _ in range(2):
+    response = cached_model("Summarize the reference briefly.", system_prompt=reference)
+    print(response.metadata.usage.cache_hit_percentage)
+    print(response.metadata.usage.input_tokens_details.cached_tokens)
+```
+
+This example sends the same reference twice using Anthropic's automatic
+five-minute prompt cache. Cache eligibility requires a sufficiently long prefix
+for the selected model; short prompts can report zero cached tokens. The first
+eligible request creates the cache and a later request can read it. The
+normalized input count includes uncached tokens, cache writes, and cache reads;
+the native cache-read and cache-write counters remain in `usage.raw`. Native `thinking_tokens`
+also populate `usage.output_tokens_details.reasoning_tokens`.
+
+#### Tools and conversation continuity
+
+Mark infrequently used tools with `@mf.tool_config(defer_loading=True)` to use
+[native tool search](../nn/agent/tools/tool-search.md). With `native_tools=True`
+(the default), Anthropic discovers tools server-side and msgFlux executes only
+the resulting client function calls. Search blocks and signed thinking survive
+history serialization and replay.
+
+Claude's signed thinking can be tied to the system prompt, tool declarations,
+and preceding messages. Anthropic mode keeps automatic tool guidance and native
+deferred declarations stable across tool turns. It omits the optional changing
+tool-budget warning from the system prompt while still enforcing
+`max_tool_turns`. Keep application-managed history append-only: changing the
+system prompt, tool set, model, or earlier messages can invalidate previously
+signed thinking. The provider does not silently discard those blocks.
+
+`generation_schema`, arbitrary `extra_body`, and other server tools such as web
+search or code execution are outside this provider's current scope. Portable
+search with `native_tools=False` changes the exposed tool prefix as functions
+load; it does not offer the same prefix stability as native search.
+
+A server-side pause is exposed as `response.metadata.stop_reason == "pause_turn"`
+with replayable native history. It is not a client function call; automatic
+server-pause continuation is not performed. This rare path is covered by protocol
+fixtures rather than the live Haiku validation matrix.
+
 ### OpenAI Codex subscription (experimental)
 
 The `openai-codex` provider reads an existing OAuth login from the Codex CLI or

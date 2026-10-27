@@ -62,6 +62,11 @@ class ToolTurnLimitExtension(AgentExtension):
     def _warn(self, ctx: ModelContext) -> ModelContext:
         if get_agent_run() is None:
             return ctx
+        capabilities = getattr(self.agent.model, "api_mode_capabilities", None)
+        if getattr(capabilities, "requires_stable_system_prompt", False) is True:
+            # The hard limit still applies in _decide; changing the system
+            # prompt would invalidate signature-bound reasoning from prior turns.
+            return ctx
         remaining = self.limit - self.durable_state().get("completed_tool_turns", 0)
         if self.warn_remaining == 0 or not 0 < remaining <= self.warn_remaining:
             return ctx

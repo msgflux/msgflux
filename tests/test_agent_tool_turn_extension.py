@@ -49,6 +49,35 @@ def make_agent(limit, *, flow=False, store=None):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("asynchronous", [False, True])
+async def test_signature_bound_modes_keep_prompt_stable_and_enforce_limit(asynchronous):
+    from types import SimpleNamespace
+
+    agent = make_agent(2)
+    agent.model.api_mode_capabilities = SimpleNamespace(
+        requires_stable_system_prompt=True
+    )
+    responses = [tool_response(index=0), tool_response(index=1)]
+    mock = (
+        AsyncMock(side_effect=responses)
+        if asynchronous
+        else Mock(side_effect=responses)
+    )
+    if asynchronous:
+        agent.generator.aforward = mock
+        output = await agent.acall("start")
+    else:
+        agent.generator.forward = mock
+        output = agent("start")
+    assert output["stop_reason"] == "tool_turn_limit"
+    assert output["completed_tool_turns"] == 2
+    assert mock.call_count == 2
+    prompts = [call.kwargs["system_prompt"] for call in mock.call_args_list]
+    assert prompts[0] == prompts[1]
+    assert "Tool budget:" not in (prompts[1] or "")
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.parametrize("flow", [False, True])
 @pytest.mark.parametrize("limit", [1, 2])
 async def test_limit_stops_after_last_settled_batch(asynchronous, flow, limit):

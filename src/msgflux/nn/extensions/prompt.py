@@ -80,7 +80,26 @@ class ToolUsageGuidanceExtension(AgentExtension):
         return (Hook(event="transform_system_prompt", handler=self._add_guidance),)
 
     def _add_guidance(self, ctx: ModelContext) -> ModelContext:
-        guidance = self.agent.tool_library.get_tool_usage_guidance(ctx.tool_names)
+        capabilities = getattr(self.agent.model, "api_mode_capabilities", None)
+        stable = (
+            getattr(capabilities, "requires_stable_system_prompt", False) is True
+            and ctx.tool_catalog is not None
+        )
+        hosted = False
+        if stable:
+            supports_hosted = getattr(
+                self.agent.model, "supports_native_tool_search", None
+            )
+            hosted = callable(supports_hosted) and supports_hosted() is True
+        if stable and hosted:
+            search = ctx.tool_catalog.search_entry
+            guidance = [
+                {"name": entry.name, "guidance": entry.usage_guidance}
+                for entry in ctx.tool_catalog.entries
+                if entry.usage_guidance and entry is not search
+            ]
+        else:
+            guidance = self.agent.tool_library.get_tool_usage_guidance(ctx.tool_names)
         if not guidance:
             return ctx
         lines = ["<tool_usage_guidance>"]

@@ -48,6 +48,19 @@ def test_usage_codec_normalizes_responses_and_calculates_total():
     assert usage.output_tokens_details.reasoning_tokens == 5
 
 
+def test_usage_codec_normalizes_anthropic_thinking_tokens():
+    raw = {
+        "input_tokens": 70,
+        "output_tokens": 396,
+        "output_tokens_details": {"thinking_tokens": 393},
+    }
+    usage = UsageCodec().normalize(raw)
+    assert usage.output_tokens_details.reasoning_tokens == 393
+    assert usage.output_tokens == 396
+    assert usage.total_tokens == 466
+    assert usage.raw == raw
+
+
 def test_usage_codec_preserves_image_token_details():
     usage = UsageCodec().normalize(
         {
