@@ -67,21 +67,11 @@ class ChatMessages:
         normalized_items = self._normalize_item(item)
         if not normalized_items:
             raise ValueError("`item` generated an empty normalized representation")
+        existing_ids = self._item_id_set(exclude_index=index)
+        self._assign_item_ids(normalized_items, existing_ids=existing_ids)
         if len(normalized_items) == 1:
-            existing_ids = {
-                existing.get("item_id")
-                for item_index, existing in enumerate(self._items)
-                if item_index != index
-            }
-            self._assign_item_ids(normalized_items, existing_ids=existing_ids)
             self._items[index] = normalized_items[0]
         else:
-            existing_ids = {
-                existing.get("item_id")
-                for item_index, existing in enumerate(self._items)
-                if item_index != index
-            }
-            self._assign_item_ids(normalized_items, existing_ids=existing_ids)
             self._items[index : index + 1] = normalized_items
 
     def __bool__(self) -> bool:
@@ -132,12 +122,31 @@ class ChatMessages:
     def extend(self, items: Iterable[Mapping[str, Any]]) -> None:
         if isinstance(items, ChatMessages):
             items = items._items
+        # Only plain sequences use the single-snapshot fast path. Arbitrary
+        # iterators may mutate the timeline or existing item ids between items;
+        # rescanning per item there preserves baseline collision and partial
+        # failure semantics without eagerly consuming the iterator.
+        batch_ids = type(items) in (list, tuple)
+        used_ids: set[str] | None = None
         for item in items:
             if not isinstance(item, Mapping):
                 raise TypeError(f"`item` must be Mapping, given `{type(item)}`")
             normalized_items = self._normalize_item(item)
-            self._assign_item_ids(normalized_items)
+            if batch_ids and used_ids is None:
+                used_ids = self._item_id_set()
+            self._assign_item_ids(normalized_items, existing_ids=used_ids)
             self._items.extend(normalized_items)
+
+    def _item_id_set(self, *, exclude_index: int | None = None) -> set[str]:
+        """Collect the occurrence ids currently in the timeline in one pass."""
+        item_ids: set[str] = set()
+        for item_index, item in enumerate(self._items):
+            if item_index == exclude_index:
+                continue
+            item_id = item.get("item_id")
+            if isinstance(item_id, str):
+                item_ids.add(item_id)
+        return item_ids
 
     def _assign_item_ids(
         self,
@@ -145,15 +154,9 @@ class ChatMessages:
         *,
         existing_ids: set[Any] | None = None,
     ) -> None:
-        used_ids = (
-            {
-                item.get("item_id")
-                for item in self._items
-                if isinstance(item.get("item_id"), str)
-            }
-            if existing_ids is None
-            else {item_id for item_id in existing_ids if isinstance(item_id, str)}
-        )
+        # `existing_ids` is an optional accumulator: batch callers scan the
+        # timeline once and reuse the set for every item in the batch.
+        used_ids = self._item_id_set() if existing_ids is None else existing_ids
         for item in items:
             item_id = item.get("item_id")
             if not isinstance(item_id, str) or not item_id or item_id in used_ids:

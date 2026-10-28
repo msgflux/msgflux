@@ -797,3 +797,40 @@ def test_sqlite_fork_reserves_source_while_hydrating(tmp_path):
     finally:
         reader.close()
         writer.close()
+
+
+def test_deduplicated_history_occurrences_keep_nested_payloads_isolated(
+    checkpoint_store,
+):
+    store = checkpoint_store
+    item = {
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "text", "text": "original"}],
+        "metadata": {"tags": ["original"]},
+    }
+    history = ChatMessages([item, item])
+    assert history[0]["item_id"] != history[1]["item_id"]
+    store.commit_state(
+        "agent:isolation",
+        "shared-thread",
+        "run",
+        {"status": "completed", "messages": history._to_state()},
+        expected_revision=0,
+    )
+
+    first = store.load_state("agent:isolation", "shared-thread", "run")
+    second = store.load_state("agent:isolation", "shared-thread", "run")
+    items = first["messages"]["items"]
+    assert items[0]["item_id"] != items[1]["item_id"]
+    assert items[0]["content"] is not items[1]["content"]
+    assert items[0]["metadata"]["tags"] is not items[1]["metadata"]["tags"]
+    items[0]["content"][0]["text"] = "changed"
+    items[0]["metadata"]["tags"].append("changed")
+
+    assert items[1]["content"][0]["text"] == "original"
+    assert items[1]["metadata"]["tags"] == ["original"]
+    assert second["messages"]["items"][0]["content"][0]["text"] == "original"
+    assert second["messages"]["items"][0]["metadata"]["tags"] == ["original"]
+    restored = store.load_state("agent:isolation", "shared-thread", "run")
+    assert restored["messages"]["items"][0]["content"][0]["text"] == "original"
