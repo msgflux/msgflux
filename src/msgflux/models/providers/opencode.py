@@ -1,10 +1,16 @@
-"""OpenCode Go chat provider for Chat Completions, Responses and Anthropic."""
+"""OpenCode gateway providers for Chat Completions, Responses and Anthropic.
+
+``opencode-go`` and ``opencode-zen`` share the same gateway plumbing: the
+OpenAI-compatible and native Anthropic protocols, Bearer authentication,
+session headers and the Anthropic base URL derivation. Each public provider
+class supplies only its credentials, endpoints and native backend selection.
+"""
 
 from __future__ import annotations
 
 from collections.abc import Mapping
 from contextlib import aclosing, closing
-from typing import Any, Dict, Optional
+from typing import Any, ClassVar, Dict, Optional
 from uuid import uuid4
 
 from msgflux.chat_messages import ChatMessages
@@ -30,20 +36,26 @@ from msgflux.models.session import session_extra_headers
 from msgflux.runtime.context import get_thread_id
 
 
-class _BaseOpenCodeGo(ProviderEnvBase):
-    """Configurations to use OpenCode Go models."""
+class _BaseOpenCode(ProviderEnvBase):
+    """Provider-neutral OpenCode gateway configuration.
 
-    provider: str = "opencode-go"
-    display_name: str = "OpenCode Go"
-    api_key_env: str = "OPENCODE_GO_API_KEY"
-    base_url_env: str = "OPENCODE_GO_BASE_URL"
-    base_url: str = "https://opencode.ai/inference/go/openai/v1"
+    Concrete provider classes configure the credential and endpoint class
+    variables and point ``_anthropic_messages_backend`` at their native
+    Anthropic backend.
+    """
+
+    session_header: ClassVar[str] = "x-opencode-session"
+    _openai_api_modes: ClassVar[tuple[str, ...]] = (
+        "chat_completions",
+        "responses",
+    )
+    _anthropic_messages_backend: ClassVar[type | None] = None
 
     @staticmethod
     def _anthropic_base_url(base_url: str) -> str:
         """Derive the native Anthropic host base from the OpenAI-compatible one.
 
-        ``OPENCODE_GO_BASE_URL`` keeps its original meaning: an
+        The base URL override keeps its original meaning: an
         OpenAI-compatible Chat Completions/Responses base that includes
         ``/v1``. Native Anthropic Messages mounts its own ``/v1/messages``
         below a host base, so ``/openai/v1`` becomes ``/anthropic`` and a
@@ -59,10 +71,9 @@ class _BaseOpenCodeGo(ProviderEnvBase):
         return base
 
 
-class _OpenCodeGoSessions:
+class _OpenCodeSessions:
     """Stable session and User-Agent headers shared by every API mode."""
 
-    session_header = "x-opencode-session"
     to_ignore = [
         *OpenAICompatibleChatCompletion.to_ignore,
         "_fallback_session_id",
@@ -87,7 +98,7 @@ class _OpenCodeGoSessions:
             )
         return params
 
-    def _with_opencode_headers(
+    def _with_session_headers(
         self,
         params: Dict[str, Any],
         *,
@@ -113,18 +124,18 @@ class _OpenCodeGoSessions:
         return params
 
     def _adapt_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return self._with_opencode_headers(super()._adapt_params(params))
+        return self._with_session_headers(super()._adapt_params(params))
 
     def _adapt_responses_params(self, params: Dict[str, Any]) -> Dict[str, Any]:
-        return self._with_opencode_headers(super()._adapt_responses_params(params))
+        return self._with_session_headers(super()._adapt_responses_params(params))
 
 
-class _OpenCodeGoAnthropicMessages(
-    _OpenCodeGoSessions,
-    _BaseOpenCodeGo,
+class _OpenCodeAnthropicMessages(
+    _OpenCodeSessions,
+    _BaseOpenCode,
     AnthropicChatCompletion,
 ):
-    """OpenCode Go's native Anthropic Messages backend.
+    """Shared native Anthropic Messages backend for OpenCode gateways.
 
     This backend is selected by ``api_mode="anthropic_messages"`` and is not
     registered as a separate provider. It reuses the native Anthropic
@@ -164,12 +175,12 @@ class _OpenCodeGoAnthropicMessages(
         )
 
     def _native_headers(self) -> Dict[str, str]:
-        return self._native_headers_for(self._with_opencode_headers({}))
+        return self._native_headers_for(self._with_session_headers({}))
 
     def _execute_model(self, **kwargs):
         self._raise_if_aborted()
         params = {**self.sampling_run_params, **kwargs}
-        params = self._with_opencode_headers(
+        params = self._with_session_headers(
             params,
             messages=kwargs.get("messages"),
         )
@@ -189,7 +200,7 @@ class _OpenCodeGoAnthropicMessages(
     async def _aexecute_model(self, **kwargs):
         self._raise_if_aborted()
         params = {**self.sampling_run_params, **kwargs}
-        params = self._with_opencode_headers(
+        params = self._with_session_headers(
             params,
             messages=kwargs.get("messages"),
         )
@@ -244,28 +255,22 @@ class _OpenCodeGoAnthropicMessages(
                 yield item
 
 
-@register_model
-class OpenCodeGoChatCompletion(
-    _OpenCodeGoSessions,
-    _BaseOpenCodeGo,
+class _OpenCodeChatCompletion(
+    _OpenCodeSessions,
+    _BaseOpenCode,
     OpenAICompatibleChatCompletion,
 ):
-    """OpenCode Go chat completion through three explicitly selected protocols.
+    """Shared OpenCode facade over the three explicitly selected protocols.
 
-    ``api_mode="chat_completions"`` (the default) and
-    ``api_mode="responses"`` use the OpenAI-compatible endpoints at
-    ``https://opencode.ai/inference/go/openai/v1``. The explicit
-    ``api_mode="anthropic_messages"`` selects the native Anthropic Messages
-    endpoint below ``https://opencode.ai/inference/go/anthropic``.
+    Concrete providers inherit this class and set their provider metadata,
+    endpoints and ``_anthropic_messages_backend``. Only the concrete classes
+    are registered, so one provider never answers for another provider's
+    namespace.
 
-    Every protocol authenticates with ``Authorization: Bearer`` using
-    ``OPENCODE_GO_API_KEY``. Requests identify msgFlux with its own ``User-Agent``
-    and carry a stable ``x-opencode-session`` for routing and prompt caching.
-    An explicit session header wins regardless of casing, followed by the
-    active runtime thread, ``ChatMessages.thread_id``, and a private
-    per-instance fallback.
-
-    OpenCode Go's Google/Interactions endpoint is not implemented.
+    ``api_mode="chat_completions"`` (the default) and ``api_mode="responses"``
+    use the OpenAI-compatible endpoints. The explicit
+    ``api_mode="anthropic_messages"`` returns the provider's native Anthropic
+    backend below the derived Anthropic host base.
     """
 
     capabilities = ChatProviderCapabilities(
@@ -288,20 +293,16 @@ class OpenCodeGoChatCompletion(
 
     def __new__(cls, model_id: str, *args: Any, **kwargs: Any):
         # Anthropic Messages needs the native converter/streaming class. Keep
-        # one registered ``opencode-go`` provider while returning that concrete
+        # one registered provider per namespace while returning that concrete
         # backend for this explicit mode. The backend initializes itself in
         # ``__new__``; a non-facade instance skips the facade ``__init__``.
-        if cls is OpenCodeGoChatCompletion:
+        backend = cls._anthropic_messages_backend
+        if backend is not None:
             api_mode = kwargs.get("api_mode")
             if api_mode == "anthropic_messages":
-                return _OpenCodeGoAnthropicMessages(model_id, *args, **kwargs)
-            if api_mode is not None and api_mode not in {
-                "chat_completions",
-                "responses",
-            }:
-                supported = ", ".join(
-                    ("chat_completions", "responses", "anthropic_messages")
-                )
+                return backend(model_id, *args, **kwargs)
+            if api_mode is not None and api_mode not in cls._openai_api_modes:
+                supported = ", ".join((*cls._openai_api_modes, "anthropic_messages"))
                 raise ValueError(
                     f"{cls.__name__} does not support `api_mode={api_mode!r}`; "
                     f"supported modes: {supported}."
@@ -310,19 +311,106 @@ class OpenCodeGoChatCompletion(
 
     @property
     def supported_api_modes(self) -> tuple[str, ...]:
-        """Return every protocol the ``opencode-go`` provider exposes."""
-        return ("chat_completions", "responses", "anthropic_messages")
+        """Return every protocol the provider exposes."""
+        return (*self._openai_api_modes, "anthropic_messages")
 
     @classmethod
     def from_serialized(cls, state: Mapping[str, Any]):
         """Restore the concrete backend selected by the serialized API mode."""
+        backend = cls._anthropic_messages_backend
         if (
-            cls is OpenCodeGoChatCompletion
+            backend is not None
             and isinstance(state, Mapping)
             and state.get("api_mode") == "anthropic_messages"
         ):
-            return _OpenCodeGoAnthropicMessages.from_serialized(state)
+            return backend.from_serialized(state)
         return super().from_serialized(state)
 
 
-__all__ = ["OpenCodeGoChatCompletion"]
+class _OpenCodeGoConfig:
+    """OpenCode Go gateway metadata shared by its facade and backend."""
+
+    provider: str = "opencode-go"
+    display_name: str = "OpenCode Go"
+    api_key_env: str = "OPENCODE_GO_API_KEY"
+    base_url_env: str = "OPENCODE_GO_BASE_URL"
+    base_url: str = "https://opencode.ai/inference/go/openai/v1"
+
+
+class _OpenCodeZenConfig:
+    """OpenCode Zen gateway metadata shared by its facade and backend."""
+
+    provider: str = "opencode-zen"
+    display_name: str = "OpenCode Zen"
+    api_key_env: str = "OPENCODE_ZEN_API_KEY"
+    base_url_env: str = "OPENCODE_ZEN_BASE_URL"
+    base_url: str = "https://opencode.ai/inference/openai/v1"
+
+
+class _OpenCodeGoAnthropicMessages(
+    _OpenCodeGoConfig,
+    _OpenCodeAnthropicMessages,
+):
+    """OpenCode Go native Anthropic Messages backend."""
+
+
+class _OpenCodeZenAnthropicMessages(
+    _OpenCodeZenConfig,
+    _OpenCodeAnthropicMessages,
+):
+    """OpenCode Zen native Anthropic Messages backend."""
+
+
+@register_model
+class OpenCodeGoChatCompletion(
+    _OpenCodeGoConfig,
+    _OpenCodeChatCompletion,
+):
+    """OpenCode Go chat completion through three explicitly selected protocols.
+
+    ``api_mode="chat_completions"`` (the default) and
+    ``api_mode="responses"`` use the OpenAI-compatible endpoints at
+    ``https://opencode.ai/inference/go/openai/v1``. The explicit
+    ``api_mode="anthropic_messages"`` selects the native Anthropic Messages
+    endpoint below ``https://opencode.ai/inference/go/anthropic``.
+
+    Every protocol authenticates with ``Authorization: Bearer`` using
+    ``OPENCODE_GO_API_KEY``. Requests identify msgFlux with its own ``User-Agent``
+    and carry a stable ``x-opencode-session`` for routing and prompt caching.
+    An explicit session header wins regardless of casing, followed by the
+    active runtime thread, ``ChatMessages.thread_id``, and a private
+    per-instance fallback.
+
+    OpenCode Go's Google/Interactions endpoint is not implemented.
+    """
+
+    _anthropic_messages_backend = _OpenCodeGoAnthropicMessages
+
+
+@register_model
+class OpenCodeZenChatCompletion(
+    _OpenCodeZenConfig,
+    _OpenCodeChatCompletion,
+):
+    """OpenCode Zen chat completion through three explicitly selected protocols.
+
+    ``api_mode="chat_completions"`` (the default) and
+    ``api_mode="responses"`` use the OpenAI-compatible endpoints at
+    ``https://opencode.ai/inference/openai/v1``. The explicit
+    ``api_mode="anthropic_messages"`` selects the native Anthropic Messages
+    endpoint below ``https://opencode.ai/inference/anthropic``.
+
+    Every protocol authenticates with ``Authorization: Bearer`` using
+    ``OPENCODE_ZEN_API_KEY``. Requests identify msgFlux with its own
+    ``User-Agent`` and carry a stable ``x-opencode-session`` for routing and
+    prompt caching. An explicit session header wins regardless of casing,
+    followed by the active runtime thread, ``ChatMessages.thread_id``, and a
+    private per-instance fallback.
+
+    OpenCode Zen's Google/Interactions endpoint is not implemented.
+    """
+
+    _anthropic_messages_backend = _OpenCodeZenAnthropicMessages
+
+
+__all__ = ["OpenCodeGoChatCompletion", "OpenCodeZenChatCompletion"]

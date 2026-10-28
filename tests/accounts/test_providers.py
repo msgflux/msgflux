@@ -16,6 +16,8 @@ import msgspec
         ("openai", "OPENAI_API_KEY"),
         ("groq", "GROQ_API_KEY"),
         ("imagerouter", "IMAGEROUTER_API_KEY"),
+        ("opencode-go", "OPENCODE_GO_API_KEY"),
+        ("opencode-zen", "OPENCODE_ZEN_API_KEY"),
     ],
 )
 def test_api_key_provider_specs_follow_provider_metadata(provider, env_name):

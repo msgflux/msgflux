@@ -127,6 +127,38 @@ def test_from_env_stores_unmodified_value_without_echoing_it(
     assert Accounts(root=tmp_path).get("openai").value == secret
 
 
+@pytest.mark.parametrize(
+    ("provider", "env_name", "other_env"),
+    [
+        ("opencode-go", "OPENCODE_GO_API_KEY", "OPENCODE_ZEN_API_KEY"),
+        ("opencode-zen", "OPENCODE_ZEN_API_KEY", "OPENCODE_GO_API_KEY"),
+    ],
+)
+def test_opencode_account_import_uses_its_own_key(
+    monkeypatch, tmp_path, capsys, provider, env_name, other_env
+):
+    monkeypatch.setenv(env_name, "own-plan-key")
+    monkeypatch.setenv(other_env, "other-plan-key")
+    monkeypatch.setenv("OPENCODE_API_KEY", "generic-decoy-key")
+    args = ["login", provider, "--from-env", "--accounts-dir", str(tmp_path), "--json"]
+
+    accounts_cli.main(args)
+    credential = Accounts(root=tmp_path).get(provider)
+    assert credential.env_name == env_name
+    assert credential.value == "own-plan-key"
+    output = capsys.readouterr().out
+    assert json.loads(output)["provider"] == provider
+    assert "own-plan-key" not in output
+    assert "other-plan-key" not in output
+    assert "generic-decoy-key" not in output
+
+    monkeypatch.delenv(env_name)
+    with pytest.raises(SystemExit, match="1"):
+        accounts_cli.main(args)
+    assert json.loads(capsys.readouterr().out)["status"] == "failed"
+    assert Accounts(root=tmp_path).get(provider).value == "own-plan-key"
+
+
 def test_from_env_for_imagerouter_uses_provider_key_when_both_are_set(
     monkeypatch, tmp_path, capsys
 ):
