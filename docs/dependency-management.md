@@ -31,10 +31,15 @@ authorized workspace; installing the extra does not grant filesystem access.
 | Ollama      | `msgflux`  |                        |
 | NVIDIA      | `msgflux`  | `NVIDIA_API_KEY`       |
 | OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
+| OpenCode Go | `msgflux`  | `OPENCODE_GO_API_KEY`     |
 | OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
 | SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
 | Together    | `msgflux`  | `TOGETHER_API_KEY`     |
 | vLLM        | `msgflux`  |                        |
+
+OpenCode Go uses the same `OPENCODE_GO_API_KEY` Bearer credential for Chat
+Completions, Responses, and native Anthropic Messages; it requires no SDK
+dependency.
 
 ### Image Embedder
 

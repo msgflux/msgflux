@@ -492,6 +492,158 @@ with replayable native history. It is not a client function call; automatic
 server-pause continuation is not performed. This rare path is covered by protocol
 fixtures rather than the live Haiku validation matrix.
 
+### OpenCode Go
+
+OpenCode Go exposes selected coding models through three gateway protocols.
+The `opencode-go` provider supports them explicitly and keeps Chat Completions
+as the default:
+
+| `api_mode` | Endpoint base | Notes |
+|------------|---------------|-------|
+| `"chat_completions"` (default) | `https://opencode.ai/inference/go/openai/v1` | OpenAI-compatible Chat Completions. |
+| `"responses"` | `https://opencode.ai/inference/go/openai/v1` | OpenAI-compatible Responses. |
+| `"anthropic_messages"` | `https://opencode.ai/inference/go/anthropic` | Native Anthropic Messages with signed thinking history. |
+
+Select the protocol explicitly instead of guessing from a model name. msgFlux
+does not keep a model allowlist; a model ID that the service does not expose
+through the selected protocol fails at OpenCode rather than in the provider.
+Check the [OpenCode Go documentation](https://opencode.ai/v2/docs/console/go/)
+for model availability and protocol compatibility. Native Google/Interactions
+is not part of this provider: OpenCode's Google gateway endpoint does not use
+the Interactions protocol implemented by msgFlux's `gemini` provider.
+
+Authenticate with `OPENCODE_GO_API_KEY`. All three protocols use
+`Authorization: Bearer`; the native Anthropic mode never sends
+`ANTHROPIC_API_KEY` or an `x-api-key` header.
+
+```python
+import msgflux as mf
+
+mf.set_envs(OPENCODE_GO_API_KEY="...")
+
+chat_model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
+responses_model = mf.Model.chat_completion(
+    "opencode-go/gpt-6-luna", api_mode="responses"
+)
+anthropic_model = mf.Model.chat_completion(
+    "opencode-go/claude-haiku-5-5",
+    api_mode="anthropic_messages",
+    reasoning_effort="low",
+)
+```
+
+The first model uses the default Chat Completions endpoint. The second uses the
+Responses protocol for the same provider namespace. The third selects the
+native Anthropic Messages converter, including its signed thinking replay and
+tool handling. Replace the model IDs with ones that OpenCode exposes through the
+selected protocol. The same synchronous, asynchronous, streaming, and tool
+interfaces apply to all three.
+
+OpenCode controls which models are available and which protocol serves each
+model. msgFlux does not discover or switch protocols automatically, and an
+unsupported `api_mode` raises locally before any request.
+
+#### Base URL override
+
+`OPENCODE_GO_BASE_URL` keeps its original meaning: it overrides the
+OpenAI-compatible base that includes `/v1`, for example
+`https://gateway.example/openai/v1`. Chat Completions and Responses append
+their own endpoint path below that value.
+
+Native Anthropic needs the host base below which `/v1/messages` is mounted.
+The provider derives it from the same override: a trailing `/openai/v1`
+becomes `/anthropic`, and any other trailing `/v1` is removed. A base without
+either suffix is used verbatim as the Anthropic host base.
+
+```python
+mf.set_envs(
+    OPENCODE_GO_API_KEY="...",
+    OPENCODE_GO_BASE_URL="https://gateway.example/openai/v1",
+)
+model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
+```
+
+This example sends Chat Completions to
+`https://gateway.example/openai/v1/chat/completions`; selecting
+`api_mode="anthropic_messages"` with the same environment sends native
+Anthropic requests to
+`https://gateway.example/anthropic/v1/messages`.
+
+#### Session and client identity
+
+Requests identify msgFlux with its own `User-Agent` and send a stable
+`x-opencode-session` for routing and prompt caching. The session value is
+chosen in this order:
+
+1. An explicit caller header, matched case-insensitively.
+2. The active runtime thread ID.
+3. `ChatMessages.thread_id` when the caller supplies a message history.
+4. A fallback generated for the model instance.
+
+Use an Agent thread or `ChatMessages.thread_id` in normal application code.
+Explicit header overrides refer to headers supplied by host request
+configuration; `extra_headers` is not a constructor or per-call Model option.
+
+The same contract applies to Chat Completions, Responses, and native Anthropic
+Messages, in synchronous, asynchronous, streaming, and non-streaming calls.
+The fallback is reused for standalone calls on the same instance and is
+isolated between instances. It is not part of the serialized public
+configuration and is not restored: a model recreated with
+`Model.from_serialized` receives a new fallback. The serialized state retains
+the selected `api_mode` and restores the matching concrete backend. Use an
+Agent thread or `ChatMessages(thread_id=...)` when separate direct model
+instances must share one session.
+
+```python
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Continue the review."}],
+    thread_id="review-thread-42",
+)
+response = model(messages)
+print(response.consume())
+```
+
+This example reuses an explicit conversation ID across direct calls, so another
+model instance can continue the same OpenCode session. A caller that supplies
+its own session header keeps control of session identity; the provider matches
+that header case-insensitively.
+
+#### Function tools and native Anthropic history
+
+The OpenAI-compatible modes and native Anthropic mode all accept the shared
+tool catalog. Native Anthropic keeps thinking text, signatures, tool-use
+blocks, and tool results in canonical history and replays them unchanged on
+the next turn, as the Messages API requires.
+
+```python
+import msgflux as mf
+
+
+def inventory_lookup(sku: str) -> str:
+    """Look up stock for an inventory SKU."""
+    return '{"available": 7}'
+
+
+library = mf.nn.ToolLibrary("inventory", [inventory_lookup])
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Look up stock for BOLT-17."}],
+    thread_id="inventory-42",
+)
+catalog = library.get_tool_catalog_view(messages)
+response = anthropic_model(messages=messages, tool_catalog=catalog)
+outcomes = library.execute_intents(response.get_tool_intents())
+messages.extend(response.history_items)
+messages.extend(response.render_tool_outcomes(outcomes))
+print(anthropic_model(messages=messages, tool_catalog=catalog).consume())
+```
+
+This example executes a local function and supplies its result on the next
+native Anthropic call. Keep the returned `history_items` and rendered outcomes
+when saving a conversation; rebuilding history from answer text alone loses
+the signed state needed for faithful replay. Anthropic cache counters are
+aggregated into the canonical usage report so cached input tokens and
+cache-hit percentages remain meaningful.
+
 ### OpenAI Codex subscription (experimental)
 
 The `openai-codex` provider reads an existing OAuth login from the Codex CLI or

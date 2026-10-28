@@ -61,6 +61,31 @@
         model = mf.Model.chat_completion("openrouter/anthropic/claude-opus-4-6")
         ```
 
+    === "OpenCode Go"
+
+        Authenticate with `OPENCODE_GO_API_KEY`. Chat Completions is the default
+        protocol; `api_mode="responses"` selects the OpenAI-compatible
+        Responses endpoint and `api_mode="anthropic_messages"` selects the
+        native Anthropic Messages backend. All three use Bearer authentication
+        and the `opencode-go/model` namespace. `OPENCODE_GO_BASE_URL` overrides
+        the OpenAI-compatible base URL
+        (`https://opencode.ai/inference/go/openai/v1`). Google/Interactions is
+        not supported.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(OPENCODE_GO_API_KEY="...")
+        model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
+        responses_model = mf.Model.chat_completion(
+            "opencode-go/gpt-6-luna", api_mode="responses"
+        )
+        anthropic_model = mf.Model.chat_completion(
+            "opencode-go/claude-haiku-5-5",
+            api_mode="anthropic_messages",
+        )
+        ```
+
     === "SambaNova"
 
         Authenticate by setting the `SAMBANOVA_API_KEY` env variable.
