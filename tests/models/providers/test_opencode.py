@@ -15,7 +15,7 @@ from msgflux.tools import ToolCatalog, ToolOutcome
 
 @pytest.fixture(autouse=True)
 def opencode_env(monkeypatch):
-    monkeypatch.setenv("OPENCODE_API_KEY", "test-key")
+    monkeypatch.setenv("OPENCODE_GO_API_KEY", "test-key")
     monkeypatch.delenv("OPENCODE_GO_BASE_URL", raising=False)
 
 
@@ -297,6 +297,7 @@ def _request_body(request):
 
 def test_defaults_and_factory_registration():
     import msgflux as mf
+    from msgflux.accounts.providers import get_api_key_env
     from msgflux.models.providers.opencode import (
         OpenCodeGoChatCompletion,
         _OpenCodeGoAnthropicMessages,
@@ -316,7 +317,8 @@ def test_defaults_and_factory_registration():
     assert isinstance(model.chat_transport, HTTPChatTransport)
     assert model._get_base_url() == "https://opencode.ai/inference/go/openai/v1"
     assert model._get_api_key() == "test-key"
-    assert model.api_key_env == "OPENCODE_API_KEY"
+    assert model.api_key_env == "OPENCODE_GO_API_KEY"
+    assert get_api_key_env("opencode-go") == "OPENCODE_GO_API_KEY"
 
     responses = mf.Model.chat_completion(
         "opencode-go/deepseek-v4.1-flash", api_mode="responses"
@@ -335,7 +337,7 @@ def test_defaults_and_factory_registration():
     assert native.provider == "opencode-go"
     assert native.api_mode == "anthropic_messages"
     assert native.supported_api_modes == ("anthropic_messages",)
-    assert native.api_key_env == "OPENCODE_API_KEY"
+    assert native.api_key_env == "OPENCODE_GO_API_KEY"
     assert native._native_url() == (
         "https://opencode.ai/inference/go/anthropic/v1/messages"
     )
@@ -375,17 +377,29 @@ def test_base_url_override_and_missing_key(monkeypatch):
     assert native._native_url() == "https://gateway.example/v1/messages"
 
     monkeypatch.delenv("OPENCODE_GO_BASE_URL")
-    monkeypatch.delenv("OPENCODE_API_KEY")
+    monkeypatch.delenv("OPENCODE_GO_API_KEY")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-decoy")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-decoy")
 
-    with pytest.raises(ValueError, match="OPENCODE_API_KEY"):
+    with pytest.raises(ValueError, match="OPENCODE_GO_API_KEY"):
         OpenCodeGoChatCompletion(model_id="deepseek-v4.1-flash")
-    with pytest.raises(ValueError, match="OPENCODE_API_KEY"):
+    with pytest.raises(ValueError, match="OPENCODE_GO_API_KEY"):
         OpenCodeGoChatCompletion(
             model_id="anthropic/claude-sonnet-4-6",
             api_mode="anthropic_messages",
         )
+
+
+@pytest.mark.parametrize(
+    "api_mode", ["chat_completions", "responses", "anthropic_messages"]
+)
+def test_missing_go_key_does_not_fall_back_to_generic_key(monkeypatch, api_mode):
+    import msgflux as mf
+
+    monkeypatch.delenv("OPENCODE_GO_API_KEY")
+    monkeypatch.setenv("OPENCODE_API_KEY", "other-plan-key")
+    with pytest.raises(ValueError, match="OPENCODE_GO_API_KEY"):
+        mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash", api_mode=api_mode)
 
 
 def test_base_url_override_applies_to_actual_requests(monkeypatch):
@@ -930,9 +944,9 @@ def test_api_key_rotates_at_request_time_and_is_not_serialized(monkeypatch):
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
     model = _model(client=client)
     try:
-        monkeypatch.setenv("OPENCODE_API_KEY", "first-rotated-key")
+        monkeypatch.setenv("OPENCODE_GO_API_KEY", "first-rotated-key")
         model("first")
-        monkeypatch.setenv("OPENCODE_API_KEY", "second-rotated-key")
+        monkeypatch.setenv("OPENCODE_GO_API_KEY", "second-rotated-key")
         model("second")
     finally:
         client.close()
@@ -959,10 +973,10 @@ def test_responses_and_anthropic_rotate_keys_without_alternate_fallback(monkeypa
     responses = _model(client=client, api_mode="responses")
     native = _native_model(client=client)
     try:
-        monkeypatch.setenv("OPENCODE_API_KEY", "first-opencode-key")
+        monkeypatch.setenv("OPENCODE_GO_API_KEY", "first-opencode-key")
         responses("first")
         native("first")
-        monkeypatch.setenv("OPENCODE_API_KEY", "second-opencode-key")
+        monkeypatch.setenv("OPENCODE_GO_API_KEY", "second-opencode-key")
         responses("second")
         native("second")
     finally:

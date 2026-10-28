@@ -512,14 +512,14 @@ for model availability and protocol compatibility. Native Google/Interactions
 is not part of this provider: OpenCode's Google gateway endpoint does not use
 the Interactions protocol implemented by msgFlux's `gemini` provider.
 
-Authenticate with `OPENCODE_API_KEY`. All three protocols use
+Authenticate with `OPENCODE_GO_API_KEY`. All three protocols use
 `Authorization: Bearer`; the native Anthropic mode never sends
 `ANTHROPIC_API_KEY` or an `x-api-key` header.
 
 ```python
 import msgflux as mf
 
-mf.set_envs(OPENCODE_API_KEY="...")
+mf.set_envs(OPENCODE_GO_API_KEY="...")
 
 chat_model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
 responses_model = mf.Model.chat_completion(
@@ -557,7 +557,7 @@ either suffix is used verbatim as the Anthropic host base.
 
 ```python
 mf.set_envs(
-    OPENCODE_API_KEY="...",
+    OPENCODE_GO_API_KEY="...",
     OPENCODE_GO_BASE_URL="https://gateway.example/openai/v1",
 )
 model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")

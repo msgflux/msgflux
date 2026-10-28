@@ -35,7 +35,7 @@ class _BaseOpenCodeGo(ProviderEnvBase):
 
     provider: str = "opencode-go"
     display_name: str = "OpenCode Go"
-    api_key_env: str = "OPENCODE_API_KEY"
+    api_key_env: str = "OPENCODE_GO_API_KEY"
     base_url_env: str = "OPENCODE_GO_BASE_URL"
     base_url: str = "https://opencode.ai/inference/go/openai/v1"
 
@@ -259,7 +259,7 @@ class OpenCodeGoChatCompletion(
     endpoint below ``https://opencode.ai/inference/go/anthropic``.
 
     Every protocol authenticates with ``Authorization: Bearer`` using
-    ``OPENCODE_API_KEY``. Requests identify msgFlux with its own ``User-Agent``
+    ``OPENCODE_GO_API_KEY``. Requests identify msgFlux with its own ``User-Agent``
     and carry a stable ``x-opencode-session`` for routing and prompt caching.
     An explicit session header wins regardless of casing, followed by the
     active runtime thread, ``ChatMessages.thread_id``, and a private

@@ -63,7 +63,7 @@
 
     === "OpenCode Go"
 
-        Authenticate with `OPENCODE_API_KEY`. Chat Completions is the default
+        Authenticate with `OPENCODE_GO_API_KEY`. Chat Completions is the default
         protocol; `api_mode="responses"` selects the OpenAI-compatible
         Responses endpoint and `api_mode="anthropic_messages"` selects the
         native Anthropic Messages backend. All three use Bearer authentication
@@ -75,7 +75,7 @@
         ```python
         import msgflux as mf
 
-        mf.set_envs(OPENCODE_API_KEY="...")
+        mf.set_envs(OPENCODE_GO_API_KEY="...")
         model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
         responses_model = mf.Model.chat_completion(
             "opencode-go/gpt-6-luna", api_mode="responses"
