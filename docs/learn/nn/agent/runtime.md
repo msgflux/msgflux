@@ -3404,10 +3404,30 @@ revision. SQLite reads those payloads in bounded batches, and revision checks
 avoid building another complete copy of the previous message history. Corrupt
 payloads still fail before the new revision is published.
 
-The built-in SQLite store deduplicates message payloads within a thread. Each
-retained run still records its ordered message references. Loading full history,
-copying it, or saving a full checkpoint can cost more as the thread grows, even
-when the latest compacted view is small. Measure checkpoint latency and size
+The built-in stores deduplicate message payloads within a thread. Large
+ordered message manifests also use immutable segments: runs share complete
+prefix segments, and each run records its own manifest head. Appending
+to one run leaves the other runs unchanged. Manifests of up to 128 entries
+remain inline. Deleting a run keeps the segments and payloads still used by
+another run.
+
+Replacing a segmented checkpoint with a different manifest also collects its
+unreferenced old segments. The replacement and cleanup publish atomically;
+segments referenced by retained runs remain available. New runs and updates
+with an unchanged manifest head skip this sweep.
+
+Existing checkpoints with inline manifests remain readable. Newly written
+segmented checkpoints require a msgFlux version that supports this storage
+format; older releases cannot read them. Every process accessing a segmented
+checkpoint store must support that format. The public `load_state()` result
+continues to contain the complete message history, including occurrence IDs,
+metadata, tool results and provider state.
+
+Shared manifests reduce repeated storage of old reference lists. Loading full
+history, copying it, or saving a full checkpoint can still cost more as the
+thread grows, even when the latest compacted view is small. Strict commits
+continue validating prior payloads, and replacing a changed manifest adds a
+reachability pass for cleanup. Measure checkpoint latency and total size
 separately from model input tokens and process memory.
 
 For a local comparison, use the `shared` thread mode in the memory benchmark

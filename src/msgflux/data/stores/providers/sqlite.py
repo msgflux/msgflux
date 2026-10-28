@@ -8,17 +8,30 @@
 # thread copies only the referenced items needed by the fork; deleting a run
 # removes message items when no remaining run in that thread references them.
 #
-# In SQLite this is represented by three tables. `checkpoints` is keyed by
+# In SQLite this is represented by four tables. `checkpoints` is keyed by
 # `(namespace, thread_id, run_id)` and stores the normalized JSON state plus the
 # run status/timestamps. `checkpoint_message_items` is keyed by
 # `(namespace, thread_id, item_ref)` and stores one frozen ChatMessages item JSON
-# payload per content hash. `checkpoint_events` keeps append-only events for a
-# run and is removed by SQLite's FK cascade when the run is deleted. The
-# normalized state stored in `checkpoints.state` replaces `messages.items` with
-# `_messages = {"state": <messages without items>, "item_entries": [...]}`.
-# `item_entries` is an ordered list, not a join table, so rehydration can rebuild
-# the exact public message order and occurrence ids while item payloads remain
+# payload per content hash. `checkpoint_manifest_segments` stores immutable
+# content-addressed manifest pages: each page holds up to
+# `MANIFEST_PAGE_SIZE` occurrence entries and links to its parent page.
+# `checkpoint_events` keeps append-only events for a run and is removed by
+# SQLite's FK cascade when the run is deleted.
+#
+# The normalized state stored in `checkpoints.state` replaces `messages.items`
+# with `_messages = {"state": <messages without items>, ...}`. Manifests up to
+# `MANIFEST_PAGE_SIZE` entries keep their ordered list inline as `item_entries`
+# for compatibility with existing snapshots. Larger manifests store only
+# `manifest = {"format": "segments_v1", "head": <page ref>, "count": <N>}` and
+# leave the occurrence list in linked pages. Both layouts rebuild the exact
+# public message order and occurrence ids while item payloads remain
 # deduplicated.
+#
+# Replacing an existing run's segmented head (including a switch to inline or
+# metadata-only state) collects pages no longer reachable from any retained run
+# in the same thread, inside the same publication transaction. New runs and
+# same-head updates skip that GC; root-reachability sharing keeps pages used by
+# other retained runs alive.
 
 from __future__ import annotations
 
@@ -27,9 +40,10 @@ import json
 import sqlite3
 import time
 from functools import wraps
+from itertools import islice
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, Iterator, List, Literal, Mapping
+from typing import Any, Dict, Iterable, Iterator, List, Literal, Mapping
 from uuid import uuid4
 
 from msgflux._private.chat_items import (
@@ -37,6 +51,14 @@ from msgflux._private.chat_items import (
     split_item_occurrence,
 )
 from msgflux._private.sqlite import prepare_sqlite_file
+from msgflux.data.stores._manifest import (
+    MANIFEST_PAGE_SIZE,
+    build_manifest,
+    iter_manifest_entries,
+    iter_manifest_pages,
+    replacement_needs_segment_gc,
+    resolve_manifest_layout,
+)
 from msgflux.data.stores.base import (
     CheckpointCommit,
     CheckpointStore,
@@ -62,6 +84,13 @@ VALUES (?, ?, ?, ?, ?, ?)
 ON CONFLICT(namespace, thread_id, item_ref) DO NOTHING
 """
 
+_INSERT_MANIFEST_SEGMENT = """\
+INSERT INTO checkpoint_manifest_segments
+    (namespace, thread_id, segment_ref, data, created_at)
+VALUES (?, ?, ?, ?, ?)
+ON CONFLICT(namespace, thread_id, segment_ref) DO NOTHING
+"""
+
 _INSERT_EVENT = """\
 INSERT INTO checkpoint_events
     (namespace, thread_id, run_id, event_type, timestamp, data)
@@ -72,9 +101,34 @@ _SELECT_STATE = """\
 SELECT state FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?
 """
 
+_SELECT_MANIFEST_SEGMENT = """\
+SELECT data FROM checkpoint_manifest_segments
+WHERE namespace=? AND thread_id=? AND segment_ref=?
+"""
+
 _ITEM_BATCH_SIZE = 500
 
 _DELETE_RUN = "DELETE FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?"
+
+_DELETE_ORPHAN_MESSAGE_ITEMS = """\
+DELETE FROM checkpoint_message_items
+WHERE namespace=? AND thread_id=?
+AND item_ref NOT IN (SELECT ref FROM live_checkpoint_refs)
+"""
+
+_DELETE_ORPHAN_MANIFEST_SEGMENTS = """\
+DELETE FROM checkpoint_manifest_segments
+WHERE namespace=? AND thread_id=?
+AND segment_ref NOT IN (SELECT ref FROM live_checkpoint_refs)
+"""
+
+_DELETE_ALL_MESSAGE_ITEMS = """\
+DELETE FROM checkpoint_message_items WHERE namespace=? AND thread_id=?
+"""
+
+_DELETE_ALL_MANIFEST_SEGMENTS = """\
+DELETE FROM checkpoint_manifest_segments WHERE namespace=? AND thread_id=?
+"""
 
 _CREATE_TABLES = """\
 CREATE TABLE IF NOT EXISTS checkpoint_store_meta (
@@ -111,6 +165,18 @@ CREATE TABLE IF NOT EXISTS checkpoint_message_items (
 
 CREATE INDEX IF NOT EXISTS idx_checkpoint_message_items_thread
     ON checkpoint_message_items(namespace, thread_id, item_ref);
+
+CREATE TABLE IF NOT EXISTS checkpoint_manifest_segments (
+    namespace   TEXT NOT NULL,
+    thread_id  TEXT NOT NULL,
+    segment_ref TEXT NOT NULL,
+    data        BLOB NOT NULL,
+    created_at  REAL NOT NULL,
+    PRIMARY KEY (namespace, thread_id, segment_ref)
+);
+
+CREATE INDEX IF NOT EXISTS idx_checkpoint_manifest_segments_thread
+    ON checkpoint_manifest_segments(namespace, thread_id, segment_ref);
 
 CREATE TABLE IF NOT EXISTS checkpoint_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -284,9 +350,34 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
         message_state = dict(messages)
         message_state.pop("items", None)
+        if len(item_entries) <= MANIFEST_PAGE_SIZE:
+            normalized["_messages"] = {
+                "state": message_state,
+                "item_entries": item_entries,
+            }
+            return normalized
+
+        def write_page(segment_ref: str, data: bytes) -> None:
+            target.execute(
+                _INSERT_MANIFEST_SEGMENT,
+                (namespace, thread_id, segment_ref, data, now),
+            )
+            row = target.execute(
+                _SELECT_MANIFEST_SEGMENT,
+                (namespace, thread_id, segment_ref),
+            ).fetchone()
+            if row is None or bytes(row[0]) != data:
+                # A ref is the digest of its bytes. An existing row with the
+                # same ref but different bytes means the shared page is corrupt;
+                # never publish a run that would silently reuse it.
+                raise ValueError(
+                    "Checkpoint manifest page is corrupted or could not be "
+                    f"published: {segment_ref!r}"
+                )
+
         normalized["_messages"] = {
             "state": message_state,
-            "item_entries": item_entries,
+            "manifest": build_manifest(item_entries, write_page),
         }
         return normalized
 
@@ -304,9 +395,11 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             return state
 
         message_state = normalized_messages.get("state")
-        item_entries = normalized_messages.get("item_entries")
-        if not isinstance(message_state, Mapping) or not isinstance(item_entries, list):
-            return state
+        item_entries = self._stored_manifest_entries(
+            namespace, thread_id, normalized_messages
+        )
+        if not isinstance(message_state, Mapping):
+            raise ValueError("Checkpoint manifest is missing its message state")
 
         messages = dict(message_state)
         messages["items"] = list(
@@ -315,11 +408,42 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         state["messages"] = messages
         return state
 
+    def _stored_manifest_entries(
+        self,
+        namespace: str,
+        thread_id: str,
+        normalized_messages: Mapping[str, Any],
+    ) -> Iterable[Any]:
+        """Choose the inline or segmented manifest layout for one snapshot."""
+        item_entries, manifest = resolve_manifest_layout(normalized_messages)
+        if item_entries is not None:
+            return item_entries
+        return iter_manifest_entries(
+            manifest,
+            lambda segment_ref: self._read_manifest_segment(
+                namespace, thread_id, segment_ref
+            ),
+        )
+
+    def _read_manifest_segment(
+        self,
+        namespace: str,
+        thread_id: str,
+        segment_ref: str,
+    ) -> bytes:
+        row = self._conn.execute(
+            _SELECT_MANIFEST_SEGMENT,
+            (namespace, thread_id, segment_ref),
+        ).fetchone()
+        if row is None:
+            raise KeyError(segment_ref)
+        return bytes(row[0])
+
     def _iter_message_items(
         self,
         namespace: str,
         thread_id: str,
-        item_entries: List[Any],
+        item_entries: Iterable[Any],
     ) -> Iterator[Dict[str, Any]]:
         """Yield restored items while validating payloads in bounded batches.
 
@@ -329,8 +453,11 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         so malformed JSON, wrong payload shapes and corruption fail identically
         to the unbatched path. No full old timeline is accumulated.
         """
-        for start in range(0, len(item_entries), _ITEM_BATCH_SIZE):
-            batch = item_entries[start : start + _ITEM_BATCH_SIZE]
+        entry_iterator = iter(item_entries)
+        while True:
+            batch = list(islice(entry_iterator, _ITEM_BATCH_SIZE))
+            if not batch:
+                return
             refs = self._batch_item_refs(namespace, thread_id, batch)
             item_text = self._fetch_item_texts(namespace, thread_id, refs)
             self._ensure_batch_refs_present(namespace, thread_id, batch, item_text)
@@ -353,7 +480,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             if not isinstance(entry, Mapping):
                 raise ValueError("Checkpoint message entry is corrupted")
             item_ref = entry.get("item_ref")
-            if not isinstance(item_ref, str):
+            if not isinstance(item_ref, str) or not item_ref:
                 raise ValueError(
                     "Checkpoint message item is missing or corrupted: "
                     f"{namespace}/{thread_id}/{item_ref!r}"
@@ -425,11 +552,13 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self._validate_checkpoint_envelope(state.get("_checkpoint"))
         normalized_messages = state.get("_messages")
         if isinstance(normalized_messages, Mapping):
-            message_state = normalized_messages.get("state")
-            item_entries = normalized_messages.get("item_entries")
-            if isinstance(message_state, Mapping) and isinstance(item_entries, list):
-                for _ in self._iter_message_items(namespace, thread_id, item_entries):
-                    pass
+            item_entries = self._stored_manifest_entries(
+                namespace, thread_id, normalized_messages
+            )
+            if not isinstance(normalized_messages.get("state"), Mapping):
+                raise ValueError("Checkpoint manifest is missing its message state")
+            for _ in self._iter_message_items(namespace, thread_id, item_entries):
+                pass
         if "_checkpoint" not in state:
             return {}
         return {"_checkpoint": state["_checkpoint"]}
@@ -439,57 +568,95 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
         return "item_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
-    def _list_live_item_refs(self, namespace: str, thread_id: str) -> set[str]:
+    def _list_live_refs(
+        self, namespace: str, thread_id: str
+    ) -> tuple[set[str], set[str]]:
         rows = self._conn.execute(
             "SELECT state FROM checkpoints WHERE namespace=? AND thread_id=?",
             (namespace, thread_id),
         ).fetchall()
-        live: set[str] = set()
+        live_items: set[str] = set()
+        live_segments: set[str] = set()
+        seen_segments: set[str] = set()
         for row in rows:
             state = self._deserialize(row[0])
-            live.update(self._collect_refs_from_state(state))
-        return live
+            messages = state.get("_messages")
+            if not isinstance(messages, Mapping):
+                continue
+            item_entries, manifest = resolve_manifest_layout(messages)
+            if not isinstance(messages.get("state"), Mapping):
+                raise ValueError("Checkpoint manifest is missing its message state")
+            if item_entries is not None:
+                live_items.update(self._collect_entry_refs(item_entries))
+            if manifest is None:
+                continue
+            for segment_ref, entries in iter_manifest_pages(
+                manifest,
+                lambda ref: self._read_manifest_segment(namespace, thread_id, ref),
+            ):
+                if segment_ref in seen_segments:
+                    # The chain is content-addressed: a seen page implies all of
+                    # its ancestors were already collected for another run.
+                    break
+                seen_segments.add(segment_ref)
+                live_segments.add(segment_ref)
+                live_items.update(self._collect_entry_refs(entries))
+        return live_items, live_segments
 
     @staticmethod
-    def _collect_refs_from_state(state: Any) -> set[str]:
-        if not isinstance(state, Mapping):
-            return set()
-        messages = state.get("_messages")
-        if not isinstance(messages, Mapping):
-            return set()
-        item_entries = messages.get("item_entries")
-        if not isinstance(item_entries, list):
-            return set()
-        return {
-            entry["item_ref"]
-            for entry in item_entries
-            if isinstance(entry, Mapping) and isinstance(entry.get("item_ref"), str)
-        }
+    def _collect_entry_refs(entries: Iterable[Any]) -> set[str]:
+        refs: set[str] = set()
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                raise ValueError(f"Checkpoint message entry {index} is corrupted")
+            item_ref = entry.get("item_ref")
+            if not isinstance(item_ref, str) or not item_ref:
+                raise ValueError(
+                    f"Checkpoint message entry {index} is missing or corrupted"
+                )
+            refs.add(item_ref)
+        return refs
 
     def _cleanup_orphaned_items(self, namespace: str, thread_id: str) -> None:
-        live = self._list_live_item_refs(namespace, thread_id)
+        live_items, live_segments = self._list_live_refs(namespace, thread_id)
+        self._delete_unreachable(
+            live_items,
+            orphan_query=_DELETE_ORPHAN_MESSAGE_ITEMS,
+            delete_all_query=_DELETE_ALL_MESSAGE_ITEMS,
+            namespace=namespace,
+            thread_id=thread_id,
+        )
+        self._delete_unreachable(
+            live_segments,
+            orphan_query=_DELETE_ORPHAN_MANIFEST_SEGMENTS,
+            delete_all_query=_DELETE_ALL_MANIFEST_SEGMENTS,
+            namespace=namespace,
+            thread_id=thread_id,
+        )
+
+    def _delete_unreachable(
+        self,
+        live: set[str],
+        *,
+        orphan_query: str,
+        delete_all_query: str,
+        namespace: str,
+        thread_id: str,
+    ) -> None:
         if live:
             self._conn.execute(
-                "CREATE TEMP TABLE IF NOT EXISTS live_checkpoint_item_refs "
-                "(item_ref TEXT PRIMARY KEY)"
+                "CREATE TEMP TABLE IF NOT EXISTS live_checkpoint_refs "
+                "(ref TEXT PRIMARY KEY)"
             )
-            self._conn.execute("DELETE FROM live_checkpoint_item_refs")
+            self._conn.execute("DELETE FROM live_checkpoint_refs")
             self._conn.executemany(
-                "INSERT INTO live_checkpoint_item_refs(item_ref) VALUES (?)",
-                [(item_ref,) for item_ref in live],
+                "INSERT INTO live_checkpoint_refs(ref) VALUES (?)",
+                [(ref,) for ref in live],
             )
-            self._conn.execute(
-                "DELETE FROM checkpoint_message_items "
-                "WHERE namespace=? AND thread_id=? "
-                "AND item_ref NOT IN (SELECT item_ref FROM live_checkpoint_item_refs)",
-                (namespace, thread_id),
-            )
-            self._conn.execute("DELETE FROM live_checkpoint_item_refs")
+            self._conn.execute(orphan_query, (namespace, thread_id))
+            self._conn.execute("DELETE FROM live_checkpoint_refs")
             return
-        self._conn.execute(
-            "DELETE FROM checkpoint_message_items WHERE namespace=? AND thread_id=?",
-            (namespace, thread_id),
-        )
+        self._conn.execute(delete_all_query, (namespace, thread_id))
 
     @staticmethod
     def _clear_queries(
@@ -569,14 +736,30 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     ) -> None:
         now = time.time()
         self._validate_checkpoint_envelope(state.get("_checkpoint"))
+        cur = self._conn.cursor()
         try:
-            normalized = self._normalize_state(namespace, thread_id, state, now)
+            # Reserve the writer before reading the old head so an independent
+            # connection cannot replace that head while this snapshot is built.
+            cur.execute("BEGIN IMMEDIATE")
+            old_row = cur.execute(
+                _SELECT_STATE, (namespace, thread_id, run_id)
+            ).fetchone()
+            normalized = self._normalize_state(
+                namespace, thread_id, state, now, executor=cur
+            )
+            gc_segments = old_row is not None and replacement_needs_segment_gc(
+                self._deserialize(old_row[0]), normalized
+            )
             payload = self._serialize(normalized)
             status = state.get("status", "running")
-            self._conn.execute(
+            cur.execute(
                 _UPSERT_STATE,
                 (namespace, thread_id, run_id, status, payload, now, now),
             )
+            if gc_segments:
+                # Snapshot replacement: release segment heads that only the
+                # replaced state referenced. New runs never take this path.
+                self._cleanup_orphaned_items(namespace, thread_id)
             self._conn.commit()
         except BaseException as error:
             self._rollback_preserving_error(error)
@@ -683,6 +866,9 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             normalized = self._normalize_state(
                 namespace, thread_id, committed, now, executor=cur
             )
+            gc_segments = row is not None and replacement_needs_segment_gc(
+                self._deserialize(row[0]), normalized
+            )
             cur.execute(
                 _UPSERT_STATE,
                 (
@@ -695,6 +881,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                     now,
                 ),
             )
+            if gc_segments:
+                self._cleanup_orphaned_items(namespace, thread_id)
             if event is not None:
                 cur.execute(
                     _INSERT_EVENT,
@@ -768,6 +956,10 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 source_thread_id,
                 row[0],
             )
+            target_row = cur.execute(
+                _SELECT_STATE,
+                (namespace, target_thread_id, target_run_id),
+            ).fetchone()
             state = self._prepare_fork_state(
                 source_state,
                 at_item_id=at_item_id,
@@ -796,6 +988,9 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 executor=cur,
             )
             payload = self._serialize(normalized)
+            gc_segments = target_row is not None and replacement_needs_segment_gc(
+                self._deserialize(target_row[0]), normalized
+            )
             cur.execute(
                 _UPSERT_STATE,
                 (
@@ -808,6 +1003,8 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                     now,
                 ),
             )
+            if gc_segments:
+                self._cleanup_orphaned_items(namespace, target_thread_id)
             self._conn.commit()
         except BaseException as error:
             self._rollback_preserving_error(error)
@@ -836,15 +1033,23 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
         cur = self._conn.cursor()
         try:
-            cur.execute("BEGIN")
+            cur.execute("BEGIN IMMEDIATE")
+            old_row = cur.execute(
+                _SELECT_STATE, (namespace, thread_id, run_id)
+            ).fetchone()
             normalized = self._normalize_state(
                 namespace, thread_id, state, now, executor=cur
+            )
+            gc_segments = old_row is not None and replacement_needs_segment_gc(
+                self._deserialize(old_row[0]), normalized
             )
             payload = self._serialize(normalized)
             cur.execute(
                 _UPSERT_STATE,
                 (namespace, thread_id, run_id, status, payload, now, now),
             )
+            if gc_segments:
+                self._cleanup_orphaned_items(namespace, thread_id)
             cur.execute(
                 _INSERT_EVENT,
                 (namespace, thread_id, run_id, event_type, now, event_data),
