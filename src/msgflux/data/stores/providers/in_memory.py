@@ -8,14 +8,22 @@
 # thread copies only the referenced items needed by the fork; deleting a run
 # removes message items when no remaining run in that thread references them.
 #
-# In memory this is represented by two nested dictionaries:
+# In memory this is represented by three nested dictionaries:
 # `_data[namespace][thread_id][run_id]` keeps the normalized run state and
-# events, while `_message_items[namespace][thread_id][item_ref]` keeps each
-# frozen ChatMessages item payload encoded as msgpack bytes. The normalized run
-# state replaces
-# `messages.items` with `_messages = {"state": <messages without items>,
-# "item_entries": [...]}`. Entries preserve ordering and keep the sparse
-# per-occurrence ``item_id`` outside the deduplicated item payload.
+# events, `_message_items[namespace][thread_id][item_ref]` keeps each frozen
+# ChatMessages item payload encoded as msgpack bytes, and
+# `_manifest_pages[namespace][thread_id][segment_ref]` keeps immutable
+# content-addressed manifest pages. The normalized run state replaces
+# `messages.items` with `_messages = {"state": <messages without items>, ...}`.
+# Manifests up to `MANIFEST_PAGE_SIZE` entries keep their ordered list inline as
+# `item_entries`; larger manifests store only a
+# `manifest = {"format": "segments_v1", "head": <page ref>, "count": <N>}`
+# descriptor whose linked pages hold the occurrences.
+#
+# Replacing an existing run's segmented head preflights the post-replacement
+# survivor refs (including staged candidate pages) before publishing, then
+# prunes unreachable pages/items. New runs and same-head updates skip that GC,
+# and pages referenced by other retained runs remain live.
 
 from __future__ import annotations
 
@@ -25,7 +33,7 @@ import time
 from copy import deepcopy
 from itertools import islice
 from threading import RLock
-from typing import Any, Dict, Iterator, List, Literal, Mapping
+from typing import Any, Dict, Iterable, Iterator, List, Literal, Mapping
 from uuid import uuid4
 
 import msgspec
@@ -33,6 +41,14 @@ import msgspec
 from msgflux._private.chat_items import (
     restore_item_occurrence,
     split_item_occurrence,
+)
+from msgflux.data.stores._manifest import (
+    MANIFEST_PAGE_SIZE,
+    build_manifest,
+    iter_manifest_entries,
+    iter_manifest_pages,
+    replacement_needs_segment_gc,
+    resolve_manifest_layout,
 )
 from msgflux.data.stores.base import (
     CheckpointCommit,
@@ -76,6 +92,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         self._routing_id = uuid4().hex
         self._data: Dict[str, Dict[str, Dict[str, Dict[str, Any]]]] = {}
         self._message_items: Dict[str, Dict[str, Dict[str, bytes]]] = {}
+        self._manifest_pages: Dict[str, Dict[str, Dict[str, bytes]]] = {}
         self._lock = RLock()
 
     @property
@@ -98,20 +115,21 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             thread[run_id] = run
         return run
 
-    def _normalize_state(
+    def _stage_state(
         self,
         namespace: str,
         thread_id: str,
         state: Mapping[str, Any],
-    ) -> Dict[str, Any]:
+    ) -> tuple[Dict[str, Any], Dict[str, bytes], Dict[str, bytes]]:
+        """Build a normalized state without publishing any durable rows."""
         normalized = deepcopy(dict(state))
         messages = normalized.pop("messages", None)
         if not isinstance(messages, Mapping):
-            return normalized
+            return normalized, {}, {}
 
         items = messages.get("items")
         if not isinstance(items, list):
-            return normalized
+            return normalized, {}, {}
 
         item_store = {}
         item_entries = []
@@ -134,14 +152,52 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
 
         message_state = deepcopy(dict(messages))
         message_state.pop("items", None)
+        page_store: Dict[str, bytes] = {}
+        if len(item_entries) <= MANIFEST_PAGE_SIZE:
+            normalized["_messages"] = {
+                "state": message_state,
+                "item_entries": item_entries,
+            }
+            return normalized, item_store, page_store
+
+        def write_page(segment_ref: str, data: bytes) -> None:
+            existing = (
+                self._manifest_pages.get(namespace, {})
+                .get(thread_id, {})
+                .get(segment_ref)
+            )
+            if existing is not None and existing != data:
+                raise ValueError(
+                    f"Checkpoint manifest page is corrupted: {segment_ref!r}"
+                )
+            staged = page_store.get(segment_ref)
+            if staged is not None and staged != data:
+                raise ValueError(
+                    f"Checkpoint manifest page changed while staging: {segment_ref!r}"
+                )
+            page_store[segment_ref] = data
+
         normalized["_messages"] = {
             "state": message_state,
-            "item_entries": item_entries,
+            "manifest": build_manifest(item_entries, write_page),
         }
-        self._message_items.setdefault(namespace, {}).setdefault(thread_id, {}).update(
-            item_store
-        )
-        return normalized
+        return normalized, item_store, page_store
+
+    def _publish_staged(
+        self,
+        namespace: str,
+        thread_id: str,
+        item_store: Mapping[str, bytes],
+        page_store: Mapping[str, bytes],
+    ) -> None:
+        if item_store:
+            self._message_items.setdefault(namespace, {}).setdefault(
+                thread_id, {}
+            ).update(item_store)
+        if page_store:
+            self._manifest_pages.setdefault(namespace, {}).setdefault(
+                thread_id, {}
+            ).update(page_store)
 
     def _denormalize_state(
         self,
@@ -156,9 +212,11 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             return restored
 
         message_state = normalized_messages.get("state")
-        item_entries = normalized_messages.get("item_entries")
-        if not isinstance(message_state, Mapping) or not isinstance(item_entries, list):
-            return restored
+        item_entries = self._stored_manifest_entries(
+            namespace, thread_id, normalized_messages
+        )
+        if not isinstance(message_state, Mapping):
+            raise ValueError("Checkpoint manifest is missing its message state")
 
         messages = deepcopy(dict(message_state))
         messages["items"] = list(
@@ -167,11 +225,57 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         restored["messages"] = messages
         return restored
 
+    def _stored_manifest_entries(
+        self,
+        namespace: str,
+        thread_id: str,
+        normalized_messages: Mapping[str, Any],
+    ) -> Iterable[Any]:
+        """Choose the inline or segmented manifest layout for one snapshot."""
+        item_entries, manifest = resolve_manifest_layout(normalized_messages)
+        if item_entries is not None:
+            return item_entries
+        return iter_manifest_entries(
+            manifest,
+            lambda segment_ref: self._read_manifest_segment(
+                namespace, thread_id, segment_ref
+            ),
+        )
+
+    def _replacement_gc_live_refs(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        normalized: Mapping[str, Any],
+        page_store: Mapping[str, bytes],
+    ) -> tuple[set[str], set[str]]:
+        """Preflight post-replacement liveness including staged candidate pages."""
+        existing_runs = self._data.get(namespace, {}).get(thread_id, {})
+        runs = [
+            run for current_id, run in existing_runs.items() if current_id != run_id
+        ]
+        runs.append({"state": normalized})
+        return self._collect_live_refs(
+            namespace,
+            thread_id,
+            runs,
+            page_overlay=page_store,
+        )
+
+    def _read_manifest_segment(
+        self,
+        namespace: str,
+        thread_id: str,
+        segment_ref: str,
+    ) -> bytes:
+        return self._manifest_pages.get(namespace, {}).get(thread_id, {})[segment_ref]
+
     def _iter_message_items(
         self,
         namespace: str,
         thread_id: str,
-        item_entries: List[Any],
+        item_entries: Iterable[Any],
     ) -> Iterator[Dict[str, Any]]:
         """Yield restored items while validating stored payload bytes.
 
@@ -184,7 +288,11 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             if not isinstance(entry, Mapping):
                 raise ValueError("Checkpoint message entry is corrupted")
             item_ref = entry.get("item_ref")
-            if not isinstance(item_ref, str) or item_ref not in item_store:
+            if (
+                not isinstance(item_ref, str)
+                or not item_ref
+                or item_ref not in item_store
+            ):
                 raise ValueError(
                     "Checkpoint message item is missing or corrupted: "
                     f"{namespace}/{thread_id}/{item_ref!r}"
@@ -213,11 +321,13 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         self._validate_checkpoint_envelope(state.get("_checkpoint"))
         normalized_messages = state.get("_messages")
         if isinstance(normalized_messages, Mapping):
-            message_state = normalized_messages.get("state")
-            item_entries = normalized_messages.get("item_entries")
-            if isinstance(message_state, Mapping) and isinstance(item_entries, list):
-                for _ in self._iter_message_items(namespace, thread_id, item_entries):
-                    pass
+            item_entries = self._stored_manifest_entries(
+                namespace, thread_id, normalized_messages
+            )
+            if not isinstance(normalized_messages.get("state"), Mapping):
+                raise ValueError("Checkpoint manifest is missing its message state")
+            for _ in self._iter_message_items(namespace, thread_id, item_entries):
+                pass
         if "_checkpoint" not in state:
             return {}
         return {"_checkpoint": deepcopy(state["_checkpoint"])}
@@ -227,43 +337,112 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
         return "item_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
 
-    def _collect_live_item_refs(self, namespace: str, thread_id: str) -> set[str]:
-        live: set[str] = set()
-        thread = self._data.get(namespace, {}).get(thread_id, {})
-        for run in thread.values():
-            live.update(self._collect_refs_from_state(run.get("state", {})))
-        return live
+    def _collect_live_refs(
+        self,
+        namespace: str,
+        thread_id: str,
+        runs: Iterable[Mapping[str, Any]] | None = None,
+        page_overlay: Mapping[str, bytes] | None = None,
+    ) -> tuple[set[str], set[str]]:
+        live_items: set[str] = set()
+        live_segments: set[str] = set()
+        seen_segments: set[str] = set()
+        if runs is None:
+            runs = self._data.get(namespace, {}).get(thread_id, {}).values()
+
+        def read_page(segment_ref: str) -> bytes:
+            if page_overlay is not None:
+                staged = page_overlay.get(segment_ref)
+                if staged is not None:
+                    return staged
+            return self._read_manifest_segment(namespace, thread_id, segment_ref)
+
+        for run in runs:
+            self._collect_run_refs(
+                run,
+                read_page,
+                live_items,
+                live_segments,
+                seen_segments,
+            )
+        return live_items, live_segments
+
+    def _collect_run_refs(
+        self,
+        run: Mapping[str, Any],
+        read_page,
+        live_items: set[str],
+        live_segments: set[str],
+        seen_segments: set[str],
+    ) -> None:
+        messages = run.get("state", {}).get("_messages")
+        if not isinstance(messages, Mapping):
+            return
+        item_entries, manifest = resolve_manifest_layout(messages)
+        if not isinstance(messages.get("state"), Mapping):
+            raise ValueError("Checkpoint manifest is missing its message state")
+        if item_entries is not None:
+            live_items.update(self._collect_entry_refs(item_entries))
+        if manifest is None:
+            return
+        for segment_ref, entries in iter_manifest_pages(manifest, read_page):
+            if segment_ref in seen_segments:
+                # A seen page implies its whole parent chain is live already.
+                break
+            seen_segments.add(segment_ref)
+            live_segments.add(segment_ref)
+            live_items.update(self._collect_entry_refs(entries))
 
     @staticmethod
-    def _collect_refs_from_state(state: Any) -> set[str]:
-        if not isinstance(state, Mapping):
-            return set()
-        messages = state.get("_messages")
-        if not isinstance(messages, Mapping):
-            return set()
-        item_entries = messages.get("item_entries")
-        if not isinstance(item_entries, list):
-            return set()
-        return {
-            entry["item_ref"]
-            for entry in item_entries
-            if isinstance(entry, Mapping) and isinstance(entry.get("item_ref"), str)
-        }
+    def _collect_entry_refs(entries: Iterable[Any]) -> set[str]:
+        refs: set[str] = set()
+        for index, entry in enumerate(entries):
+            if not isinstance(entry, Mapping):
+                raise ValueError(f"Checkpoint message entry {index} is corrupted")
+            item_ref = entry.get("item_ref")
+            if not isinstance(item_ref, str) or not item_ref:
+                raise ValueError(
+                    f"Checkpoint message entry {index} is missing or corrupted"
+                )
+            refs.add(item_ref)
+        return refs
 
     def _cleanup_orphaned_items(self, namespace: str, thread_id: str) -> None:
-        item_store = self._message_items.get(namespace, {}).get(thread_id)
-        if item_store is None:
+        self._prune_live_refs(
+            namespace,
+            thread_id,
+            self._collect_live_refs(namespace, thread_id),
+        )
+
+    def _prune_live_refs(
+        self,
+        namespace: str,
+        thread_id: str,
+        live_refs: tuple[set[str], set[str]],
+    ) -> None:
+        live_items, live_segments = live_refs
+        self._prune_store(self._message_items, namespace, thread_id, live_items)
+        self._prune_store(self._manifest_pages, namespace, thread_id, live_segments)
+
+    def _prune_store(
+        self,
+        store: Dict[str, Dict[str, Dict[str, bytes]]],
+        namespace: str,
+        thread_id: str,
+        live: set[str],
+    ) -> None:
+        values = store.get(namespace, {}).get(thread_id)
+        if values is None:
             return
-        live = self._collect_live_item_refs(namespace, thread_id)
-        for item_ref in list(item_store):
-            if item_ref not in live:
-                del item_store[item_ref]
-        if not item_store:
-            ns_items = self._message_items.get(namespace)
-            if ns_items is not None:
-                ns_items.pop(thread_id, None)
-                if not ns_items:
-                    self._message_items.pop(namespace, None)
+        for ref in list(values):
+            if ref not in live:
+                del values[ref]
+        if not values:
+            ns_values = store.get(namespace)
+            if ns_values is not None:
+                ns_values.pop(thread_id, None)
+                if not ns_values:
+                    store.pop(namespace, None)
 
     def save_state(
         self,
@@ -274,9 +453,27 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
     ) -> None:
         with self._lock:
             self._validate_checkpoint_envelope(state.get("_checkpoint"))
+            previous = self._get_run(namespace, thread_id, run_id)
+            normalized, item_store, page_store = self._stage_state(
+                namespace, thread_id, state
+            )
+            live_refs = None
+            if previous is not None and replacement_needs_segment_gc(
+                previous["state"], normalized
+            ):
+                live_refs = self._replacement_gc_live_refs(
+                    namespace,
+                    thread_id,
+                    run_id,
+                    normalized,
+                    page_store,
+                )
+            self._publish_staged(namespace, thread_id, item_store, page_store)
             run = self._ensure_run(namespace, thread_id, run_id)
-            run["state"] = self._normalize_state(namespace, thread_id, state)
+            run["state"] = normalized
             run["updated_at"] = time.time()
+            if live_refs is not None:
+                self._prune_live_refs(namespace, thread_id, live_refs)
 
     def load_state(
         self,
@@ -358,14 +555,44 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             if isinstance(messages, dict):
                 messages["thread_id"] = target_thread_id
 
-            target = self._ensure_run(namespace, target_thread_id, target_run_id)
-            target["state"] = self._normalize_state(
+            normalized, item_store, page_store = self._stage_state(
                 namespace,
                 target_thread_id,
                 forked,
             )
+            previous_target = self._get_run(namespace, target_thread_id, target_run_id)
+            live_refs = None
+            if previous_target is not None and replacement_needs_segment_gc(
+                previous_target["state"], normalized
+            ):
+                live_refs = self._replacement_gc_live_refs(
+                    namespace,
+                    target_thread_id,
+                    target_run_id,
+                    normalized,
+                    page_store,
+                )
+            else:
+                # Fail before publishing when another run in the target thread
+                # has a corrupt manifest that post-publication GC must read.
+                existing_runs = self._data.get(namespace, {}).get(target_thread_id, {})
+                self._collect_live_refs(
+                    namespace,
+                    target_thread_id,
+                    (
+                        run
+                        for target_id, run in existing_runs.items()
+                        if target_id != target_run_id
+                    ),
+                )
+            self._publish_staged(namespace, target_thread_id, item_store, page_store)
+            target = self._ensure_run(namespace, target_thread_id, target_run_id)
+            target["state"] = normalized
             target["updated_at"] = time.time()
-            self._cleanup_orphaned_items(namespace, target_thread_id)
+            if live_refs is not None:
+                self._prune_live_refs(namespace, target_thread_id, live_refs)
+            else:
+                self._cleanup_orphaned_items(namespace, target_thread_id)
             return self._denormalize_state(namespace, target_thread_id, target["state"])
 
     def save_with_event(
@@ -377,10 +604,29 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         event: Mapping[str, Any],
     ) -> None:
         with self._lock:
+            prepared_event = deepcopy(dict(event))
+            previous = self._get_run(namespace, thread_id, run_id)
+            normalized, item_store, page_store = self._stage_state(
+                namespace, thread_id, state
+            )
+            live_refs = None
+            if previous is not None and replacement_needs_segment_gc(
+                previous["state"], normalized
+            ):
+                live_refs = self._replacement_gc_live_refs(
+                    namespace,
+                    thread_id,
+                    run_id,
+                    normalized,
+                    page_store,
+                )
+            self._publish_staged(namespace, thread_id, item_store, page_store)
             run = self._ensure_run(namespace, thread_id, run_id)
-            run["state"] = self._normalize_state(namespace, thread_id, state)
+            run["state"] = normalized
             run["updated_at"] = time.time()
-            run["events"].append(deepcopy(dict(event)))
+            run["events"].append(prepared_event)
+            if live_refs is not None:
+                self._prune_live_refs(namespace, thread_id, live_refs)
 
     def commit_state(
         self,
@@ -416,7 +662,21 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 if event is not None
                 else {"event_type": "checkpoint", "status": committed.get("status")}
             )
-            normalized = self._normalize_state(namespace, thread_id, committed)
+            normalized, item_store, page_store = self._stage_state(
+                namespace, thread_id, committed
+            )
+            live_refs = None
+            if run is not None and replacement_needs_segment_gc(
+                run["state"], normalized
+            ):
+                live_refs = self._replacement_gc_live_refs(
+                    namespace,
+                    thread_id,
+                    run_id,
+                    normalized,
+                    page_store,
+                )
+            self._publish_staged(namespace, thread_id, item_store, page_store)
             if run is None:
                 run = self._ensure_run(namespace, thread_id, run_id)
             run["state"] = normalized
@@ -426,6 +686,8 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if prepared_event is not None:
                 run["events"].append(prepared_event)
+            if live_refs is not None:
+                self._prune_live_refs(namespace, thread_id, live_refs)
             return CheckpointCommit(
                 next_revision,
                 committed,
@@ -476,11 +738,52 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
     ) -> bool:
         with self._lock:
             thread_runs = self._data.get(namespace, {}).get(thread_id, {})
-            if run_id in thread_runs:
-                del thread_runs[run_id]
-                self._cleanup_orphaned_items(namespace, thread_id)
-                return True
-            return False
+            if run_id not in thread_runs:
+                return False
+            remaining = [run for rid, run in thread_runs.items() if rid != run_id]
+            live_items, live_segments = self._collect_live_refs(
+                namespace, thread_id, remaining
+            )
+            del thread_runs[run_id]
+            self._prune_store(self._message_items, namespace, thread_id, live_items)
+            self._prune_store(self._manifest_pages, namespace, thread_id, live_segments)
+            return True
+
+    def _plan_clear(
+        self,
+        namespaces: List[str],
+        thread_id: str | None,
+        cutoff: float | None,
+    ) -> tuple[
+        List[tuple[str, str, List[str]]],
+        List[tuple[str, str, set[str], set[str]]],
+    ]:
+        """Validate and stage every deletion before mutating durable state."""
+        removals: List[tuple[str, str, List[str]]] = []
+        prunes: List[tuple[str, str, set[str], set[str]]] = []
+        for ns in namespaces:
+            ns_data = self._data.get(ns)
+            if ns_data is None:
+                continue
+            threads = [thread_id] if thread_id is not None else list(ns_data.keys())
+            for sid in threads:
+                thread = ns_data.get(sid)
+                if thread is None:
+                    continue
+                keep = {
+                    rid: run
+                    for rid, run in thread.items()
+                    if cutoff is not None and run["updated_at"] >= cutoff
+                }
+                to_delete = [rid for rid in thread if rid not in keep]
+                if not to_delete:
+                    continue
+                live_items, live_segments = self._collect_live_refs(
+                    ns, sid, keep.values()
+                )
+                removals.append((ns, sid, to_delete))
+                prunes.append((ns, sid, live_items, live_segments))
+        return removals, prunes
 
     def clear(
         self,
@@ -490,31 +793,24 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         older_than: float | None = None,
     ) -> int:
         cutoff = time.time() - older_than if older_than is not None else None
-        removed = 0
         with self._lock:
             namespaces = (
                 [namespace] if namespace is not None else list(self._data.keys())
             )
-            for ns in namespaces:
+            removals, prunes = self._plan_clear(namespaces, thread_id, cutoff)
+            removed = 0
+            for ns, sid, run_ids in removals:
+                thread = self._data[ns][sid]
+                for rid in run_ids:
+                    del thread[rid]
+                    removed += 1
+            for ns, sid, live_items, live_segments in prunes:
+                self._prune_store(self._message_items, ns, sid, live_items)
+                self._prune_store(self._manifest_pages, ns, sid, live_segments)
+            for ns, sid, _run_ids in removals:
                 ns_data = self._data.get(ns)
-                if ns_data is None:
-                    continue
-                threads = [thread_id] if thread_id is not None else list(ns_data.keys())
-                for sid in threads:
-                    thread = ns_data.get(sid)
-                    if thread is None:
-                        continue
-                    to_delete = []
-                    for rid, run in thread.items():
-                        if cutoff is not None and run["updated_at"] >= cutoff:
-                            continue
-                        to_delete.append(rid)
-                    for rid in to_delete:
-                        del thread[rid]
-                        removed += 1
-                    self._cleanup_orphaned_items(ns, sid)
-                    if not thread:
-                        del ns_data[sid]
-                if not ns_data:
-                    del self._data[ns]
+                if ns_data is not None and not ns_data.get(sid):
+                    ns_data.pop(sid, None)
+                    if not ns_data:
+                        self._data.pop(ns, None)
         return removed
