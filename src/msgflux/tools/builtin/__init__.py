@@ -33,6 +33,7 @@ from msgflux.tools.builtin.workspace_tools import (
     DeleteTool,
     EditTool,
     ReadFileTool,
+    TextEdit,
     WriteTool,
 )
 
@@ -43,6 +44,7 @@ __all__ = [
     "GlobTool",
     "GrepTool",
     "WriteTool",
+    "TextEdit",
     "EditTool",
     "ReadFileTool",
     "BashTool",

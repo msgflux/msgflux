@@ -14,7 +14,7 @@ from msgflux.runtime import (
     WorkspaceEditor,
     execution_context,
 )
-from msgflux.tools.builtin import ApplyPatchTool
+from msgflux.tools.builtin import ApplyPatchTool, TextEdit
 from msgflux.tools.runtime import ToolIntent
 
 
@@ -22,10 +22,13 @@ from msgflux.tools.runtime import ToolIntent
     "prepare",
     [
         lambda editor: editor.prepare_edit("/missing.txt", "old", "new"),
+        lambda editor: editor.prepare_edits(
+            "/missing.txt", [TextEdit(old="old", new="new", replace_all=True)]
+        ),
         lambda editor: editor.prepare_transform("/missing.txt", str.upper),
         lambda editor: editor.prepare_delete("/missing.txt"),
     ],
-    ids=["edit", "transform", "delete"],
+    ids=["edit", "edits", "transform", "delete"],
 )
 def test_missing_change_target_has_enoent_details(prepare):
     filesystem = InMemoryWorkspace("missing-target", {})
@@ -52,6 +55,8 @@ def test_missing_change_target_has_enoent_details(prepare):
     assert raised.value.errno == errno.ENOENT
     assert raised.value.filename == "/missing.txt"
     assert "No such file or directory" in str(raised.value)
+    with execution_context(scope=scope), pytest.raises(FileNotFoundError):
+        filesystem.read_bytes("/missing.txt")
 
 
 @pytest.mark.asyncio

@@ -612,9 +612,25 @@ class AgentWorkspaceEditor:
         with self._workspace._bound():
             return self._editor().prepare_create(self._workspace.resolve(path), content)
 
-    def prepare_edit(self, path: str, old: str, new: str) -> PreparedFileChange:
+    def prepare_edit(
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool = False,
+    ) -> PreparedFileChange:
         with self._workspace._bound():
-            return self._editor().prepare_edit(self._workspace.resolve(path), old, new)
+            return self._editor().prepare_edit(
+                self._workspace.resolve(path),
+                old,
+                new,
+                replace_all=replace_all,
+            )
+
+    def prepare_edits(self, path: str, edits) -> PreparedFileChange:
+        with self._workspace._bound():
+            return self._editor().prepare_edits(self._workspace.resolve(path), edits)
 
     def prepare_transform(
         self, path: str, transform: Callable[[str], str]

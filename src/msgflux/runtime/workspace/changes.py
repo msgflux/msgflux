@@ -20,6 +20,76 @@ from msgflux.runtime.workspace.filesystem import (
 )
 
 
+class TextEdit(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """One ordered exact replacement for an EditTool batch."""
+
+    old: str
+    new: str
+    replace_all: bool = False
+
+    def __post_init__(self):
+        if not isinstance(self.old, str) or not self.old:
+            raise ValueError("old must be non-empty text")
+        if not isinstance(self.new, str):
+            raise TypeError("new must be text")
+        if type(self.replace_all) is not bool:
+            raise TypeError("replace_all must be a boolean")
+
+
+def _utf8_size(text: str) -> int:
+    """Return UTF-8 byte length without materializing one large byte string."""
+    if text.isascii():
+        return len(text)
+    return sum(
+        len(text[offset : offset + 65536].encode("utf-8"))
+        for offset in range(0, len(text), 65536)
+    )
+
+
+def _replace_all_text(text: str, old: str, new: str) -> str:
+    return text.replace(old, new)
+
+
+def _replace_once_text(text: str, start: int, old: str, new: str) -> str:
+    return text[:start] + new + text[start + len(old) :]
+
+
+def _replace_exact_bounded(
+    text: str,
+    text_bytes: int,
+    old: str,
+    new: str,
+    *,
+    replace_all: bool,
+    max_bytes: int,
+) -> tuple[str, int]:
+    """Apply one exact edit only after proving its UTF-8 result fits."""
+    if type(replace_all) is not bool:
+        raise TypeError("replace_all must be a boolean")
+    if not isinstance(old, str) or not old or not isinstance(new, str):
+        raise ValueError("old must be non-empty text and new must be text")
+    old_bytes = _utf8_size(old)
+    new_bytes = _utf8_size(new)
+    if old_bytes > max_bytes or new_bytes > max_bytes:
+        raise ValueError("File exceeds max_edit_bytes")
+    if replace_all:
+        count = text.count(old)
+        if count == 0:
+            raise ValueError("old must match at least once")
+        start = None
+    else:
+        start = text.find(old)
+        if start < 0 or text.find(old, start + 1) >= 0:
+            raise ValueError("old must match exactly once")
+        count = 1
+    result_bytes = text_bytes - count * old_bytes + count * new_bytes
+    if result_bytes > max_bytes:
+        raise ValueError("File exceeds max_edit_bytes")
+    if replace_all:
+        return _replace_all_text(text, old, new), result_bytes
+    return _replace_once_text(text, start, old, new), result_bytes
+
+
 class PreparedFileChange(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
 ):
@@ -147,11 +217,8 @@ class WorkspaceEditor:
             raise TypeError("File contents must be text")
         if len(text) > self.max_edit_bytes:
             raise ValueError("File exceeds max_edit_bytes")
-        size = 0
-        for offset in range(0, len(text), 65536):
-            size += len(text[offset : offset + 65536].encode("utf-8"))
-            if size > self.max_edit_bytes:
-                raise ValueError("File exceeds max_edit_bytes")
+        if _utf8_size(text) > self.max_edit_bytes:
+            raise ValueError("File exceeds max_edit_bytes")
 
     def _read(self, path):
         try:
@@ -184,24 +251,63 @@ class WorkspaceEditor:
         path = workspace_path(path)
         return self._prepare(path, self._read(path), content)
 
-    def prepare_edit(self, path: str, old: str, new: str) -> PreparedFileChange:
-        """Replace one unambiguous exact match, with no whitespace guessing."""
+    def prepare_edit(
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool = False,
+    ) -> PreparedFileChange:
+        """Replace exact matches, with no whitespace guessing.
+
+        The default requires one unambiguous match. ``replace_all`` replaces all
+        non-overlapping occurrences and requires at least one match.
+        """
+        if type(replace_all) is not bool:
+            raise TypeError("replace_all must be a boolean")
         if not isinstance(old, str) or not old or not isinstance(new, str):
             raise ValueError("old must be non-empty text and new must be text")
-        self._check_text(old)
-        self._check_text(new)
+        return self.prepare_edits(
+            path, (TextEdit(old=old, new=new, replace_all=replace_all),)
+        )
+
+    def prepare_edits(self, path: str, edits) -> PreparedFileChange:
+        """Prepare ordered exact edits from one snapshot with per-step bounds."""
+        if edits is None:
+            raise ValueError("edits must be a non-empty sequence")
+        edits = tuple(edits)
+        if not edits:
+            raise ValueError("edits must be a non-empty sequence")
+        if any(not isinstance(edit, TextEdit) for edit in edits):
+            raise TypeError("edits must contain TextEdit values")
+        for edit in edits:
+            self._check_text(edit.old)
+            self._check_text(edit.new)
         path = workspace_path(path)
         before = self._read(path)
         if before is None:
             raise FileNotFoundError(errno.ENOENT, "No such file or directory", path)
-        start = before.find(old)
-        if start < 0 or before.find(old, start + 1) >= 0:
-            raise ValueError("old must match exactly once")
-        if len(before) - len(old) + len(new) > self.max_edit_bytes:
+        after = before
+        after_bytes = self._checked_bytes(before)
+        for edit in edits:
+            after, after_bytes = _replace_exact_bounded(
+                after,
+                after_bytes,
+                edit.old,
+                edit.new,
+                replace_all=edit.replace_all,
+                max_bytes=self.max_edit_bytes,
+            )
+        return self._prepare(path, before, after)
+
+    def _checked_bytes(self, text):
+        if not isinstance(text, str):
+            raise TypeError("File contents must be text")
+        size = _utf8_size(text)
+        if size > self.max_edit_bytes:
             raise ValueError("File exceeds max_edit_bytes")
-        return self._prepare(
-            path, before, before[:start] + new + before[start + len(old) :]
-        )
+        return size
 
     def prepare_create(self, path: str, content: str) -> PreparedFileChange:
         """Prepare a creation that cannot overwrite an existing file."""
@@ -360,8 +466,20 @@ class WorkspaceEditor:
     async def aprepare_write(self, path: str, content: str) -> PreparedFileChange:
         return await asyncio.to_thread(self.prepare_write, path, content)
 
-    async def aprepare_edit(self, path: str, old: str, new: str) -> PreparedFileChange:
-        return await asyncio.to_thread(self.prepare_edit, path, old, new)
+    async def aprepare_edit(
+        self,
+        path: str,
+        old: str,
+        new: str,
+        *,
+        replace_all: bool = False,
+    ) -> PreparedFileChange:
+        return await asyncio.to_thread(
+            self.prepare_edit, path, old, new, replace_all=replace_all
+        )
+
+    async def aprepare_edits(self, path: str, edits) -> PreparedFileChange:
+        return await asyncio.to_thread(self.prepare_edits, path, edits)
 
     async def aprepare_delete(self, path: str) -> PreparedFileChange:
         return await asyncio.to_thread(self.prepare_delete, path)
