@@ -25,7 +25,7 @@ import time
 from copy import deepcopy
 from itertools import islice
 from threading import RLock
-from typing import Any, Dict, List, Literal, Mapping
+from typing import Any, Dict, Iterator, List, Literal, Mapping
 from uuid import uuid4
 
 import msgspec
@@ -160,9 +160,26 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         if not isinstance(message_state, Mapping) or not isinstance(item_entries, list):
             return restored
 
-        item_store = self._message_items.get(namespace, {}).get(thread_id, {})
         messages = deepcopy(dict(message_state))
-        messages["items"] = []
+        messages["items"] = list(
+            self._iter_message_items(namespace, thread_id, item_entries)
+        )
+        restored["messages"] = messages
+        return restored
+
+    def _iter_message_items(
+        self,
+        namespace: str,
+        thread_id: str,
+        item_entries: List[Any],
+    ) -> Iterator[Dict[str, Any]]:
+        """Yield restored items while validating stored payload bytes.
+
+        Commit validation consumes the iterator without retaining the timeline,
+        but it still decodes and restores every manifest occurrence so malformed
+        bytes and wrong payload shapes fail before publication.
+        """
+        item_store = self._message_items.get(namespace, {}).get(thread_id, {})
         for entry in item_entries:
             if not isinstance(entry, Mapping):
                 raise ValueError("Checkpoint message entry is corrupted")
@@ -172,13 +189,38 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                     "Checkpoint message item is missing or corrupted: "
                     f"{namespace}/{thread_id}/{item_ref!r}"
                 )
-            item = restore_item_occurrence(
-                msgspec.msgpack.decode(item_store[item_ref]),
-                entry,
-            )
-            messages["items"].append(item)
-        restored["messages"] = messages
-        return restored
+            payload = msgspec.msgpack.decode(item_store[item_ref])
+            if not isinstance(payload, Mapping):
+                raise ValueError(
+                    "Checkpoint message item is missing or corrupted: "
+                    f"{namespace}/{thread_id}/{item_ref!r}"
+                )
+            yield restore_item_occurrence(payload, entry)
+
+    def _load_commit_envelope(
+        self,
+        namespace: str,
+        thread_id: str,
+        state: Mapping[str, Any],
+    ) -> Dict[str, Any]:
+        """Return only the previous envelope needed by a revision commit.
+
+        The revision preparation reads ``_checkpoint`` from the current state and
+        inherits its branch, head and extensions. A full previous timeline is not
+        retained, but payload bytes are still decoded and validated so
+        corruption cannot be published.
+        """
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
+        normalized_messages = state.get("_messages")
+        if isinstance(normalized_messages, Mapping):
+            message_state = normalized_messages.get("state")
+            item_entries = normalized_messages.get("item_entries")
+            if isinstance(message_state, Mapping) and isinstance(item_entries, list):
+                for _ in self._iter_message_items(namespace, thread_id, item_entries):
+                    pass
+        if "_checkpoint" not in state:
+            return {}
+        return {"_checkpoint": deepcopy(state["_checkpoint"])}
 
     @staticmethod
     def _item_ref(item: Any) -> str:
@@ -356,7 +398,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         with self._lock:
             run = self._get_run(namespace, thread_id, run_id)
             current = (
-                self._denormalize_state(namespace, thread_id, run["state"])
+                self._load_commit_envelope(namespace, thread_id, run["state"])
                 if run is not None
                 else {}
             )

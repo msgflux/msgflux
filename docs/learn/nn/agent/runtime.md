@@ -3386,6 +3386,37 @@ completed runs should leave no live EventHub thread or watcher state. Compare
 the retained-memory samples and late slope on the same host; `tracemalloc` does
 not measure process RSS or memory held by external model providers.
 
+### Long-lived threads and retained history
+
+Reusing a `thread_id` keeps conversation continuity across runs. Automatic
+compaction, when enabled, reduces the context sent to the model by recording a
+new context view. The canonical history and checkpoint records remain available
+for recovery and inspection. A small model context therefore does not imply a
+small checkpoint or constant local processing cost.
+
+Batch construction and copying of ordinary history lists assign item IDs in a
+single pass. Copies preserve occurrence IDs and isolate nested item data and
+metadata. Arbitrary iterators keep per-item validation because they can modify
+the timeline between yields.
+
+The built-in stores validate prior checkpoint payloads before accepting a new
+revision. SQLite reads those payloads in bounded batches, and revision checks
+avoid building another complete copy of the previous message history. Corrupt
+payloads still fail before the new revision is published.
+
+The built-in SQLite store deduplicates message payloads within a thread. Each
+retained run still records its ordered message references. Loading full history,
+copying it, or saving a full checkpoint can cost more as the thread grows, even
+when the latest compacted view is small. Measure checkpoint latency and size
+separately from model input tokens and process memory.
+
+For a local comparison, use the `shared` thread mode in the memory benchmark
+above. It continues one thread across the scripted runs, including reopening the
+store between batches. The `fresh` mode gives each run a different thread.
+Both modes use a local model and tool without provider requests. The benchmark
+measures retained Python allocations and checkpoint size; it does not establish
+constant latency for an indefinitely growing thread.
+
 ### Offline extension matrix
 
 Run the same tool trajectory with fresh agents and stores for each combination:

@@ -29,7 +29,7 @@ import time
 from functools import wraps
 from pathlib import Path
 from threading import RLock
-from typing import Any, Dict, List, Literal, Mapping
+from typing import Any, Dict, Iterator, List, Literal, Mapping
 from uuid import uuid4
 
 from msgflux._private.chat_items import (
@@ -71,6 +71,8 @@ VALUES (?, ?, ?, ?, ?, ?)
 _SELECT_STATE = """\
 SELECT state FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?
 """
+
+_ITEM_BATCH_SIZE = 500
 
 _DELETE_RUN = "DELETE FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?"
 
@@ -307,8 +309,47 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             return state
 
         messages = dict(message_state)
-        messages["items"] = []
-        for entry in item_entries:
+        messages["items"] = list(
+            self._iter_message_items(namespace, thread_id, item_entries)
+        )
+        state["messages"] = messages
+        return state
+
+    def _iter_message_items(
+        self,
+        namespace: str,
+        thread_id: str,
+        item_entries: List[Any],
+    ) -> Iterator[Dict[str, Any]]:
+        """Yield restored items while validating payloads in bounded batches.
+
+        The manifest is walked in manifest order, but rows are fetched by an
+        indexed ``item_ref IN (...)`` query per batch instead of one query per
+        occurrence. Each referenced payload is still deserialized and restored,
+        so malformed JSON, wrong payload shapes and corruption fail identically
+        to the unbatched path. No full old timeline is accumulated.
+        """
+        for start in range(0, len(item_entries), _ITEM_BATCH_SIZE):
+            batch = item_entries[start : start + _ITEM_BATCH_SIZE]
+            refs = self._batch_item_refs(namespace, thread_id, batch)
+            item_text = self._fetch_item_texts(namespace, thread_id, refs)
+            self._ensure_batch_refs_present(namespace, thread_id, batch, item_text)
+            for entry in batch:
+                item_ref = entry["item_ref"]
+                payload = self._decode_item_payload(
+                    namespace, thread_id, item_ref, item_text[item_ref]
+                )
+                yield restore_item_occurrence(payload, entry)
+
+    @staticmethod
+    def _batch_item_refs(
+        namespace: str,
+        thread_id: str,
+        batch: List[Any],
+    ) -> List[str]:
+        refs: List[str] = []
+        seen: set[str] = set()
+        for entry in batch:
             if not isinstance(entry, Mapping):
                 raise ValueError("Checkpoint message entry is corrupted")
             item_ref = entry.get("item_ref")
@@ -317,20 +358,81 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                     "Checkpoint message item is missing or corrupted: "
                     f"{namespace}/{thread_id}/{item_ref!r}"
                 )
-            row = self._conn.execute(
-                "SELECT item FROM checkpoint_message_items "
-                "WHERE namespace=? AND thread_id=? AND item_ref=?",
-                (namespace, thread_id, item_ref),
-            ).fetchone()
-            if row is None:
+            if item_ref not in seen:
+                seen.add(item_ref)
+                refs.append(item_ref)
+        return refs
+
+    def _fetch_item_texts(
+        self,
+        namespace: str,
+        thread_id: str,
+        refs: List[str],
+    ) -> Dict[str, str]:
+        placeholders = ",".join("?" for _ in refs)
+        rows = self._conn.execute(
+            "SELECT item_ref, item FROM checkpoint_message_items "  # noqa: S608 - only `?` placeholders
+            f"WHERE namespace=? AND thread_id=? AND item_ref IN ({placeholders})",
+            (namespace, thread_id, *refs),
+        ).fetchall()
+        return {row[0]: row[1] for row in rows}
+
+    @staticmethod
+    def _ensure_batch_refs_present(
+        namespace: str,
+        thread_id: str,
+        batch: List[Any],
+        item_text: Mapping[str, str],
+    ) -> None:
+        for entry in batch:
+            item_ref = entry["item_ref"]
+            if item_ref not in item_text:
                 raise ValueError(
                     "Checkpoint message item is missing or corrupted: "
                     f"{namespace}/{thread_id}/{item_ref!r}"
                 )
-            item = restore_item_occurrence(self._deserialize(row[0]), entry)
-            messages["items"].append(item)
-        state["messages"] = messages
-        return state
+
+    def _decode_item_payload(
+        self,
+        namespace: str,
+        thread_id: str,
+        item_ref: str,
+        text: str,
+    ) -> Dict[str, Any]:
+        payload = self._deserialize(text)
+        if not isinstance(payload, Mapping):
+            raise ValueError(
+                "Checkpoint message item is missing or corrupted: "
+                f"{namespace}/{thread_id}/{item_ref!r}"
+            )
+        return payload
+
+    def _load_commit_envelope(
+        self,
+        namespace: str,
+        thread_id: str,
+        state_text: str,
+    ) -> Dict[str, Any]:
+        """Return only the previous envelope needed by a revision commit.
+
+        ``_prepare_revision_state`` reads ``_checkpoint`` from the current state
+        and inherits its branch, head and extensions. Hydrating the prior
+        timeline into a full ``messages`` mapping is unnecessary, but its
+        payloads are still validated in bounded batches so corruption cannot be
+        published.
+        """
+        state = self._deserialize(state_text)
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
+        normalized_messages = state.get("_messages")
+        if isinstance(normalized_messages, Mapping):
+            message_state = normalized_messages.get("state")
+            item_entries = normalized_messages.get("item_entries")
+            if isinstance(message_state, Mapping) and isinstance(item_entries, list):
+                for _ in self._iter_message_items(namespace, thread_id, item_entries):
+                    pass
+        if "_checkpoint" not in state:
+            return {}
+        return {"_checkpoint": state["_checkpoint"]}
 
     @staticmethod
     def _item_ref(item: Any) -> str:
@@ -568,7 +670,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             cur.execute("BEGIN IMMEDIATE")
             row = cur.execute(_SELECT_STATE, (namespace, thread_id, run_id)).fetchone()
             current = (
-                self._denormalize_state(namespace, thread_id, row[0]) if row else {}
+                self._load_commit_envelope(namespace, thread_id, row[0]) if row else {}
             )
             committed, next_revision = self._prepare_revision_state(
                 state,
