@@ -86,6 +86,33 @@
         )
         ```
 
+    === "OpenCode Zen"
+
+        Authenticate with `OPENCODE_ZEN_API_KEY` for OpenCode's paid,
+        pay-as-you-go Console gateway. Chat Completions is the default protocol;
+        `api_mode="responses"` selects the OpenAI-compatible Responses endpoint
+        and `api_mode="anthropic_messages"` selects the native Anthropic
+        Messages backend. All three use Bearer authentication and the
+        `opencode-zen/model` namespace. `OPENCODE_ZEN_BASE_URL` overrides the
+        OpenAI-compatible base URL
+        (`https://opencode.ai/inference/openai/v1`). Credentials do not fall
+        back to `OPENCODE_GO_API_KEY`, `OPENCODE_API_KEY`, or `OPENAI_API_KEY`,
+        and native Google/Interactions is not supported.
+
+        ```python
+        import msgflux as mf
+
+        mf.set_envs(OPENCODE_ZEN_API_KEY="...")
+        model = mf.Model.chat_completion("opencode-zen/deepseek-v4.1-flash")
+        responses_model = mf.Model.chat_completion(
+            "opencode-zen/gpt-6-luna", api_mode="responses"
+        )
+        anthropic_model = mf.Model.chat_completion(
+            "opencode-zen/claude-haiku-5-5",
+            api_mode="anthropic_messages",
+        )
+        ```
+
     === "SambaNova"
 
         Authenticate by setting the `SAMBANOVA_API_KEY` env variable.

@@ -19,27 +19,36 @@ authorized workspace; installing the extra does not grant filesystem access.
 
 ### Chat Completion
 
-| Provider    | Dependency | Auth Env               |
-|-------------|------------|------------------------|
-| Anthropic   | `msgflux`  | `ANTHROPIC_API_KEY`    |
-| Baseten     | `msgflux`  | `BASETEN_API_KEY`      |
-| Brave       | `msgflux`  | `BRAVE_SEARCH_API_KEY` |
-| Cerebras    | `msgflux`  | `CEREBRAS_API_KEY`     |
-| Fireworks   | `msgflux`  | `FIREWORKS_API_KEY`    |
-| Gemini      | `msgflux`  | `GEMINI_API_KEY`       |
-| Groq        | `msgflux`  | `GROQ_API_KEY`         |
-| Ollama      | `msgflux`  |                        |
-| NVIDIA      | `msgflux`  | `NVIDIA_API_KEY`       |
-| OpenAI      | `msgflux`  | `OPENAI_API_KEY`       |
-| OpenCode Go | `msgflux`  | `OPENCODE_GO_API_KEY`     |
-| OpenRouter  | `msgflux`  | `OPENROUTER_API_KEY`   |
-| SambaNova   | `msgflux`  | `SAMBANOVA_API_KEY`    |
-| Together    | `msgflux`  | `TOGETHER_API_KEY`     |
-| vLLM        | `msgflux`  |                        |
+| Provider     | Dependency | Auth Env               |
+|--------------|------------|------------------------|
+| Anthropic    | `msgflux`  | `ANTHROPIC_API_KEY`    |
+| Baseten      | `msgflux`  | `BASETEN_API_KEY`      |
+| Brave        | `msgflux`  | `BRAVE_SEARCH_API_KEY` |
+| Cerebras     | `msgflux`  | `CEREBRAS_API_KEY`     |
+| Fireworks    | `msgflux`  | `FIREWORKS_API_KEY`    |
+| Gemini       | `msgflux`  | `GEMINI_API_KEY`       |
+| Groq         | `msgflux`  | `GROQ_API_KEY`         |
+| Ollama       | `msgflux`  |                        |
+| NVIDIA       | `msgflux`  | `NVIDIA_API_KEY`       |
+| OpenAI       | `msgflux`  | `OPENAI_API_KEY`       |
+| OpenCode Go  | `msgflux`  | `OPENCODE_GO_API_KEY`  |
+| OpenCode Zen | `msgflux`  | `OPENCODE_ZEN_API_KEY` |
+| OpenRouter   | `msgflux`  | `OPENROUTER_API_KEY`   |
+| SambaNova    | `msgflux`  | `SAMBANOVA_API_KEY`    |
+| Together     | `msgflux`  | `TOGETHER_API_KEY`     |
+| vLLM         | `msgflux`  |                        |
 
-OpenCode Go uses the same `OPENCODE_GO_API_KEY` Bearer credential for Chat
+OpenCode Go uses `OPENCODE_GO_API_KEY` as a Bearer credential for Chat
 Completions, Responses, and native Anthropic Messages; it requires no SDK
 dependency.
+
+OpenCode Zen is OpenCode's paid, pay-as-you-go gateway (called OpenCode Console
+in current OpenCode documentation). It uses `OPENCODE_ZEN_API_KEY` and the same
+three explicit protocols, with `OPENCODE_ZEN_BASE_URL` overriding the
+OpenAI-compatible base. The separate environment variables isolate msgFlux
+configuration; they do not change the account or billing plan enforced by
+OpenCode. See [OpenCode Zen](learn/models/chat_completion.md#opencode-zen) for
+examples and protocol details.
 
 ### Image Embedder
 

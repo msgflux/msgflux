@@ -496,7 +496,8 @@ fixtures rather than the live Haiku validation matrix.
 
 OpenCode Go exposes selected coding models through three gateway protocols.
 The `opencode-go` provider supports them explicitly and keeps Chat Completions
-as the default:
+as the default. For the paid, pay-as-you-go Console gateway, see
+[OpenCode Zen](#opencode-zen) below.
 
 | `api_mode` | Endpoint base | Notes |
 |------------|---------------|-------|
@@ -643,6 +644,157 @@ when saving a conversation; rebuilding history from answer text alone loses
 the signed state needed for faithful replay. Anthropic cache counters are
 aggregated into the canonical usage report so cached input tokens and
 cache-hit percentages remain meaningful.
+
+### OpenCode Zen
+
+OpenCode Zen is OpenCode's paid, pay-as-you-go model gateway. Current OpenCode
+documentation calls this offering [OpenCode Console](https://opencode.ai/v2/docs/console/models/)
+(the pay-as-you-go provider); `Zen` is the name used by earlier integrations
+and this provider's namespace. It is distinct from the
+[OpenCode Go](https://opencode.ai/v2/docs/console/go/) subscription: Zen spends
+the workspace balance per request, while Go draws on its included allowance and
+can fall back to that balance when Extra Usage is enabled. The dedicated
+`OPENCODE_ZEN_*` variables isolate msgFlux configuration; they do not select a
+plan or change what OpenCode bills.
+
+The `opencode-zen` provider exposes three explicit gateway protocols and keeps
+Chat Completions as the default:
+
+| `api_mode` | Endpoint base | Notes |
+|------------|---------------|-------|
+| `"chat_completions"` (default) | `https://opencode.ai/inference/openai/v1` | OpenAI-compatible Chat Completions. |
+| `"responses"` | `https://opencode.ai/inference/openai/v1` | OpenAI-compatible Responses. |
+| `"anthropic_messages"` | `https://opencode.ai/inference/anthropic` | Native Anthropic Messages with signed thinking history. |
+
+These are the current Console paths. They differ from OpenCode Go's
+`/inference/go/openai/v1` and `/inference/go/anthropic` bases; msgFlux does not
+use the historical `/zen/v1` paths.
+
+Select the protocol explicitly instead of guessing from a model name. OpenCode
+lists each model's native API and translates every text model through the other
+supported APIs. msgFlux keeps no model allowlist, so a model that the service
+does not serve through the selected protocol fails at OpenCode rather than in
+the provider. Check the [OpenCode inference endpoints](https://opencode.ai/v2/docs/console/api/inference/)
+and [model list](https://opencode.ai/v2/docs/console/models/) for availability.
+
+Authenticate with `OPENCODE_ZEN_API_KEY`. All three protocols use
+`Authorization: Bearer`; the native Anthropic mode never reads
+`ANTHROPIC_API_KEY` or sends an `x-api-key` header. There is no fallback to
+`OPENCODE_GO_API_KEY`, `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or another
+provider's credential. An absent key or empty `OPENCODE_ZEN_BASE_URL` raises
+locally instead of routing with a different provider's configuration.
+
+```python
+import msgflux as mf
+
+mf.set_envs(OPENCODE_ZEN_API_KEY="...")
+
+chat_model = mf.Model.chat_completion("opencode-zen/deepseek-v4.1-flash")
+responses_model = mf.Model.chat_completion(
+    "opencode-zen/gpt-6-luna", api_mode="responses"
+)
+anthropic_model = mf.Model.chat_completion(
+    "opencode-zen/claude-haiku-5-5",
+    api_mode="anthropic_messages",
+    reasoning_effort="low",
+)
+```
+
+The first model uses the default Chat Completions endpoint. The second selects
+OpenAI-compatible Responses. The third selects the native Anthropic Messages
+converter, including signed thinking replay and tool handling. Replace the
+model IDs with ones that OpenCode exposes through the selected protocol. The
+same synchronous, asynchronous, streaming, and tool interfaces apply to all
+three.
+
+!!! note
+    OpenCode limits free-tier chat models to its own client; a direct gateway
+    request can return HTTP `403` even with a valid key. Use paid Zen models or
+    OpenCode Go for direct API calls.
+
+Zen lists Gemini models with a native Google `generateContent` endpoint and can
+translate text models across the OpenAI and Anthropic APIs. msgFlux implements
+only the three gateway protocols above: it does not implement `generateContent`,
+and `api_mode="interactions"` is unsupported. Do not treat `opencode-zen` as a
+native Google provider.
+
+#### Model factory and serialization
+
+`opencode-zen` is a normal registered chat provider. The
+[Model factory](model.md) splits `opencode-zen/<model-id>`, resolves the
+provider class, and constructs it; no SDK or extra registration call is
+required. The provider is autoloaded with the others and appears in the usual
+provider listing.
+
+Serialized state retains `provider`, `model_id`, and the selected `api_mode`.
+`Model.from_serialized` restores the matching backend; an
+`anthropic_messages` model is restored as the native Anthropic backend rather
+than as the Chat Completions facade. Credentials and the per-instance session
+fallback are not serialized.
+
+#### Base URL override
+
+`OPENCODE_ZEN_BASE_URL` overrides the OpenAI-compatible base that includes
+`/v1`, for example `https://gateway.example/openai/v1`. Chat Completions and
+Responses append their endpoint path below that value.
+
+Native Anthropic needs the host base below which `/v1/messages` is mounted. The
+provider derives it from the same override using the shared OpenCode rule: a
+trailing `/openai/v1` becomes `/anthropic`, and any other trailing `/v1` is
+removed. A base without either suffix is used verbatim as the Anthropic host
+base.
+
+```python
+import msgflux as mf
+
+mf.set_envs(
+    OPENCODE_ZEN_API_KEY="...",
+    OPENCODE_ZEN_BASE_URL="https://gateway.example/openai/v1",
+)
+model = mf.Model.chat_completion("opencode-zen/deepseek-v4.1-flash")
+```
+
+This example sends Chat Completions to
+`https://gateway.example/openai/v1/chat/completions`; selecting
+`api_mode="anthropic_messages"` with the same environment sends native
+Anthropic requests to `https://gateway.example/anthropic/v1/messages`.
+
+#### Session and client identity
+
+Requests identify msgFlux with its own `User-Agent` and send a stable
+`x-opencode-session` for routing and prompt caching. The session value follows
+the same precedence as [OpenCode Go](#opencode-go): an explicit caller header,
+the active runtime thread, `ChatMessages.thread_id`, then a fallback generated
+for the model instance. The fallback is reused for standalone calls on the same
+instance, isolated between instances, and regenerated by
+`Model.from_serialized`. The same contract applies to every supported protocol,
+in synchronous, asynchronous, streaming, and non-streaming calls.
+
+Use an Agent thread or `ChatMessages.thread_id` in normal application code so
+separate direct model instances can share one session:
+
+```python
+import msgflux as mf
+
+model = mf.Model.chat_completion("opencode-zen/deepseek-v4.1-flash")
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Continue the review."}],
+    thread_id="review-thread-42",
+)
+response = model(messages)
+print(response.consume())
+```
+
+This example reuses one conversation ID across direct calls. Any other model
+instance given the same `ChatMessages` history sends the same OpenCode session.
+An explicit caller-supplied session header wins regardless of casing;
+`extra_headers` is host request configuration, not a Model constructor or
+per-call option.
+
+Function tools and native Anthropic history use the shared tool catalog and the
+same replay rules as the [OpenCode Go native Anthropic example](#opencode-go).
+Keep returned `history_items` and rendered tool outcomes when saving a
+conversation; rebuilding history from answer text alone loses signed state.
 
 ### OpenAI Codex subscription (experimental)
 

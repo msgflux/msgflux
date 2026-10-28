@@ -1,6 +1,7 @@
-"""Tests for the OpenCode Go chat provider."""
+"""Tests for the OpenCode gateway providers (Go and Zen)."""
 
 import json
+from dataclasses import dataclass
 
 import httpx2
 import pytest
@@ -12,17 +13,79 @@ from msgflux.models.providers.anthropic import AnthropicChatCompletion
 from msgflux.runtime.context import thread_context
 from msgflux.tools import ToolCatalog, ToolOutcome
 
+API_MODES = ("chat_completions", "responses", "anthropic_messages")
+
+
+@dataclass(frozen=True)
+class _ProviderCase:
+    provider: str
+    display_name: str
+    api_key_env: str
+    base_url_env: str
+    base_url: str
+    anthropic_base: str
+    facade_name: str
+    backend_name: str
+
+
+GO = _ProviderCase(
+    provider="opencode-go",
+    display_name="OpenCode Go",
+    api_key_env="OPENCODE_GO_API_KEY",
+    base_url_env="OPENCODE_GO_BASE_URL",
+    base_url="https://opencode.ai/inference/go/openai/v1",
+    anthropic_base="https://opencode.ai/inference/go/anthropic",
+    facade_name="OpenCodeGoChatCompletion",
+    backend_name="_OpenCodeGoAnthropicMessages",
+)
+ZEN = _ProviderCase(
+    provider="opencode-zen",
+    display_name="OpenCode Zen",
+    api_key_env="OPENCODE_ZEN_API_KEY",
+    base_url_env="OPENCODE_ZEN_BASE_URL",
+    base_url="https://opencode.ai/inference/openai/v1",
+    anthropic_base="https://opencode.ai/inference/anthropic",
+    facade_name="OpenCodeZenChatCompletion",
+    backend_name="_OpenCodeZenAnthropicMessages",
+)
+PROVIDER_CASES = [pytest.param(GO, id=GO.provider), pytest.param(ZEN, id=ZEN.provider)]
+
+
+def _other_provider(case):
+    return ZEN if case.provider == GO.provider else GO
+
+
+def _classes(case):
+    from msgflux.models.providers import opencode
+
+    return getattr(opencode, case.facade_name), getattr(opencode, case.backend_name)
+
 
 @pytest.fixture(autouse=True)
 def opencode_env(monkeypatch):
-    monkeypatch.setenv("OPENCODE_GO_API_KEY", "test-key")
-    monkeypatch.delenv("OPENCODE_GO_BASE_URL", raising=False)
+    """Keep every provider's environment isolated before each test."""
+    for env_name in (
+        GO.api_key_env,
+        ZEN.api_key_env,
+        GO.base_url_env,
+        ZEN.base_url_env,
+        "OPENCODE_API_KEY",
+        "OPENAI_API_KEY",
+        "ANTHROPIC_API_KEY",
+    ):
+        monkeypatch.delenv(env_name, raising=False)
 
 
-def _model(*, client=None, async_client=None, **kwargs):
-    from msgflux.models.providers.opencode import OpenCodeGoChatCompletion
+@pytest.fixture(params=PROVIDER_CASES)
+def provider(request, monkeypatch):
+    case = request.param
+    monkeypatch.setenv(case.api_key_env, "test-key")
+    return case
 
-    return OpenCodeGoChatCompletion(
+
+def _model(provider, *, client=None, async_client=None, **kwargs):
+    facade, _ = _classes(provider)
+    return facade(
         model_id="deepseek-v4.1-flash",
         chat_transport=HTTPChatTransport(
             client=client,
@@ -33,10 +96,9 @@ def _model(*, client=None, async_client=None, **kwargs):
     )
 
 
-def _native_model(*, client=None, async_client=None, **kwargs):
-    from msgflux.models.providers.opencode import OpenCodeGoChatCompletion
-
-    model = OpenCodeGoChatCompletion(
+def _native_model(provider, *, client=None, async_client=None, **kwargs):
+    facade, _ = _classes(provider)
+    model = facade(
         model_id="anthropic/claude-sonnet-4-6",
         api_mode="anthropic_messages",
         retry=False,
@@ -295,18 +357,17 @@ def _request_body(request):
     return json.loads(request.content)
 
 
-def test_defaults_and_factory_registration():
+def test_defaults_and_factory_registration(provider):
     import msgflux as mf
     from msgflux.accounts.providers import get_api_key_env
-    from msgflux.models.providers.opencode import (
-        OpenCodeGoChatCompletion,
-        _OpenCodeGoAnthropicMessages,
-    )
 
-    model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
+    facade, backend = _classes(provider)
 
-    assert isinstance(model, OpenCodeGoChatCompletion)
-    assert model.provider == "opencode-go"
+    model = mf.Model.chat_completion(f"{provider.provider}/deepseek-v4.1-flash")
+
+    assert isinstance(model, facade)
+    assert model.provider == provider.provider
+    assert model.display_name == provider.display_name
     assert model.model_id == "deepseek-v4.1-flash"
     assert model.api_mode == "chat_completions"
     assert model.supported_api_modes == (
@@ -315,32 +376,30 @@ def test_defaults_and_factory_registration():
         "anthropic_messages",
     )
     assert isinstance(model.chat_transport, HTTPChatTransport)
-    assert model._get_base_url() == "https://opencode.ai/inference/go/openai/v1"
+    assert model._get_base_url() == provider.base_url
     assert model._get_api_key() == "test-key"
-    assert model.api_key_env == "OPENCODE_GO_API_KEY"
-    assert get_api_key_env("opencode-go") == "OPENCODE_GO_API_KEY"
+    assert model.api_key_env == provider.api_key_env
+    assert get_api_key_env(provider.provider) == provider.api_key_env
 
     responses = mf.Model.chat_completion(
-        "opencode-go/deepseek-v4.1-flash", api_mode="responses"
+        f"{provider.provider}/deepseek-v4.1-flash", api_mode="responses"
     )
-    assert isinstance(responses, OpenCodeGoChatCompletion)
+    assert isinstance(responses, facade)
     assert responses.api_mode == "responses"
     assert responses._get_base_url() == model._get_base_url()
 
     native = mf.Model.chat_completion(
-        "opencode-go/anthropic/claude-sonnet-4-6",
+        f"{provider.provider}/anthropic/claude-sonnet-4-6",
         api_mode="anthropic_messages",
     )
-    assert isinstance(native, _OpenCodeGoAnthropicMessages)
+    assert isinstance(native, backend)
     assert isinstance(native, AnthropicChatCompletion)
-    assert not isinstance(native, OpenCodeGoChatCompletion)
-    assert native.provider == "opencode-go"
+    assert not isinstance(native, facade)
+    assert native.provider == provider.provider
     assert native.api_mode == "anthropic_messages"
     assert native.supported_api_modes == ("anthropic_messages",)
-    assert native.api_key_env == "OPENCODE_GO_API_KEY"
-    assert native._native_url() == (
-        "https://opencode.ai/inference/go/anthropic/v1/messages"
-    )
+    assert native.api_key_env == provider.api_key_env
+    assert native._native_url() == f"{provider.anthropic_base}/v1/messages"
     assert native.credential_resolver.resolve(native).headers == {
         "Authorization": "Bearer test-key"
     }
@@ -349,61 +408,92 @@ def test_defaults_and_factory_registration():
         ValueError,
         match=("supported modes: chat_completions, responses, anthropic_messages"),
     ):
-        OpenCodeGoChatCompletion(
-            model_id="deepseek-v4.1-flash", api_mode="interactions"
-        )
+        facade(model_id="deepseek-v4.1-flash", api_mode="interactions")
 
 
-def test_base_url_override_and_missing_key(monkeypatch):
-    from msgflux.models.providers.opencode import OpenCodeGoChatCompletion
+def test_registry_and_accounts_expose_both_providers_without_private_classes():
+    from msgflux.accounts.providers import get_api_key_env
+    from msgflux.models.providers import opencode
+    from msgflux.models.registry import model_registry
 
-    monkeypatch.setenv("OPENCODE_GO_BASE_URL", "https://gateway.example/openai/v1")
-    chat = OpenCodeGoChatCompletion(model_id="deepseek-v4.1-flash")
-    native = OpenCodeGoChatCompletion(
-        model_id="anthropic/claude-sonnet-4-6",
-        api_mode="anthropic_messages",
+    registry = model_registry["chat_completion"]
+
+    assert registry[GO.provider] is opencode.OpenCodeGoChatCompletion
+    assert registry[ZEN.provider] is opencode.OpenCodeZenChatCompletion
+    assert (
+        opencode.OpenCodeGoChatCompletion._anthropic_messages_backend
+        is opencode._OpenCodeGoAnthropicMessages
     )
+    assert (
+        opencode.OpenCodeZenChatCompletion._anthropic_messages_backend
+        is opencode._OpenCodeZenAnthropicMessages
+    )
+
+    private_classes = {
+        opencode._BaseOpenCode,
+        opencode._OpenCodeSessions,
+        opencode._OpenCodeAnthropicMessages,
+        opencode._OpenCodeChatCompletion,
+        opencode._OpenCodeGoConfig,
+        opencode._OpenCodeZenConfig,
+        opencode._OpenCodeGoAnthropicMessages,
+        opencode._OpenCodeZenAnthropicMessages,
+    }
+    assert private_classes.isdisjoint(registry.values())
+
+    assert get_api_key_env(GO.provider) == GO.api_key_env
+    assert get_api_key_env(ZEN.provider) == ZEN.api_key_env
+
+
+def test_base_url_override_and_missing_key(provider, monkeypatch):
+    facade, _ = _classes(provider)
+
+    monkeypatch.setenv(provider.base_url_env, "https://gateway.example/openai/v1")
+    chat = _model(provider)
+    native = _native_model(provider)
 
     assert chat._get_base_url() == "https://gateway.example/openai/v1"
     assert native._get_base_url() == "https://gateway.example/anthropic"
     assert native._native_url() == ("https://gateway.example/anthropic/v1/messages")
 
-    monkeypatch.setenv("OPENCODE_GO_BASE_URL", "https://gateway.example/v1")
-    native = OpenCodeGoChatCompletion(
-        model_id="anthropic/claude-sonnet-4-6",
-        api_mode="anthropic_messages",
-    )
+    monkeypatch.setenv(provider.base_url_env, "https://gateway.example/v1")
+    native = _native_model(provider)
     assert native._get_base_url() == "https://gateway.example"
     assert native._native_url() == "https://gateway.example/v1/messages"
 
-    monkeypatch.delenv("OPENCODE_GO_BASE_URL")
-    monkeypatch.delenv("OPENCODE_GO_API_KEY")
+    monkeypatch.delenv(provider.base_url_env)
+    monkeypatch.delenv(provider.api_key_env)
     monkeypatch.setenv("OPENAI_API_KEY", "openai-decoy")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-decoy")
 
-    with pytest.raises(ValueError, match="OPENCODE_GO_API_KEY"):
-        OpenCodeGoChatCompletion(model_id="deepseek-v4.1-flash")
-    with pytest.raises(ValueError, match="OPENCODE_GO_API_KEY"):
-        OpenCodeGoChatCompletion(
+    with pytest.raises(ValueError, match=provider.api_key_env):
+        facade(model_id="deepseek-v4.1-flash")
+    with pytest.raises(ValueError, match=provider.api_key_env):
+        facade(
             model_id="anthropic/claude-sonnet-4-6",
             api_mode="anthropic_messages",
         )
 
 
-@pytest.mark.parametrize(
-    "api_mode", ["chat_completions", "responses", "anthropic_messages"]
-)
-def test_missing_go_key_does_not_fall_back_to_generic_key(monkeypatch, api_mode):
+@pytest.mark.parametrize("api_mode", API_MODES)
+def test_missing_key_does_not_fall_back_to_generic_or_other_provider_key(
+    provider, monkeypatch, api_mode
+):
     import msgflux as mf
 
-    monkeypatch.delenv("OPENCODE_GO_API_KEY")
-    monkeypatch.setenv("OPENCODE_API_KEY", "other-plan-key")
-    with pytest.raises(ValueError, match="OPENCODE_GO_API_KEY"):
-        mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash", api_mode=api_mode)
+    other = _other_provider(provider)
+    monkeypatch.delenv(provider.api_key_env)
+    monkeypatch.setenv("OPENCODE_API_KEY", "generic-plan-key")
+    monkeypatch.setenv(other.api_key_env, "other-provider-key")
+
+    with pytest.raises(ValueError, match=provider.api_key_env):
+        mf.Model.chat_completion(
+            f"{provider.provider}/deepseek-v4.1-flash", api_mode=api_mode
+        )
 
 
-def test_base_url_override_applies_to_actual_requests(monkeypatch):
-    monkeypatch.setenv("OPENCODE_GO_BASE_URL", "https://gateway.example/openai/v1")
+def test_base_url_override_applies_to_actual_requests(provider, monkeypatch):
+    monkeypatch.setenv(provider.base_url_env, "https://gateway.example/openai/v1")
     captured = []
 
     def handler(request):
@@ -415,9 +505,9 @@ def test_base_url_override_applies_to_actual_requests(monkeypatch):
         return httpx2.Response(200, json=_anthropic_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    chat = _model(client=client)
-    responses = _model(client=client, api_mode="responses")
-    native = _native_model(client=client)
+    chat = _model(provider, client=client)
+    responses = _model(provider, client=client, api_mode="responses")
+    native = _native_model(provider, client=client)
     try:
         chat("chat")
         responses("responses")
@@ -432,7 +522,7 @@ def test_base_url_override_applies_to_actual_requests(monkeypatch):
     ]
 
 
-def test_sync_completion_uses_official_endpoint_and_headers():
+def test_sync_completion_uses_official_endpoint_and_headers(provider):
     captured = []
 
     def handler(request):
@@ -440,7 +530,7 @@ def test_sync_completion_uses_official_endpoint_and_headers():
         return httpx2.Response(200, json=_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _model(client=client)
+    model = _model(provider, client=client)
     try:
         response = model("Reply with exactly: OK")
     finally:
@@ -449,9 +539,7 @@ def test_sync_completion_uses_official_endpoint_and_headers():
     assert response.consume() == "OK"
     request = captured[0]
     assert request.method == "POST"
-    assert str(request.url) == (
-        "https://opencode.ai/inference/go/openai/v1/chat/completions"
-    )
+    assert str(request.url) == f"{provider.base_url}/chat/completions"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == model._fallback_session_id
@@ -461,7 +549,7 @@ def test_sync_completion_uses_official_endpoint_and_headers():
 
 
 @pytest.mark.asyncio
-async def test_async_completion_uses_official_endpoint_and_headers():
+async def test_async_completion_uses_official_endpoint_and_headers(provider):
     captured = []
 
     async def handler(request):
@@ -469,7 +557,7 @@ async def test_async_completion_uses_official_endpoint_and_headers():
         return httpx2.Response(200, json=_completion(content="ASYNC"))
 
     client = httpx2.AsyncClient(transport=httpx2.MockTransport(handler))
-    model = _model(async_client=client)
+    model = _model(provider, async_client=client)
     try:
         response = await model.acall("Reply with exactly: ASYNC")
     finally:
@@ -477,6 +565,7 @@ async def test_async_completion_uses_official_endpoint_and_headers():
 
     assert response.consume() == "ASYNC"
     request = captured[0]
+    assert str(request.url) == f"{provider.base_url}/chat/completions"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == model._fallback_session_id
@@ -485,7 +574,9 @@ async def test_async_completion_uses_official_endpoint_and_headers():
 
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
-async def test_stream_completion_uses_session_and_streaming_payload(asynchronous):
+async def test_stream_completion_uses_session_and_streaming_payload(
+    provider, asynchronous
+):
     captured = []
     body = _stream_text("streamed")
 
@@ -499,7 +590,7 @@ async def test_stream_completion_uses_session_and_streaming_payload(asynchronous
 
     if asynchronous:
         client = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
-        model = _model(async_client=client)
+        model = _model(provider, async_client=client)
         try:
             stream = await model.acall("Hello", stream=True)
             chunks = [chunk async for chunk in stream.consume()]
@@ -507,7 +598,7 @@ async def test_stream_completion_uses_session_and_streaming_payload(asynchronous
             await client.aclose()
     else:
         client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
-        model = _model(client=client)
+        model = _model(provider, client=client)
         try:
             stream = model("Hello", stream=True)
             chunks = [chunk async for chunk in stream.consume()]
@@ -516,12 +607,13 @@ async def test_stream_completion_uses_session_and_streaming_payload(asynchronous
 
     assert chunks == ["streamed"]
     request = captured[0]
+    assert str(request.url) == f"{provider.base_url}/chat/completions"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == model._fallback_session_id
     assert _request_body(request)["stream"] is True
 
 
-def test_tool_catalog_is_sent_and_tool_call_is_decoded():
+def test_tool_catalog_is_sent_and_tool_call_is_decoded(provider):
     captured = []
 
     def handler(request):
@@ -561,7 +653,7 @@ def test_tool_catalog_is_sent_and_tool_call_is_decoded():
         choice="auto",
     )
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _model(client=client)
+    model = _model(provider, client=client)
     try:
         response = model("Check SKU-1842", tool_catalog=catalog)
     finally:
@@ -589,7 +681,7 @@ def test_tool_catalog_is_sent_and_tool_call_is_decoded():
     assert "tool_catalog" not in body
 
 
-def test_responses_completion_uses_official_endpoint_and_headers():
+def test_responses_completion_uses_official_endpoint_and_headers(provider):
     captured = []
 
     def handler(request):
@@ -597,17 +689,17 @@ def test_responses_completion_uses_official_endpoint_and_headers():
         return httpx2.Response(200, json=_responses_completion("RESP"))
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _model(client=client, api_mode="responses")
+    model = _model(provider, client=client, api_mode="responses")
     try:
         response = model("Reply with exactly: RESP", system_prompt="Be concise.")
     finally:
         client.close()
 
     assert response.consume() == "RESP"
-    assert response.metadata.model["provider"] == "opencode-go"
+    assert response.metadata.model["provider"] == provider.provider
     assert response.metadata.model["api_mode"] == "responses"
     request = captured[0]
-    assert str(request.url) == ("https://opencode.ai/inference/go/openai/v1/responses")
+    assert str(request.url) == f"{provider.base_url}/responses"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == model._fallback_session_id
@@ -621,7 +713,7 @@ def test_responses_completion_uses_official_endpoint_and_headers():
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.asyncio
 async def test_responses_all_execution_modes_keep_session_and_identity(
-    asynchronous, stream
+    provider, asynchronous, stream
 ):
     captured = []
 
@@ -639,7 +731,7 @@ async def test_responses_all_execution_modes_keep_session_and_identity(
 
     client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
     aclient = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
-    model = _model(client=client, async_client=aclient, api_mode="responses")
+    model = _model(provider, client=client, async_client=aclient, api_mode="responses")
     try:
         with thread_context(thread_id="responses-thread"):
             if asynchronous:
@@ -656,13 +748,13 @@ async def test_responses_all_execution_modes_keep_session_and_identity(
         await aclient.aclose()
 
     request = captured[0]
-    assert str(request.url).endswith("/openai/v1/responses")
+    assert str(request.url) == f"{provider.base_url}/responses"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == "responses-thread"
 
 
-def test_responses_session_precedence_and_case_insensitive_override():
+def test_responses_session_precedence_and_case_insensitive_override(provider):
     captured = []
 
     def handler(request):
@@ -670,7 +762,7 @@ def test_responses_session_precedence_and_case_insensitive_override():
         return httpx2.Response(200, json=_responses_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _model(client=client, api_mode="responses")
+    model = _model(provider, client=client, api_mode="responses")
     messages = ChatMessages(
         [{"role": "user", "content": "Continue."}], thread_id="messages-thread"
     )
@@ -696,7 +788,7 @@ def test_responses_session_precedence_and_case_insensitive_override():
     assert captured[3].headers["user-agent"] == "custom-client/1.0"
 
 
-def test_anthropic_completion_uses_gateway_bearer_and_session(monkeypatch):
+def test_anthropic_completion_uses_gateway_bearer_and_session(provider, monkeypatch):
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-decoy")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-decoy")
     captured = []
@@ -706,7 +798,7 @@ def test_anthropic_completion_uses_gateway_bearer_and_session(monkeypatch):
         return httpx2.Response(200, json=_anthropic_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _native_model(client=client)
+    model = _native_model(provider, client=client)
     try:
         response = model("Reply with exactly: OK", system_prompt="Be concise.")
     finally:
@@ -714,9 +806,7 @@ def test_anthropic_completion_uses_gateway_bearer_and_session(monkeypatch):
 
     assert response.consume() == "OK"
     request = captured[0]
-    assert str(request.url) == (
-        "https://opencode.ai/inference/go/anthropic/v1/messages"
-    )
+    assert str(request.url) == f"{provider.anthropic_base}/v1/messages"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == model._fallback_session_id
@@ -732,7 +822,7 @@ def test_anthropic_completion_uses_gateway_bearer_and_session(monkeypatch):
 @pytest.mark.parametrize("stream", [False, True])
 @pytest.mark.asyncio
 async def test_anthropic_all_execution_modes_keep_session_and_identity(
-    asynchronous, stream
+    provider, asynchronous, stream
 ):
     captured = []
 
@@ -750,7 +840,7 @@ async def test_anthropic_all_execution_modes_keep_session_and_identity(
 
     client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
     aclient = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
-    model = _native_model(client=client, async_client=aclient)
+    model = _native_model(provider, client=client, async_client=aclient)
     try:
         with thread_context(thread_id="anthropic-thread"):
             if asynchronous:
@@ -767,14 +857,14 @@ async def test_anthropic_all_execution_modes_keep_session_and_identity(
         await aclient.aclose()
 
     request = captured[0]
-    assert str(request.url).endswith("/anthropic/v1/messages")
+    assert str(request.url) == f"{provider.anthropic_base}/v1/messages"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["user-agent"] == "msgflux"
     assert request.headers["x-opencode-session"] == "anthropic-thread"
     assert "x-api-key" not in request.headers
 
 
-def test_anthropic_session_precedence_and_case_insensitive_override():
+def test_anthropic_session_precedence_and_case_insensitive_override(provider):
     captured = []
 
     def handler(request):
@@ -782,7 +872,7 @@ def test_anthropic_session_precedence_and_case_insensitive_override():
         return httpx2.Response(200, json=_anthropic_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _native_model(client=client)
+    model = _native_model(provider, client=client)
     messages = ChatMessages(
         [{"role": "user", "content": "Continue."}], thread_id="messages-thread"
     )
@@ -810,7 +900,7 @@ def test_anthropic_session_precedence_and_case_insensitive_override():
 
 @pytest.mark.parametrize("inactive_thread", [None, ""])
 def test_chat_runtime_thread_then_chat_messages_then_instance_fallback(
-    inactive_thread,
+    provider, inactive_thread
 ):
     captured = []
 
@@ -819,7 +909,7 @@ def test_chat_runtime_thread_then_chat_messages_then_instance_fallback(
         return httpx2.Response(200, json=_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _model(client=client)
+    model = _model(provider, client=client)
     messages = ChatMessages(
         [{"role": "user", "content": "Continue."}],
         thread_id="messages-thread",
@@ -838,8 +928,8 @@ def test_chat_runtime_thread_then_chat_messages_then_instance_fallback(
     assert captured[2].headers["x-opencode-session"] == model._fallback_session_id
 
 
-def test_chat_explicit_headers_win_case_insensitively():
-    model = _model()
+def test_chat_explicit_headers_win_case_insensitively(provider):
+    model = _model(provider)
 
     with thread_context(thread_id="active-thread"):
         params = model._adapt_params(
@@ -860,8 +950,8 @@ def test_chat_explicit_headers_win_case_insensitively():
 
 
 @pytest.mark.parametrize("active_thread", [None, "active-thread"])
-def test_configured_headers_win_over_runtime_thread(active_thread):
-    model = _model()
+def test_configured_headers_win_over_runtime_thread(provider, active_thread):
+    model = _model(provider)
     model.sampling_run_params["extra_headers"] = {
         "X-OpenCode-Session": "explicit-session",
         "user-agent": "custom-client/1.0",
@@ -880,7 +970,7 @@ def test_configured_headers_win_over_runtime_thread(active_thread):
 
 
 @pytest.mark.parametrize("explicit_session", [False, True])
-def test_message_thread_preserves_configured_headers(explicit_session):
+def test_message_thread_preserves_configured_headers(provider, explicit_session):
     captured = []
 
     def handler(request):
@@ -894,7 +984,7 @@ def test_message_thread_preserves_configured_headers(explicit_session):
         [{"role": "user", "content": "Continue."}], thread_id="messages-thread"
     )
     with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
-        model = _model(client=client)
+        model = _model(provider, client=client)
         model.sampling_run_params["extra_headers"] = headers
         model(messages)
 
@@ -911,7 +1001,7 @@ def test_message_thread_preserves_configured_headers(explicit_session):
     }
 
 
-def test_fallback_session_is_stable_per_instance_and_isolated():
+def test_fallback_session_is_stable_per_instance_and_isolated(provider):
     captured = []
 
     def handler(request):
@@ -919,8 +1009,8 @@ def test_fallback_session_is_stable_per_instance_and_isolated():
         return httpx2.Response(200, json=_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    first = _model(client=client)
-    second = _model(client=client)
+    first = _model(provider, client=client)
+    second = _model(provider, client=client)
     try:
         first("one")
         first("two")
@@ -934,7 +1024,7 @@ def test_fallback_session_is_stable_per_instance_and_isolated():
     assert first._fallback_session_id != second._fallback_session_id
 
 
-def test_api_key_rotates_at_request_time_and_is_not_serialized(monkeypatch):
+def test_api_key_rotates_at_request_time_and_is_not_serialized(provider, monkeypatch):
     captured = []
 
     def handler(request):
@@ -942,11 +1032,11 @@ def test_api_key_rotates_at_request_time_and_is_not_serialized(monkeypatch):
         return httpx2.Response(200, json=_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    model = _model(client=client)
+    model = _model(provider, client=client)
     try:
-        monkeypatch.setenv("OPENCODE_GO_API_KEY", "first-rotated-key")
+        monkeypatch.setenv(provider.api_key_env, "first-rotated-key")
         model("first")
-        monkeypatch.setenv("OPENCODE_GO_API_KEY", "second-rotated-key")
+        monkeypatch.setenv(provider.api_key_env, "second-rotated-key")
         model("second")
     finally:
         client.close()
@@ -958,9 +1048,13 @@ def test_api_key_rotates_at_request_time_and_is_not_serialized(monkeypatch):
     assert "second-rotated-key" not in serialized
 
 
-def test_responses_and_anthropic_rotate_keys_without_alternate_fallback(monkeypatch):
+def test_responses_and_anthropic_rotate_keys_without_alternate_fallback(
+    provider, monkeypatch
+):
+    other = _other_provider(provider)
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-decoy")
     monkeypatch.setenv("OPENAI_API_KEY", "openai-decoy")
+    monkeypatch.setenv(other.api_key_env, "other-provider-decoy")
     captured = []
 
     def handler(request):
@@ -970,13 +1064,13 @@ def test_responses_and_anthropic_rotate_keys_without_alternate_fallback(monkeypa
         return httpx2.Response(200, json=_anthropic_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
-    responses = _model(client=client, api_mode="responses")
-    native = _native_model(client=client)
+    responses = _model(provider, client=client, api_mode="responses")
+    native = _native_model(provider, client=client)
     try:
-        monkeypatch.setenv("OPENCODE_GO_API_KEY", "first-opencode-key")
+        monkeypatch.setenv(provider.api_key_env, "first-opencode-key")
         responses("first")
         native("first")
-        monkeypatch.setenv("OPENCODE_GO_API_KEY", "second-opencode-key")
+        monkeypatch.setenv(provider.api_key_env, "second-opencode-key")
         responses("second")
         native("second")
     finally:
@@ -996,16 +1090,18 @@ def test_responses_and_anthropic_rotate_keys_without_alternate_fallback(monkeypa
     assert "opencode-key" not in serialized
     assert "anthropic-decoy" not in serialized
     assert "openai-decoy" not in serialized
+    assert "other-provider-decoy" not in serialized
 
 
-def test_chat_fallback_session_is_excluded_and_recreated_on_restore():
+def test_chat_fallback_session_is_excluded_and_recreated_on_restore(provider):
     from msgflux import Model
-    from msgflux.models.providers.opencode import OpenCodeGoChatCompletion
 
-    model = _model()
+    facade, _ = _classes(provider)
+    model = _model(provider)
     session = model._fallback_session_id
     serialized = model.serialize()
 
+    assert serialized["provider"] == provider.provider
     assert "_fallback_session_id" not in serialized["state"]
     assert session not in str(serialized)
 
@@ -1013,7 +1109,8 @@ def test_chat_fallback_session_is_excluded_and_recreated_on_restore():
         serialized["provider"], serialized["model_type"], serialized["state"]
     )
 
-    assert isinstance(restored, OpenCodeGoChatCompletion)
+    assert isinstance(restored, facade)
+    assert restored.provider == provider.provider
     assert restored._fallback_session_id != session
 
     captured = []
@@ -1029,14 +1126,15 @@ def test_chat_fallback_session_is_excluded_and_recreated_on_restore():
     assert captured[0].headers["x-opencode-session"] == restored._fallback_session_id
 
 
-def test_responses_fallback_session_is_recreated_and_used_on_restore():
+def test_responses_fallback_session_is_recreated_and_used_on_restore(provider):
     from msgflux import Model
-    from msgflux.models.providers.opencode import OpenCodeGoChatCompletion
 
-    model = _model(api_mode="responses")
+    facade, _ = _classes(provider)
+    model = _model(provider, api_mode="responses")
     session = model._fallback_session_id
     serialized = model.serialize()
 
+    assert serialized["provider"] == provider.provider
     assert serialized["state"]["api_mode"] == "responses"
     assert "_fallback_session_id" not in serialized["state"]
 
@@ -1044,7 +1142,7 @@ def test_responses_fallback_session_is_recreated_and_used_on_restore():
         serialized["provider"], serialized["model_type"], serialized["state"]
     )
 
-    assert isinstance(restored, OpenCodeGoChatCompletion)
+    assert isinstance(restored, facade)
     assert restored.api_mode == "responses"
     assert restored._fallback_session_id != session
 
@@ -1058,19 +1156,19 @@ def test_responses_fallback_session_is_recreated_and_used_on_restore():
         restored.chat_transport = HTTPChatTransport(client=client, max_retries=0)
         assert restored("Continue after restore").consume() == "OK"
 
-    assert str(captured[0].url).endswith("/openai/v1/responses")
+    assert str(captured[0].url) == f"{provider.base_url}/responses"
     assert captured[0].headers["x-opencode-session"] == (restored._fallback_session_id)
 
 
-def test_anthropic_fallback_session_is_recreated_and_used_on_restore():
+def test_anthropic_fallback_session_is_recreated_and_used_on_restore(provider):
     from msgflux import Model
-    from msgflux.models.providers.opencode import _OpenCodeGoAnthropicMessages
 
-    model = _native_model()
+    _, backend = _classes(provider)
+    model = _native_model(provider)
     session = model._fallback_session_id
     serialized = model.serialize()
 
-    assert serialized["provider"] == "opencode-go"
+    assert serialized["provider"] == provider.provider
     assert serialized["state"]["api_mode"] == "anthropic_messages"
     assert "_fallback_session_id" not in serialized["state"]
     assert "test-key" not in str(serialized)
@@ -1080,8 +1178,8 @@ def test_anthropic_fallback_session_is_recreated_and_used_on_restore():
         serialized["provider"], serialized["model_type"], serialized["state"]
     )
 
-    assert isinstance(restored, _OpenCodeGoAnthropicMessages)
-    assert restored.provider == "opencode-go"
+    assert isinstance(restored, backend)
+    assert restored.provider == provider.provider
     assert restored.api_mode == "anthropic_messages"
     assert restored._fallback_session_id != session
 
@@ -1096,13 +1194,103 @@ def test_anthropic_fallback_session_is_recreated_and_used_on_restore():
         assert restored("Continue after restore").consume() == "OK"
 
     request = captured[0]
-    assert str(request.url).endswith("/anthropic/v1/messages")
+    assert str(request.url) == f"{provider.anthropic_base}/v1/messages"
     assert request.headers["authorization"] == "Bearer test-key"
     assert request.headers["x-opencode-session"] == (restored._fallback_session_id)
     assert "x-api-key" not in request.headers
 
 
-def test_anthropic_typed_tools_signed_history_replay_and_cache_usage():
+def test_cross_provider_credentials_and_bases_stay_isolated(monkeypatch):
+    monkeypatch.setenv(GO.api_key_env, "go-key")
+    monkeypatch.setenv(ZEN.api_key_env, "zen-key")
+    monkeypatch.setenv(GO.base_url_env, "https://go-gateway.example/openai/v1")
+    monkeypatch.setenv(ZEN.base_url_env, "https://zen-gateway.example/openai/v1")
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        url = str(request.url)
+        if url.endswith("/chat/completions"):
+            return httpx2.Response(200, json=_completion())
+        if url.endswith("/responses"):
+            return httpx2.Response(200, json=_responses_completion())
+        return httpx2.Response(200, json=_anthropic_completion())
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    models = []
+    try:
+        for case in (GO, ZEN):
+            models.extend(
+                [
+                    _model(case, client=client),
+                    _model(case, client=client, api_mode="responses"),
+                    _native_model(case, client=client),
+                ]
+            )
+        for model in models:
+            model("Isolate")
+    finally:
+        client.close()
+
+    assert [str(request.url) for request in captured] == [
+        "https://go-gateway.example/openai/v1/chat/completions",
+        "https://go-gateway.example/openai/v1/responses",
+        "https://go-gateway.example/anthropic/v1/messages",
+        "https://zen-gateway.example/openai/v1/chat/completions",
+        "https://zen-gateway.example/openai/v1/responses",
+        "https://zen-gateway.example/anthropic/v1/messages",
+    ]
+    assert [request.headers["authorization"] for request in captured] == [
+        "Bearer go-key",
+        "Bearer go-key",
+        "Bearer go-key",
+        "Bearer zen-key",
+        "Bearer zen-key",
+        "Bearer zen-key",
+    ]
+    anthropic_requests = [
+        request for request in captured if "anthropic" in str(request.url)
+    ]
+    assert all("x-api-key" not in request.headers for request in anthropic_requests)
+
+
+def test_cross_provider_serialization_restores_its_own_backend(monkeypatch):
+    import msgflux as mf
+
+    monkeypatch.setenv(GO.api_key_env, "go-key")
+    monkeypatch.setenv(ZEN.api_key_env, "zen-key")
+
+    for case in (GO, ZEN):
+        facade, backend = _classes(case)
+        expected = {
+            "chat_completions": facade,
+            "responses": facade,
+            "anthropic_messages": backend,
+        }
+        for api_mode, expected_class in expected.items():
+            if api_mode == "anthropic_messages":
+                model = _native_model(case)
+            else:
+                model = _model(case, api_mode=api_mode)
+            serialized = model.serialize()
+
+            assert serialized["provider"] == case.provider
+            restored = mf.Model.from_serialized(
+                serialized["provider"],
+                serialized["model_type"],
+                serialized["state"],
+            )
+
+            assert type(restored) is expected_class
+            assert restored.provider == case.provider
+            assert restored.api_mode == api_mode
+            other = _other_provider(case)
+            other_facade, other_backend = _classes(other)
+            assert not isinstance(restored, other_facade)
+            assert not isinstance(restored, other_backend)
+
+
+def test_anthropic_typed_tools_signed_history_replay_and_cache_usage(provider):
     requests = []
     thinking_block = {
         "type": "thinking",
@@ -1137,7 +1325,7 @@ def test_anthropic_typed_tools_signed_history_replay_and_cache_usage():
             200, json=_anthropic_completion(content=[{"type": "text", "text": "DONE"}])
         )
 
-    model = _native_model(prompt_cache=True)
+    model = _native_model(provider, prompt_cache=True)
     with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
         model.http_transport = HTTPTransport(client=client, max_retries=0)
         response = model("Submit two BOLT-17 orders.")
@@ -1195,7 +1383,7 @@ def test_anthropic_typed_tools_signed_history_replay_and_cache_usage():
 @pytest.mark.parametrize("asynchronous", [False, True])
 @pytest.mark.asyncio
 async def test_anthropic_stream_tool_outcomes_replay_one_call_and_result(
-    asynchronous,
+    provider, asynchronous
 ):
     requests = []
     stream_body = _anthropic_sse(TOOL_STREAM_EVENTS)
@@ -1217,7 +1405,7 @@ async def test_anthropic_stream_tool_outcomes_replay_one_call_and_result(
         async with httpx2.AsyncClient(
             transport=httpx2.MockTransport(handler)
         ) as aclient:
-            model = _native_model(client=client, async_client=aclient)
+            model = _native_model(provider, client=client, async_client=aclient)
             with thread_context(thread_id="opencode-stream"):
                 if asynchronous:
                     response = await model.acall(
