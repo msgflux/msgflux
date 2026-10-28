@@ -12,6 +12,7 @@ from msgflux._private.model_metadata import (
     last_model_metadata,
 )
 from msgflux._private.store_routing import process_routing_id
+from msgflux.data.stores.incremental import CheckpointBase, CheckpointTail
 from msgflux.models.configuration import ModelConfiguration
 
 _TERMINAL_STATUSES = frozenset({"completed", "failed", "interrupted"})
@@ -35,6 +36,75 @@ class CheckpointStore(ABC):
     """Snapshots and append-only events keyed by namespace, thread and run."""
 
     supports_atomic_commit = False
+
+    supports_incremental = False
+
+    def load_tail(
+        self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
+    ) -> CheckpointTail | None:
+        """Read a storage suffix, not a complete conversation/model context."""
+        raise NotImplementedError(
+            "This checkpoint provider has no suffix recovery support"
+        )
+
+    async def aload_tail(
+        self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
+    ) -> CheckpointTail | None:
+        return await asyncio.to_thread(
+            self.load_tail, namespace, thread_id, run_id, limit=limit
+        )
+
+    def append_state(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        items: list[Mapping[str, Any]],
+        *,
+        base: CheckpointBase,
+        state_updates: Mapping[str, Any] | None = None,
+        message_updates: Mapping[str, Any] | None = None,
+        event: Mapping[str, Any] | None = None,
+        branch_id: str | None = None,
+        head_item_id: str | None = None,
+        extension_state: Mapping[str, Any] | None = None,
+    ) -> CheckpointTail:
+        """Strictly validate a base and atomically append to that same run.
+
+        Only new payloads and changed pages are written. Prior payloads still
+        undergo full integrity validation. The result contains only the appended
+        items and complete control metadata; use load_state for full export.
+        """
+        raise NotImplementedError(
+            "This checkpoint provider has no incremental write support"
+        )
+
+    async def aappend_state(self, *args: Any, **kwargs: Any) -> CheckpointTail:
+        return await asyncio.to_thread(self.append_state, *args, **kwargs)
+
+    @staticmethod
+    def _validate_incremental_base(
+        base: CheckpointBase,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        routing_id: str,
+    ) -> None:
+        if type(base) is not CheckpointBase:
+            raise ValueError("Checkpoint base must be a CheckpointBase instance")
+        base.__post_init__()
+        if (
+            base.namespace != namespace
+            or base.thread_id != thread_id
+            or base.run_id != run_id
+        ):
+            raise CheckpointConflictError(
+                "Checkpoint base scope does not match the requested run"
+            )
+        if base.routing_id != routing_id:
+            raise CheckpointConflictError(
+                "Checkpoint base belongs to a different checkpoint store"
+            )
 
     @property
     def routing_id(self) -> str:
@@ -504,6 +574,20 @@ class CheckpointStore(ABC):
 
 class AsyncCheckpointStore(ABC):
     """Async mirror of :class:`CheckpointStore`."""
+
+    supports_incremental = False
+
+    async def aload_tail(
+        self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
+    ) -> CheckpointTail | None:
+        raise NotImplementedError(
+            "This checkpoint provider has no suffix recovery support"
+        )
+
+    async def aappend_state(self, *args: Any, **kwargs: Any) -> CheckpointTail:
+        raise NotImplementedError(
+            "This checkpoint provider has no incremental write support"
+        )
 
     @abstractmethod
     async def asave_state(

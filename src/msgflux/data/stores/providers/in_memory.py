@@ -39,11 +39,13 @@ from uuid import uuid4
 import msgspec
 
 from msgflux._private.chat_items import (
+    legacy_item_id,
     restore_item_occurrence,
     split_item_occurrence,
 )
 from msgflux.data.stores._manifest import (
     MANIFEST_PAGE_SIZE,
+    append_manifest,
     build_manifest,
     iter_manifest_entries,
     iter_manifest_pages,
@@ -52,7 +54,19 @@ from msgflux.data.stores._manifest import (
 )
 from msgflux.data.stores.base import (
     CheckpointCommit,
+    CheckpointConflictError,
     CheckpointStore,
+)
+from msgflux.data.stores.incremental import (
+    CheckpointBase,
+    CheckpointTail,
+    append_control_state,
+    compose_append_state,
+    migrate_inline_entries,
+    recover_tail,
+    same_payload_value,
+    snapshot_base,
+    validate_tail_limit,
 )
 from msgflux.data.stores.observation import make_page, validate_read
 from msgflux.data.stores.registry import register_store
@@ -65,6 +79,290 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     provider = "in_memory"
     supports_atomic_commit = True
+    supports_incremental = True
+
+    def _stage_manifest_page(
+        self,
+        namespace: str,
+        thread_id: str,
+        segment_ref: str,
+        data: bytes,
+        page_store: Dict[str, bytes],
+    ) -> None:
+        """Stage one page and reject reuse of differing stored or staged bytes."""
+        existing = (
+            self._manifest_pages.get(namespace, {}).get(thread_id, {}).get(segment_ref)
+        )
+        if existing is not None and existing != data:
+            raise ValueError(f"Checkpoint manifest page is corrupted: {segment_ref!r}")
+        staged = page_store.get(segment_ref)
+        if staged is not None and staged != data:
+            raise ValueError(
+                f"Checkpoint manifest page changed while staging: {segment_ref!r}"
+            )
+        page_store[segment_ref] = data
+
+    def _tail_from_state(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        state: Mapping[str, Any],
+        limit: int,
+    ) -> CheckpointTail:
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
+        normalized_messages = state.get("_messages")
+        if not isinstance(normalized_messages, Mapping):
+            raise ValueError(
+                "Incremental checkpoints require a normalized message history"
+            )
+        if not isinstance(normalized_messages.get("state"), Mapping):
+            raise ValueError("Checkpoint manifest is missing its message state")
+        base = snapshot_base(self.routing_id, namespace, thread_id, run_id, state)
+        return recover_tail(
+            state,
+            base,
+            limit,
+            lambda segment_ref: self._read_manifest_segment(
+                namespace, thread_id, segment_ref
+            ),
+            lambda entries: self._iter_message_items(namespace, thread_id, entries),
+        )
+
+    def load_tail(
+        self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
+    ) -> CheckpointTail | None:
+        validate_tail_limit(limit)
+        with self._lock:
+            run = self._get_run(namespace, thread_id, run_id)
+            if run is None:
+                return None
+            return self._tail_from_state(
+                namespace, thread_id, run_id, run["state"], limit
+            )
+
+    def _prepare_append_items(
+        self,
+        namespace: str,
+        thread_id: str,
+        items: List[Mapping[str, Any]],
+        *,
+        start_index: int,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, bytes]]:
+        """Split only new occurrences and reject payload-ref collisions."""
+        entries: List[Dict[str, Any]] = []
+        payloads: Dict[str, bytes] = {}
+        for offset, item in enumerate(items):
+            payload, entry = split_item_occurrence(
+                namespace=namespace,
+                thread_id=thread_id,
+                index=start_index + offset,
+                item=item,
+            )
+            item_ref = self._item_ref(payload)
+            encoded = msgspec.msgpack.encode(payload)
+            staged = payloads.get(item_ref)
+            if staged is not None and not same_payload_value(
+                msgspec.msgpack.decode(staged), msgspec.msgpack.decode(encoded)
+            ):
+                raise ValueError(
+                    "Checkpoint message item payload reference collision: "
+                    f"{namespace}/{thread_id}/{item_ref!r}"
+                )
+            payloads[item_ref] = encoded
+            entry["item_ref"] = item_ref
+            entries.append(entry)
+        return entries, payloads
+
+    def append_state(  # noqa: C901 - keeps validation, staging and CAS in one lock
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        items: list[Mapping[str, Any]],
+        *,
+        base: CheckpointBase,
+        state_updates: Mapping[str, Any] | None = None,
+        message_updates: Mapping[str, Any] | None = None,
+        event: Mapping[str, Any] | None = None,
+        branch_id: str | None = None,
+        head_item_id: str | None = None,
+        extension_state: Mapping[str, Any] | None = None,
+    ) -> CheckpointTail:
+        self._validate_incremental_base(
+            base, namespace, thread_id, run_id, self.routing_id
+        )
+        with self._lock:
+            run = self._get_run(namespace, thread_id, run_id)
+            if run is None:
+                raise CheckpointConflictError(
+                    f"Checkpoint run `{run_id}` not found in thread `{thread_id}`."
+                )
+            previous = run["state"]
+            self._validate_checkpoint_envelope(previous.get("_checkpoint"))
+            old_base = snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, previous
+            )
+            if old_base != base:
+                raise CheckpointConflictError(
+                    "Checkpoint base is stale or does not match the persisted snapshot"
+                )
+            previous_messages = previous.get("_messages")
+            if not isinstance(previous_messages, Mapping):
+                raise ValueError(
+                    "Incremental checkpoints require a normalized message history"
+                )
+            if not isinstance(previous_messages.get("state"), Mapping):
+                raise ValueError("Checkpoint manifest is missing its message state")
+            inline, manifest = resolve_manifest_layout(previous_messages)
+            control_state = append_control_state(
+                previous, items, state_updates, message_updates
+            )
+            # Freeze the delta before the potentially long strict archive scan.
+            # A caller mutating its inputs cannot desynchronize the ack/payloads.
+            new_items = control_state["messages"]["items"]
+
+            # Strictly validate every prior payload exactly once and retain only
+            # occurrence identities, never the previous timeline.
+            old_item_ids: List[str] = []
+            prior = self._commit_envelope_from_state(
+                namespace,
+                thread_id,
+                previous,
+                collect_item_ids=old_item_ids,
+            )
+            if len(old_item_ids) != old_base.item_count:
+                raise ValueError("Checkpoint manifest occurrence count is corrupted")
+            incoming_ids = [item["item_id"] for item in new_items]
+            old_id_set = set(old_item_ids)
+            if len(old_id_set) != len(old_item_ids):
+                raise ValueError("Checkpoint archive contains duplicate item IDs")
+            for item_id in incoming_ids:
+                if item_id in old_id_set:
+                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+
+            effective_head = (
+                head_item_id
+                if head_item_id is not None
+                else (incoming_ids[-1] if incoming_ids else None)
+            )
+            committed, next_revision = self._prepare_revision_state(
+                control_state,
+                prior,
+                expected_revision=base.revision,
+                branch_id=branch_id,
+                head_item_id=effective_head,
+                extension_state=extension_state,
+            )
+            prepared_event = deepcopy(dict(event)) if event is not None else None
+
+            new_entries, item_store = self._prepare_append_items(
+                namespace,
+                thread_id,
+                new_items,
+                start_index=old_base.item_count,
+            )
+            for item_ref, data in item_store.items():
+                existing = (
+                    self._message_items.get(namespace, {})
+                    .get(thread_id, {})
+                    .get(item_ref)
+                )
+                if existing is None:
+                    continue
+                try:
+                    stored = msgspec.msgpack.decode(existing)
+                    expected = msgspec.msgpack.decode(data)
+                except (TypeError, ValueError) as error:
+                    raise ValueError(
+                        "Checkpoint message item is corrupted or could not be "
+                        f"published: {namespace}/{thread_id}/{item_ref!r}"
+                    ) from error
+                if not isinstance(stored, Mapping) or not same_payload_value(
+                    stored, expected
+                ):
+                    raise ValueError(
+                        "Checkpoint message item is corrupted or could not be "
+                        f"published: {namespace}/{thread_id}/{item_ref!r}"
+                    )
+
+            page_store: Dict[str, bytes] = {}
+
+            def write_page(segment_ref: str, data: bytes) -> None:
+                self._stage_manifest_page(
+                    namespace,
+                    thread_id,
+                    segment_ref,
+                    data,
+                    page_store,
+                )
+
+            if inline is not None:
+                prefix = (
+                    migrate_inline_entries(inline, old_item_ids)
+                    if new_entries
+                    else [dict(entry) for entry in inline]
+                )
+                combined = prefix + new_entries
+                # A control-only update preserves even a large legacy inline
+                # layout; no migration or page rewrite is needed without a delta.
+                if not new_entries or len(combined) <= MANIFEST_PAGE_SIZE:
+                    normalized = compose_append_state(committed, item_entries=combined)
+                else:
+                    normalized = compose_append_state(
+                        committed,
+                        manifest=build_manifest(combined, write_page),
+                    )
+            else:
+                updated_manifest = (
+                    append_manifest(
+                        manifest,
+                        new_entries,
+                        lambda segment_ref: self._read_manifest_segment(
+                            namespace, thread_id, segment_ref
+                        ),
+                        write_page,
+                    )
+                    if new_entries
+                    else dict(manifest)
+                )
+                normalized = compose_append_state(committed, manifest=updated_manifest)
+
+            new_base = snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, normalized
+            )
+            live_refs = None
+            if replacement_needs_segment_gc(previous, normalized):
+                # Preflight the post-append survivors, including staged pages,
+                # before publishing anything to the in-memory maps.
+                live_refs = self._replacement_gc_live_refs(
+                    namespace,
+                    thread_id,
+                    run_id,
+                    normalized,
+                    page_store,
+                )
+
+            self._publish_staged(namespace, thread_id, item_store, page_store)
+            run["state"] = normalized
+            run["updated_at"] = time.time()
+            run.setdefault("commits", []).append(
+                (
+                    committed["_checkpoint"]["stream_id"],
+                    next_revision,
+                    prepared_event
+                    if prepared_event is not None
+                    else {
+                        "event_type": "checkpoint",
+                        "status": committed.get("status"),
+                    },
+                )
+            )
+            if prepared_event is not None:
+                run["events"].append(prepared_event)
+            if live_refs is not None:
+                self._prune_live_refs(namespace, thread_id, live_refs)
+            return CheckpointTail(new_base, old_base.item_count, deepcopy(committed))
 
     def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
         with self._lock:
@@ -161,21 +459,13 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             return normalized, item_store, page_store
 
         def write_page(segment_ref: str, data: bytes) -> None:
-            existing = (
-                self._manifest_pages.get(namespace, {})
-                .get(thread_id, {})
-                .get(segment_ref)
+            self._stage_manifest_page(
+                namespace,
+                thread_id,
+                segment_ref,
+                data,
+                page_store,
             )
-            if existing is not None and existing != data:
-                raise ValueError(
-                    f"Checkpoint manifest page is corrupted: {segment_ref!r}"
-                )
-            staged = page_store.get(segment_ref)
-            if staged is not None and staged != data:
-                raise ValueError(
-                    f"Checkpoint manifest page changed while staging: {segment_ref!r}"
-                )
-            page_store[segment_ref] = data
 
         normalized["_messages"] = {
             "state": message_state,
@@ -318,6 +608,17 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
         retained, but payload bytes are still decoded and validated so
         corruption cannot be published.
         """
+        return self._commit_envelope_from_state(namespace, thread_id, state)
+
+    def _commit_envelope_from_state(
+        self,
+        namespace: str,
+        thread_id: str,
+        state: Mapping[str, Any],
+        *,
+        collect_item_ids: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Validate prior payloads once and optionally collect occurrence ids."""
         self._validate_checkpoint_envelope(state.get("_checkpoint"))
         normalized_messages = state.get("_messages")
         if isinstance(normalized_messages, Mapping):
@@ -326,8 +627,19 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if not isinstance(normalized_messages.get("state"), Mapping):
                 raise ValueError("Checkpoint manifest is missing its message state")
-            for _ in self._iter_message_items(namespace, thread_id, item_entries):
-                pass
+            for index, item in enumerate(
+                self._iter_message_items(namespace, thread_id, item_entries)
+            ):
+                if collect_item_ids is not None:
+                    item_id = item.get("item_id")
+                    if not isinstance(item_id, str) or not item_id:
+                        item_id = legacy_item_id(
+                            namespace=namespace,
+                            thread_id=thread_id,
+                            index=index,
+                            item=item,
+                        )
+                    collect_item_ids.append(item_id)
         if "_checkpoint" not in state:
             return {}
         return {"_checkpoint": deepcopy(state["_checkpoint"])}
