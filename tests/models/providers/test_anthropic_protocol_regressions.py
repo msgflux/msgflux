@@ -6,9 +6,10 @@ import json
 import httpx2
 import pytest
 
+from msgflux.chat_messages import ChatMessages
 from msgflux.models.http_transport import HTTPTransport
 from msgflux.models.providers.anthropic import AnthropicChatCompletion
-from msgflux.tools import ToolCatalog
+from msgflux.tools import ToolCatalog, ToolOutcome
 
 
 @pytest.fixture(autouse=True)
@@ -285,6 +286,188 @@ async def test_public_tool_stream_has_one_complete_argument_object(
             assert len(intents) == 1
             assert intents[0].name == "submit_order"
             assert intents[0].arguments == expected
+
+
+TOOL_STREAM_SIGNATURE = "sig-stream-tool"
+
+
+def _tool_stream_sse():
+    events = [
+        ("message_start", {"message": {"usage": {"input_tokens": 4}}}),
+        (
+            "content_block_start",
+            {"index": 0, "content_block": {"type": "thinking", "thinking": ""}},
+        ),
+        (
+            "content_block_delta",
+            {
+                "index": 0,
+                "delta": {"type": "thinking_delta", "thinking": "Need the order."},
+            },
+        ),
+        (
+            "content_block_delta",
+            {
+                "index": 0,
+                "delta": {
+                    "type": "signature_delta",
+                    "signature": TOOL_STREAM_SIGNATURE,
+                },
+            },
+        ),
+        ("content_block_stop", {"index": 0}),
+        (
+            "content_block_start",
+            {
+                "index": 1,
+                "content_block": {
+                    "type": "tool_use",
+                    "id": "toolu_stream_1",
+                    "name": "submit_order",
+                    "input": {},
+                },
+            },
+        ),
+        (
+            "content_block_delta",
+            {
+                "index": 1,
+                "delta": {"type": "input_json_delta", "partial_json": '{"quantity":'},
+            },
+        ),
+        (
+            "content_block_delta",
+            {
+                "index": 1,
+                "delta": {"type": "input_json_delta", "partial_json": "2}"},
+            },
+        ),
+        ("content_block_stop", {"index": 1}),
+        (
+            "message_delta",
+            {"delta": {"stop_reason": "tool_use"}, "usage": {"output_tokens": 8}},
+        ),
+        ("message_stop", {}),
+    ]
+    return "".join(
+        f"event: {name}\ndata: {json.dumps(payload)}\n\n" for name, payload in events
+    )
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("asynchronous", [False, True])
+async def test_stream_tool_outcomes_replay_one_native_call_and_result(asynchronous):
+    """A streamed call already lives in canonical history; render only results.
+
+    Reproduces the live ``tool_use`` duplicate that Anthropic rejected with
+    ``messages.1.content.1: tool_use ids must be unique``.
+    """
+    requests = []
+    stream_body = _tool_stream_sse()
+
+    def handler(request):
+        body = json.loads(request.content)
+        requests.append(body)
+        if body.get("stream"):
+            return httpx2.Response(
+                200,
+                text=stream_body,
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx2.Response(
+            200,
+            json={
+                "id": "msg_final",
+                "type": "message",
+                "role": "assistant",
+                "model": "claude-haiku-5-5",
+                "content": [{"type": "text", "text": "DONE"}],
+                "stop_reason": "end_turn",
+                "usage": {"input_tokens": 4, "output_tokens": 2},
+            },
+        )
+
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(
+            transport=httpx2.MockTransport(handler)
+        ) as aclient:
+            model = AnthropicChatCompletion(model_id="claude-haiku-5-5", retry=False)
+            model.http_transport = HTTPTransport(
+                client=client, async_client=aclient, max_retries=0
+            )
+            if asynchronous:
+                response = await model.acall(
+                    "Submit two.", stream=True, tool_catalog=catalog()
+                )
+            else:
+                response = model("Submit two.", stream=True, tool_catalog=catalog())
+            [chunk async for chunk in response.consume()]
+
+            snapshot = response.chat_accumulator.snapshot()
+            (intent,) = list(response.get_tool_intents())
+            assert intent.name == "submit_order"
+            assert intent.arguments == {"quantity": 2}
+            assert [item["type"] for item in snapshot] == [
+                "reasoning",
+                "function_call",
+            ]
+
+            outcomes = response.render_tool_outcomes(
+                [ToolOutcome.completed(intent, {"status": "accepted"})]
+            )
+            assert [item["type"] for item in outcomes] == ["function_call_output"]
+            assert not any(item.get("type") == "function_call" for item in outcomes)
+
+            messages = ChatMessages(
+                json.loads(
+                    json.dumps(
+                        [
+                            {
+                                "type": "message",
+                                "role": "user",
+                                "content": "Submit two.",
+                            },
+                            *snapshot,
+                            *outcomes,
+                        ]
+                    )
+                ),
+                thread_id="stream-tool-outcome",
+            )
+            replay_catalog = ToolCatalog(tools=catalog().tools, choice="none")
+            if asynchronous:
+                final = await model.acall(messages, tool_catalog=replay_catalog)
+            else:
+                final = model(messages, tool_catalog=replay_catalog)
+            assert final.consume() == "DONE"
+
+    assert len(requests) == 2
+    replay = requests[1]
+    assert [message["role"] for message in replay["messages"]] == [
+        "user",
+        "assistant",
+        "user",
+    ]
+    assistant = replay["messages"][1]["content"]
+    assert [block["type"] for block in assistant] == ["thinking", "tool_use"]
+    assert assistant[0]["signature"] == TOOL_STREAM_SIGNATURE
+    assert [block for block in assistant if block["type"] == "tool_use"] == [
+        {
+            "type": "tool_use",
+            "id": "toolu_stream_1",
+            "name": "submit_order",
+            "input": {"quantity": 2},
+        }
+    ]
+    tool_results = [
+        block
+        for block in replay["messages"][2]["content"]
+        if block["type"] == "tool_result"
+    ]
+    assert len(tool_results) == 1
+    assert tool_results[0]["type"] == "tool_result"
+    assert tool_results[0]["tool_use_id"] == "toolu_stream_1"
+    assert json.loads(tool_results[0]["content"]) == {"status": "accepted"}
 
 
 @pytest.mark.parametrize("mode", ["portable", "missing_capability_method"])
