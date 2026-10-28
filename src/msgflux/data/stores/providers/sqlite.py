@@ -39,6 +39,7 @@ import hashlib
 import json
 import sqlite3
 import time
+from copy import deepcopy
 from functools import wraps
 from itertools import islice
 from pathlib import Path
@@ -47,12 +48,14 @@ from typing import Any, Dict, Iterable, Iterator, List, Literal, Mapping
 from uuid import uuid4
 
 from msgflux._private.chat_items import (
+    legacy_item_id,
     restore_item_occurrence,
     split_item_occurrence,
 )
 from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.data.stores._manifest import (
     MANIFEST_PAGE_SIZE,
+    append_manifest,
     build_manifest,
     iter_manifest_entries,
     iter_manifest_pages,
@@ -61,7 +64,19 @@ from msgflux.data.stores._manifest import (
 )
 from msgflux.data.stores.base import (
     CheckpointCommit,
+    CheckpointConflictError,
     CheckpointStore,
+)
+from msgflux.data.stores.incremental import (
+    CheckpointBase,
+    CheckpointTail,
+    append_control_state,
+    compose_append_state,
+    migrate_inline_entries,
+    recover_tail,
+    same_payload_value,
+    snapshot_base,
+    validate_tail_limit,
 )
 from msgflux.data.stores.observation import make_page, validate_read
 from msgflux.data.stores.registry import register_store
@@ -99,6 +114,11 @@ VALUES (?, ?, ?, ?, ?, ?)
 
 _SELECT_STATE = """\
 SELECT state FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?
+"""
+
+_SELECT_MESSAGE_ITEM = """\
+SELECT item FROM checkpoint_message_items
+WHERE namespace=? AND thread_id=? AND item_ref=?
 """
 
 _SELECT_MANIFEST_SEGMENT = """\
@@ -225,6 +245,365 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     provider = "sqlite"
     supports_atomic_commit = True
+    supports_incremental = True
+
+    def _write_manifest_page(
+        self,
+        namespace: str,
+        thread_id: str,
+        segment_ref: str,
+        data: bytes,
+        now: float,
+        executor: Any | None = None,
+    ) -> None:
+        """Publish one shared page and never reuse differing corrupt bytes."""
+        target = executor or self._conn
+        target.execute(
+            _INSERT_MANIFEST_SEGMENT,
+            (namespace, thread_id, segment_ref, data, now),
+        )
+        row = target.execute(
+            _SELECT_MANIFEST_SEGMENT,
+            (namespace, thread_id, segment_ref),
+        ).fetchone()
+        if row is None or bytes(row[0]) != data:
+            # A ref is the digest of its bytes. An existing row with the same
+            # ref but different bytes means the shared page is corrupt; never
+            # publish a run that would silently reuse it.
+            raise ValueError(
+                "Checkpoint manifest page is corrupted or could not be "
+                f"published: {segment_ref!r}"
+            )
+
+    def _write_message_item(
+        self,
+        namespace: str,
+        thread_id: str,
+        item_ref: str,
+        text: str,
+        now: float,
+        executor: Any | None = None,
+    ) -> None:
+        """Publish one new item payload and reject a colliding corrupt row.
+
+        An existing row with the same content reference may differ only in JSON
+        mapping insertion order. It is reused only when it still decodes to the
+        same payload; malformed or different bytes fail closed.
+        """
+        target = executor or self._conn
+        target.execute(
+            _UPSERT_MESSAGE_ITEM,
+            (namespace, thread_id, item_ref, text, now, now),
+        )
+        row = target.execute(
+            _SELECT_MESSAGE_ITEM,
+            (namespace, thread_id, item_ref),
+        ).fetchone()
+        try:
+            stored = None if row is None else self._deserialize(row[0])
+            expected = self._deserialize(text)
+        except (TypeError, ValueError) as error:
+            raise ValueError(
+                "Checkpoint message item is corrupted or could not be "
+                f"published: {namespace}/{thread_id}/{item_ref!r}"
+            ) from error
+        if stored is None or not same_payload_value(stored, expected):
+            raise ValueError(
+                "Checkpoint message item is corrupted or could not be "
+                f"published: {namespace}/{thread_id}/{item_ref!r}"
+            )
+
+    def _tail_from_state(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        state_text: str,
+        limit: int,
+    ) -> CheckpointTail:
+        state = self._deserialize(state_text)
+        self._validate_checkpoint_envelope(state.get("_checkpoint"))
+        normalized_messages = state.get("_messages")
+        if not isinstance(normalized_messages, Mapping):
+            raise ValueError(
+                "Incremental checkpoints require a normalized message history"
+            )
+        if not isinstance(normalized_messages.get("state"), Mapping):
+            raise ValueError("Checkpoint manifest is missing its message state")
+        base = snapshot_base(self.routing_id, namespace, thread_id, run_id, state)
+        return recover_tail(
+            state,
+            base,
+            limit,
+            lambda segment_ref: self._read_manifest_segment(
+                namespace, thread_id, segment_ref
+            ),
+            lambda entries: self._iter_message_items(namespace, thread_id, entries),
+        )
+
+    @_locked
+    def load_tail(
+        self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
+    ) -> CheckpointTail | None:
+        # Validate the requested window even when the run does not exist.
+        validate_tail_limit(limit)
+        started = not self._conn.in_transaction
+        try:
+            if started:
+                self._conn.execute("BEGIN")
+            row = self._conn.execute(
+                _SELECT_STATE,
+                (namespace, thread_id, run_id),
+            ).fetchone()
+            tail = (
+                None
+                if row is None
+                else self._tail_from_state(namespace, thread_id, run_id, row[0], limit)
+            )
+            if started:
+                self._conn.commit()
+            return tail
+        except BaseException as error:
+            if started:
+                self._rollback_preserving_error(error)
+            raise
+
+    def _prepare_append_items(
+        self,
+        namespace: str,
+        thread_id: str,
+        items: List[Mapping[str, Any]],
+        *,
+        start_index: int,
+    ) -> tuple[List[Dict[str, Any]], Dict[str, str]]:
+        """Split only new occurrences and reject payload-ref collisions."""
+        entries: List[Dict[str, Any]] = []
+        payloads: Dict[str, str] = {}
+        for offset, item in enumerate(items):
+            payload, entry = split_item_occurrence(
+                namespace=namespace,
+                thread_id=thread_id,
+                index=start_index + offset,
+                item=item,
+            )
+            item_ref = self._item_ref(payload)
+            text = self._serialize(payload)
+            staged = payloads.get(item_ref)
+            if staged is not None and not same_payload_value(
+                self._deserialize(staged), self._deserialize(text)
+            ):
+                raise ValueError(
+                    "Checkpoint message item payload reference collision: "
+                    f"{namespace}/{thread_id}/{item_ref!r}"
+                )
+            payloads[item_ref] = text
+            entry["item_ref"] = item_ref
+            entries.append(entry)
+        return entries, payloads
+
+    @_locked
+    def append_state(  # noqa: C901 - keeps validation, staging and CAS in one transaction
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        items: list[Mapping[str, Any]],
+        *,
+        base: CheckpointBase,
+        state_updates: Mapping[str, Any] | None = None,
+        message_updates: Mapping[str, Any] | None = None,
+        event: Mapping[str, Any] | None = None,
+        branch_id: str | None = None,
+        head_item_id: str | None = None,
+        extension_state: Mapping[str, Any] | None = None,
+    ) -> CheckpointTail:
+        self._validate_incremental_base(
+            base, namespace, thread_id, run_id, self.routing_id
+        )
+        now = time.time()
+        cur = self._conn.cursor()
+        try:
+            # Reserve the writer before reading the previous snapshot so no
+            # independent connection can replace the base we are validating.
+            cur.execute("BEGIN IMMEDIATE")
+            row = cur.execute(_SELECT_STATE, (namespace, thread_id, run_id)).fetchone()
+            if row is None:
+                raise CheckpointConflictError(
+                    f"Checkpoint run `{run_id}` not found in thread `{thread_id}`."
+                )
+            previous = self._deserialize(row[0])
+            self._validate_checkpoint_envelope(previous.get("_checkpoint"))
+            old_base = snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, previous
+            )
+            if old_base != base:
+                raise CheckpointConflictError(
+                    "Checkpoint base is stale or does not match the persisted snapshot"
+                )
+            previous_messages = previous.get("_messages")
+            if not isinstance(previous_messages, Mapping):
+                raise ValueError(
+                    "Incremental checkpoints require a normalized message history"
+                )
+            if not isinstance(previous_messages.get("state"), Mapping):
+                raise ValueError("Checkpoint manifest is missing its message state")
+            inline, manifest = resolve_manifest_layout(previous_messages)
+            control_state = append_control_state(
+                previous, items, state_updates, message_updates
+            )
+            # Freeze the delta before the potentially long strict archive scan.
+            # A caller mutating its inputs cannot desynchronize the ack/payloads.
+            new_items = control_state["messages"]["items"]
+
+            # Strictly validate every prior payload exactly once and retain only
+            # occurrence identities, never the previous timeline.
+            old_item_ids: List[str] = []
+            prior = self._commit_envelope_from_state(
+                namespace,
+                thread_id,
+                previous,
+                collect_item_ids=old_item_ids,
+            )
+            if len(old_item_ids) != old_base.item_count:
+                raise ValueError("Checkpoint manifest occurrence count is corrupted")
+            incoming_ids = [item["item_id"] for item in new_items]
+            old_id_set = set(old_item_ids)
+            if len(old_id_set) != len(old_item_ids):
+                raise ValueError("Checkpoint archive contains duplicate item IDs")
+            for item_id in incoming_ids:
+                if item_id in old_id_set:
+                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+
+            effective_head = (
+                head_item_id
+                if head_item_id is not None
+                else (incoming_ids[-1] if incoming_ids else None)
+            )
+            committed, next_revision = self._prepare_revision_state(
+                control_state,
+                prior,
+                expected_revision=base.revision,
+                branch_id=branch_id,
+                head_item_id=effective_head,
+                extension_state=extension_state,
+            )
+            prepared_event = deepcopy(dict(event)) if event is not None else None
+
+            new_entries, payloads = self._prepare_append_items(
+                namespace,
+                thread_id,
+                new_items,
+                start_index=old_base.item_count,
+            )
+            for item_ref, text in payloads.items():
+                self._write_message_item(
+                    namespace,
+                    thread_id,
+                    item_ref,
+                    text,
+                    now,
+                    executor=cur,
+                )
+
+            def write_page(segment_ref: str, data: bytes) -> None:
+                self._write_manifest_page(
+                    namespace,
+                    thread_id,
+                    segment_ref,
+                    data,
+                    now,
+                    executor=cur,
+                )
+
+            if inline is not None:
+                prefix = (
+                    migrate_inline_entries(inline, old_item_ids)
+                    if new_entries
+                    else [dict(entry) for entry in inline]
+                )
+                combined = prefix + new_entries
+                # A control-only update preserves even a large legacy inline
+                # layout; no migration or page rewrite is needed without a delta.
+                if not new_entries or len(combined) <= MANIFEST_PAGE_SIZE:
+                    normalized = compose_append_state(committed, item_entries=combined)
+                else:
+                    normalized = compose_append_state(
+                        committed,
+                        manifest=build_manifest(combined, write_page),
+                    )
+            else:
+                updated_manifest = (
+                    append_manifest(
+                        manifest,
+                        new_entries,
+                        lambda segment_ref: self._read_manifest_segment(
+                            namespace, thread_id, segment_ref
+                        ),
+                        write_page,
+                    )
+                    if new_entries
+                    else dict(manifest)
+                )
+                normalized = compose_append_state(committed, manifest=updated_manifest)
+
+            # Validate raw control metadata before SQLite's legacy default=str
+            # serializer could erase a type distinction in the incremental API.
+            new_base = snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, normalized
+            )
+            payload = self._serialize(normalized)
+            gc_segments = replacement_needs_segment_gc(previous, normalized)
+            cur.execute(
+                _UPSERT_STATE,
+                (
+                    namespace,
+                    thread_id,
+                    run_id,
+                    committed.get("status", "running"),
+                    payload,
+                    now,
+                    now,
+                ),
+            )
+            if gc_segments:
+                # Changed-head append on the same run: reuse the existing
+                # reachability sweep inside this atomic publication.
+                self._cleanup_orphaned_items(namespace, thread_id)
+            if prepared_event is not None:
+                cur.execute(
+                    _INSERT_EVENT,
+                    (
+                        namespace,
+                        thread_id,
+                        run_id,
+                        prepared_event.get("event_type", "unknown"),
+                        now,
+                        self._serialize(prepared_event),
+                    ),
+                )
+            cur.execute(
+                "INSERT INTO checkpoint_commits VALUES (?, ?, ?, ?, ?, ?)",
+                (
+                    namespace,
+                    thread_id,
+                    run_id,
+                    committed["_checkpoint"]["stream_id"],
+                    next_revision,
+                    self._serialize(
+                        prepared_event
+                        if prepared_event is not None
+                        else {
+                            "event_type": "checkpoint",
+                            "status": committed.get("status"),
+                        }
+                    ),
+                ),
+            )
+            self._conn.commit()
+            return CheckpointTail(new_base, old_base.item_count, committed)
+        except BaseException as error:
+            self._rollback_preserving_error(error)
+            raise
 
     @_locked
     def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
@@ -358,22 +737,14 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             return normalized
 
         def write_page(segment_ref: str, data: bytes) -> None:
-            target.execute(
-                _INSERT_MANIFEST_SEGMENT,
-                (namespace, thread_id, segment_ref, data, now),
+            self._write_manifest_page(
+                namespace,
+                thread_id,
+                segment_ref,
+                data,
+                now,
+                executor=target,
             )
-            row = target.execute(
-                _SELECT_MANIFEST_SEGMENT,
-                (namespace, thread_id, segment_ref),
-            ).fetchone()
-            if row is None or bytes(row[0]) != data:
-                # A ref is the digest of its bytes. An existing row with the
-                # same ref but different bytes means the shared page is corrupt;
-                # never publish a run that would silently reuse it.
-                raise ValueError(
-                    "Checkpoint manifest page is corrupted or could not be "
-                    f"published: {segment_ref!r}"
-                )
 
         normalized["_messages"] = {
             "state": message_state,
@@ -548,7 +919,21 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         payloads are still validated in bounded batches so corruption cannot be
         published.
         """
-        state = self._deserialize(state_text)
+        return self._commit_envelope_from_state(
+            namespace,
+            thread_id,
+            self._deserialize(state_text),
+        )
+
+    def _commit_envelope_from_state(
+        self,
+        namespace: str,
+        thread_id: str,
+        state: Mapping[str, Any],
+        *,
+        collect_item_ids: List[str] | None = None,
+    ) -> Dict[str, Any]:
+        """Validate prior payloads once and optionally collect occurrence ids."""
         self._validate_checkpoint_envelope(state.get("_checkpoint"))
         normalized_messages = state.get("_messages")
         if isinstance(normalized_messages, Mapping):
@@ -557,8 +942,19 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if not isinstance(normalized_messages.get("state"), Mapping):
                 raise ValueError("Checkpoint manifest is missing its message state")
-            for _ in self._iter_message_items(namespace, thread_id, item_entries):
-                pass
+            for index, item in enumerate(
+                self._iter_message_items(namespace, thread_id, item_entries)
+            ):
+                if collect_item_ids is not None:
+                    item_id = item.get("item_id")
+                    if not isinstance(item_id, str) or not item_id:
+                        item_id = legacy_item_id(
+                            namespace=namespace,
+                            thread_id=thread_id,
+                            index=index,
+                            item=item,
+                        )
+                    collect_item_ids.append(item_id)
         if "_checkpoint" not in state:
             return {}
         return {"_checkpoint": state["_checkpoint"]}

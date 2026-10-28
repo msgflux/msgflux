@@ -139,6 +139,77 @@ def iter_manifest_pages(
         yield ref, page["entries"]
 
 
+def iter_manifest_suffix(
+    descriptor: Mapping[str, Any],
+    read_page: ReadPage,
+    *,
+    start: int,
+) -> Iterator[Dict[str, Any]]:
+    """Yield entries at absolute ``start`` through the head, oldest first.
+
+    Only suffix pages and at most one boundary parent are read. This verifies
+    the visited pages, not the untouched archive. Full iteration remains the
+    integrity oracle for the complete chain.
+    """
+    _head, count = _parse_descriptor(descriptor)
+    if isinstance(start, bool) or not isinstance(start, int):
+        raise ValueError("Checkpoint suffix start must be an integer")
+    if not 0 <= start <= count:
+        raise ValueError("Checkpoint suffix start is outside the manifest")
+    if start == count:
+        return
+    pages: List[List[Dict[str, Any]]] = []
+    end = count
+    for _ref, entries in iter_manifest_pages(descriptor, read_page):
+        page_start = end - len(entries)
+        pages.append(entries[max(0, start - page_start) :])
+        if page_start <= start:
+            break
+        end = page_start
+    for entries in reversed(pages):
+        yield from entries
+
+
+def append_manifest(
+    descriptor: Mapping[str, Any],
+    entries: Iterable[Mapping[str, Any]],
+    read_page: ReadPage,
+    write_page: WritePage,
+) -> Dict[str, Any]:
+    """Append occurrences while reusing every complete prefix page.
+
+    This validates only the head and its immediate parent; callers that require
+    full archive integrity must validate it before publication. New entries
+    and a partial old tail are copied, with bounded per-page working memory.
+    Like ``build_manifest``, publication must stage writes or use a transaction.
+    """
+    head, count = _parse_descriptor(descriptor)
+    parent = head
+    chunk: List[Dict[str, Any]] = []
+    if head is not None:
+        # Reuse the standard walker's head/parent count and digest checks.
+        _ref, page = next(_walk_pages(descriptor, read_page))
+        last_entries = page["entries"]
+        if len(last_entries) < MANIFEST_PAGE_SIZE:
+            parent = page["parent"]
+            chunk = last_entries
+    base_count = count - len(chunk)
+    added = False
+    for index, entry in enumerate(entries):
+        chunk.append(_copy_entry(entry, index))
+        added = True
+        if len(chunk) == MANIFEST_PAGE_SIZE:
+            base_count += len(chunk)
+            parent = _write_page(parent, base_count, chunk, write_page)
+            chunk = []
+    if not added:
+        return {"format": MANIFEST_FORMAT, "head": head, "count": count}
+    if chunk:
+        base_count += len(chunk)
+        parent = _write_page(parent, base_count, chunk, write_page)
+    return {"format": MANIFEST_FORMAT, "head": parent, "count": base_count}
+
+
 def _walk_pages(
     descriptor: Mapping[str, Any],
     read_page: ReadPage,

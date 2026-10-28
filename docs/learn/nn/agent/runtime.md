@@ -3437,6 +3437,105 @@ Both modes use a local model and tool without provider requests. The benchmark
 measures retained Python allocations and checkpoint size; it does not establish
 constant latency for an indefinitely growing thread.
 
+### Recovering a suffix and appending incrementally
+
+`SQLiteCheckpointStore` and `InMemoryCheckpointStore` expose an explicit
+incremental capability (`supports_incremental`). `load_tail()` recovers the last
+`limit` occurrences together with complete checkpoint control metadata, message
+container metadata and a `CheckpointBase` identifying the persisted snapshot.
+The returned `CheckpointTail.start` is the suffix's absolute occurrence offset;
+`tail.base.item_count` is the size of the complete history.
+
+```python
+from msgflux.chat_messages import ChatMessages
+from msgflux.data.stores import SQLiteCheckpointStore
+
+store = SQLiteCheckpointStore("conversation.db")
+namespace, thread_id, run_id = "assistant", "thread-1", "run-1"
+messages = ChatMessages(
+    [{"role": "user", "content": "Inspect the project."}],
+    namespace=namespace,
+    thread_id=thread_id,
+)
+store.commit_state(
+    namespace,
+    thread_id,
+    run_id,
+    {"status": "running", "messages": messages._to_state()},
+    expected_revision=0,
+)
+
+# Recover a storage window while retaining provenance for the complete archive.
+tail = store.load_tail(namespace, thread_id, run_id, limit=16)
+assert tail is not None
+
+# Send only new occurrences. Each appended occurrence needs a unique item_id.
+appended = store.append_state(
+    namespace,
+    thread_id,
+    run_id,
+    [{"role": "assistant", "content": "Inspection complete.", "item_id": "itm_reply"}],
+    base=tail.base,
+    state_updates={"status": "completed"},
+    event={"event_type": "inspection_completed"},
+)
+assert appended.base.revision == tail.base.revision + 1
+assert appended.start == tail.base.item_count
+
+# Full export and inspection retain every occurrence, including the old prefix.
+complete = store.load_state(namespace, thread_id, run_id)
+assert len(complete["messages"]["items"]) == appended.base.item_count
+store.close()
+```
+
+This example creates a checkpoint, recovers a suffix, and appends an assistant
+message without sending the old messages back to the store. `append_state()`
+returns a `CheckpointTail` containing only the newly appended occurrences and
+the updated control metadata. An empty item list can commit a control-only
+update. `state_updates` and `message_updates` shallowly replace supplied fields;
+omitted fields remain unchanged. Message updates cannot supply `items`, and
+state updates cannot supply `messages`, `_messages` or `_checkpoint`.
+
+The base is bound to the store, namespace, thread, run and complete persisted
+snapshot. Stale bases fail with `CheckpointConflictError`, including when
+`save_state()` changes a snapshot without advancing its revision. Reopen a
+SQLite store and call `load_tail()` to recover a fresh base after a restart.
+Incremental recovery requires JSON-compatible control and message-container
+metadata; unsupported Python objects in an in-memory checkpoint remain usable
+through the full APIs. This keeps the snapshot fingerprint sensitive to actual
+metadata values and types. Item payloads remain in their existing store format.
+When a nonempty append continues an inline legacy history without occurrence
+IDs, the old entries receive the same deterministic IDs as a full save. A
+control-only append preserves that legacy history and its inline layout.
+A base is concurrency provenance, not an authorization credential. This first
+incremental path appends to the same existing run; creating runs, editing older
+items and branching continue to use the full checkpoint and fork APIs.
+
+A storage suffix may start in the middle of a turn or tool exchange. It is not
+a model context or a complete `ChatMessages` state. Do not pass `tail.state` to
+`save_state()` or `commit_state()` as a replacement history. The Agent still
+uses full restore and commit by default; compaction-aware active recovery and
+hook integration are separate work. Sync stores also expose `aload_tail()` and
+`aappend_state()` wrappers. Providers without this capability retain their
+existing APIs and raise `NotImplementedError` for the optional methods.
+
+For segmented checkpoints, suffix recovery reads the requested pages and at
+most one boundary parent, and decodes only the suffix payloads. It validates
+those pages and payloads, rather than untouched cold payloads. `load_state()`
+continues to validate the complete history. With `limit=0`, recovery reads only
+control state and validates no history page or payload; the base alone does not
+prove archive integrity. Append and full load still perform their full
+validation. Inline legacy manifests require
+reading their inline list, and control metadata may itself be large.
+
+Incremental append writes new payloads and changed manifest pages while reusing
+complete prefix pages. It still strictly decodes prior payloads and checks item
+identities before publication. Changed-head cleanup also traverses retained
+roots. Consequently, this API reduces repeated writes but does not promise
+constant commit latency or bounded memory for the current Agent. State,
+revision, event and page cleanup publish atomically; a failed append leaves the
+previous checkpoint intact.
+
 ### Offline extension matrix
 
 Run the same tool trajectory with fresh agents and stores for each combination:

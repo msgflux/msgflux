@@ -4,6 +4,7 @@ from msgflux.data.stores.base import (
     CheckpointConflictError,
     CheckpointStore,
 )
+from msgflux.data.stores.incremental import CheckpointBase, CheckpointTail
 from msgflux.data.stores.observation import (
     CheckpointCursor,
     CheckpointCursorError,
@@ -22,6 +23,8 @@ from msgflux.data.stores.types import (
 )
 
 __all__ = [
+    "CheckpointBase",
+    "CheckpointTail",
     "CheckpointCursor",
     "CheckpointCursorError",
     "CheckpointPage",
