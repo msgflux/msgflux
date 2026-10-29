@@ -8,7 +8,7 @@ import httpx2
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
 from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
+from msgflux.data.retrievers.types import WebSearchRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
@@ -18,7 +18,7 @@ DEFAULT_BASE_URL = "http://localhost:8080"
 
 
 @register_retriever
-class SearXNGWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+class SearXNGWebRetriever(BaseWebSearch, BaseRetriever, WebSearchRetriever):
     """A SearXNG client for local or self-hosted metasearch retrieval."""
 
     provider = "searxng"

@@ -1,24 +1,24 @@
 import asyncio
 from os import getenv
-from typing import List, Optional
-
-try:
-    from exa_py import AsyncExa, Exa
-except ImportError:
-    AsyncExa = None
-    Exa = None
+from typing import Any, List, Mapping, Optional
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
+from msgflux.data.retrievers.http import HTTPRetrieverMixin
 from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
+from msgflux.data.retrievers.types import WebSearchRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
 
+API_KEY_ENV_NAME = "EXA_API_KEY"
+DEFAULT_BASE_URL = "https://api.exa.ai"
+
 
 @register_retriever
-class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+class ExaWebRetriever(
+    HTTPRetrieverMixin, BaseWebSearch, BaseRetriever, WebSearchRetriever
+):
     """An Exa.ai client for retrieving web content with semantic search.
 
     This class interfaces with the Exa API to provide semantic search results
@@ -37,10 +37,13 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         end_published_date: Optional[str] = None,
         include_text: Optional[bool] = None,
         max_characters: Optional[int] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[float] = None,
     ):
         """Initialize ExaWebRetriever.
 
-        Requires the `EXA_API_KEY` environment variable to be set.
+        Requires the `EXA_API_KEY` environment variable to be set when a
+        request is made.
 
         Args:
             search_type:
@@ -63,6 +66,10 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             max_characters:
                 Maximum characters of text to return per result.
                 Defaults to None (full content).
+            base_url:
+                Exa API base URL. Defaults to "https://api.exa.ai".
+            timeout:
+                Request timeout in seconds. Defaults to 30.
 
         !!! example
 
@@ -72,20 +79,6 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        if Exa is None or AsyncExa is None:
-            raise ImportError(
-                "The 'exa-py' package is not installed or is outdated. "
-                "Please install it via pip: pip install -U exa-py"
-            )
-
-        api_key = getenv("EXA_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "The Exa API key is not available. Please set `EXA_API_KEY`"
-            )
-
-        self.client = Exa(api_key=api_key)
-        self.async_client = AsyncExa(api_key=api_key)
         self.search_type = search_type or "auto"
         self.include_domains = include_domains
         self.exclude_domains = exclude_domains
@@ -93,50 +86,76 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         self.end_published_date = end_published_date
         self.include_text = include_text if include_text is not None else True
         self.max_characters = max_characters
+        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.search_url = f"{self.base_url}/search"
+        self.timeout = timeout or 30.0
+        self._initialize()
+
+    def _get_api_key(self) -> str:
+        api_key = getenv(API_KEY_ENV_NAME)
+        if api_key:
+            return api_key
+
+        raise ValueError(
+            f"The Exa API key is not available. Please set `{API_KEY_ENV_NAME}`"
+        )
+
+    def _build_headers(self) -> dict:
+        api_key = self._get_api_key()
+        return {
+            "x-api-key": api_key,
+            "Content-Type": "application/json",
+        }
 
     def _build_search_kwargs(self, top_k: int) -> dict:
-        """Build kwargs for Exa search methods."""
+        """Build REST payload fields for Exa search requests."""
         kwargs = {
-            "num_results": top_k,
+            "numResults": top_k,
             "type": self.search_type,
         }
 
         if self.include_domains:
-            kwargs["include_domains"] = self.include_domains
+            kwargs["includeDomains"] = self.include_domains
         if self.exclude_domains:
-            kwargs["exclude_domains"] = self.exclude_domains
+            kwargs["excludeDomains"] = self.exclude_domains
         if self.start_published_date:
-            kwargs["start_published_date"] = self.start_published_date
+            kwargs["startPublishedDate"] = self.start_published_date
         if self.end_published_date:
-            kwargs["end_published_date"] = self.end_published_date
+            kwargs["endPublishedDate"] = self.end_published_date
 
         return kwargs
 
     def _build_text_options(self) -> dict:
-        """Build text options for content retrieval."""
+        """Build content retrieval options for Exa."""
         if not self.include_text:
             return {}
 
         text_opts = {}
         if self.max_characters:
-            text_opts["max_characters"] = self.max_characters
+            text_opts["maxCharacters"] = self.max_characters
 
-        return {"text": text_opts if text_opts else True}
+        return {"contents": {"text": text_opts if text_opts else True}}
 
-    def _parse_response(self, response) -> List[dict]:
+    def _build_payload(self, query: str, top_k: int) -> dict:
+        payload = {"query": query, **self._build_search_kwargs(top_k)}
+        payload.update(self._build_text_options())
+        return payload
+
+    def _parse_response(self, response: Mapping[str, Any], top_k: int) -> List[dict]:
         """Parse an Exa response into msgflux web search result items."""
         results = []
-        for result in response.results:
+        for result in response.get("results", [])[:top_k]:
             data = {
-                "title": result.title,
-                "url": result.url,
+                "title": result.get("title"),
+                "url": result.get("url"),
             }
 
-            if hasattr(result, "text") and result.text:
-                data["content"] = result.text
+            if result.get("text"):
+                data["content"] = result["text"]
 
-            if hasattr(result, "published_date") and result.published_date:
-                data["date"] = result.published_date
+            published_date = result.get("publishedDate") or result.get("published_date")
+            if published_date:
+                data["date"] = published_date
 
             results.append({"data": data})
 
@@ -145,16 +164,14 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     def _single_search(self, query: str, top_k: int) -> List[dict]:
         """Internal method to search Exa for a single query."""
         try:
-            kwargs = self._build_search_kwargs(top_k)
+            response = self.client.post(
+                self.search_url,
+                headers=self._build_headers(),
+                json=self._build_payload(query, top_k),
+            )
+            response.raise_for_status()
 
-            if self.include_text:
-                text_opts = self._build_text_options()
-                kwargs.update(text_opts)
-                response = self.client.search_and_contents(query, **kwargs)
-            else:
-                response = self.client.search(query, **kwargs)
-
-            return self._parse_response(response)
+            return self._parse_response(response.json(), top_k)
 
         except Exception as e:
             logger.warning("Exa search failed for query '%s': %s", query, e)
@@ -163,16 +180,14 @@ class ExaWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
         """Async internal method to search Exa for a single query."""
         try:
-            kwargs = self._build_search_kwargs(top_k)
+            response = await self.aclient.post(
+                self.search_url,
+                headers=self._build_headers(),
+                json=self._build_payload(query, top_k),
+            )
+            response.raise_for_status()
 
-            if self.include_text:
-                text_opts = self._build_text_options()
-                kwargs.update(text_opts)
-                response = await self.async_client.search_and_contents(query, **kwargs)
-            else:
-                response = await self.async_client.search(query, **kwargs)
-
-            return self._parse_response(response)
+            return self._parse_response(response.json(), top_k)
 
         except Exception as e:
             logger.warning("Exa async search failed for query '%s': %s", query, e)

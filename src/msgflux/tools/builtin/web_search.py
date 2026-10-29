@@ -15,6 +15,7 @@ class WebSearchTool:
         "Use for current or external facts; prefer a concise search query."
     )
     display_name = "Web Search"
+    default_engine = "retriever/firecrawl"
     engine_env_var = "MSGFLUX_TOOL_WEB_SEARCH_ENGINE"
     init_params_env_var = "MSGFLUX_TOOL_WEB_SEARCH_INIT_PARAMS"
     call_params_env_var = "MSGFLUX_TOOL_WEB_SEARCH_CALL_PARAMS"
@@ -26,12 +27,7 @@ class WebSearchTool:
         init_params: Optional[Dict[str, Any]] = None,
         call_params: Optional[Dict[str, Any]] = None,
     ):
-        self.engine = engine or getenv(self.engine_env_var)
-        if not self.engine:
-            raise ValueError(
-                "Missing web search engine. Pass `engine=` or set "
-                f"`{self.engine_env_var}`."
-            )
+        self.engine = engine or getenv(self.engine_env_var) or self.default_engine
         self.init_params = self._resolve_params(
             init_params,
             env_var=self.init_params_env_var,
@@ -230,3 +226,21 @@ class WebSearchTool:
                 )
             return await self._arun_retriever(query)
         return await self._arun_model(query, goal=goal)
+
+    def close(self) -> None:
+        """Close the search backend after synchronous use."""
+        backend = self.retriever if self.engine_kind == "retriever" else self.model
+        close = getattr(backend, "close", None)
+        if callable(close):
+            close()
+
+    async def aclose(self) -> None:
+        """Close the search backend when its async host releases the tool."""
+        backend = self.retriever if self.engine_kind == "retriever" else self.model
+        aclose = getattr(backend, "aclose", None)
+        if callable(aclose):
+            result = aclose()
+            if inspect.isawaitable(result):
+                await result
+        else:
+            self.close()

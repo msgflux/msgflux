@@ -7,7 +7,7 @@ import httpx2
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
 from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
+from msgflux.data.retrievers.types import WebSearchRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
@@ -25,7 +25,7 @@ QUERY_PARAM_BY_ENGINE = {
 
 
 @register_retriever
-class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+class SerpApiWebRetriever(BaseWebSearch, BaseRetriever, WebSearchRetriever):
     """A SerpAPI client for retrieving web search results.
 
     This class interfaces with the SerpAPI to provide Google search results

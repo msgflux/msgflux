@@ -7,7 +7,7 @@ import httpx2
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
 from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
+from msgflux.data.retrievers.types import WebSearchRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
@@ -17,7 +17,7 @@ CERAMIC_SEARCH_URL = "https://api.ceramic.ai/search"
 
 
 @register_retriever
-class CeramicWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+class CeramicWebRetriever(BaseWebSearch, BaseRetriever, WebSearchRetriever):
     """A Ceramic client for lexical web search retrieval.
 
     Ceramic Search is a web search provider based on lexical query matching.

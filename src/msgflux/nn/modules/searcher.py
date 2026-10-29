@@ -7,7 +7,7 @@ from msgflux.data.retrievers.types import (
     FuzzyRetriever,
     LexicalRetriever,
     SemanticRetriever,
-    WebRetriever,
+    WebSearchRetriever,
 )
 from msgflux.models.gateway import ModelGateway
 from msgflux.models.types import (
@@ -18,7 +18,9 @@ from msgflux.models.types import (
 from msgflux.nn.modules.embedder import Embedder
 from msgflux.nn.modules.module import Module
 
-RETRIVERS = Union[WebRetriever, LexicalRetriever, FuzzyRetriever, SemanticRetriever]
+RETRIVERS = Union[
+    WebSearchRetriever, LexicalRetriever, FuzzyRetriever, SemanticRetriever
+]
 EMBEDDER_MODELS = Union[
     AudioEmbedderModel, ImageEmbedderModel, TextEmbedderModel, ModelGateway
 ]
@@ -328,7 +330,7 @@ class Searcher(Module, metaclass=AutoParams):
         if isinstance(
             retriever,
             (
-                WebRetriever,
+                WebSearchRetriever,
                 LexicalRetriever,
                 FuzzyRetriever,
                 SemanticRetriever,
@@ -337,7 +339,7 @@ class Searcher(Module, metaclass=AutoParams):
             self.register_buffer("retriever", retriever)
         else:
             raise TypeError(
-                "`retriever` requires `WebRetriever`, `LexicalRetriever`, "
+                "`retriever` requires `WebSearchRetriever`, `LexicalRetriever`, "
                 "`FuzzyRetriever` or `SemanticRetriever` instance "
                 f"given `{type(retriever)}`"
             )

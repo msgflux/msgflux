@@ -11,15 +11,17 @@ from msgflux.tools.builtin.web_search import WebSearchTool
 
 
 class TestRetrieverAlias:
-    def test_web_search_alias_calls_web_factory(self, mocker):
-        mock_factory = mocker.patch("msgflux.data.retrievers.retriever.Retriever.web")
+    def test_legacy_web_alias_calls_web_search_factory(self, mocker):
+        mock_factory = mocker.patch(
+            "msgflux.data.retrievers.retriever.Retriever.web_search"
+        )
 
         sentinel = object()
         mock_factory.return_value = sentinel
 
         from msgflux.data.retrievers.retriever import Retriever
 
-        result = Retriever.web_search("wikipedia", language="pt")
+        result = Retriever.web("wikipedia", language="pt")
 
         assert result is sentinel
         mock_factory.assert_called_once_with("wikipedia", language="pt")
@@ -194,11 +196,13 @@ class TestWebSearchToolInit:
         with pytest.raises(ValueError, match="goal"):
             tool("python", goal="Guide the model.")
 
-    def test_missing_engine_raises(self, mocker):
+    def test_missing_engine_uses_keyless_firecrawl(self, mocker):
         mocker.patch.dict("os.environ", {}, clear=True)
-
-        with pytest.raises(ValueError, match="MSGFLUX_TOOL_WEB_SEARCH_ENGINE"):
-            WebSearchTool()
+        factory = mocker.patch("msgflux.tools.builtin.web_search.Retriever.web_search")
+        tool = WebSearchTool()
+        assert tool.engine == "retriever/firecrawl"
+        assert tool.retriever is factory.return_value
+        factory.assert_called_once_with("firecrawl")
 
 
 class TestWebSearchToolCall:
@@ -309,3 +313,23 @@ class TestWebSearchToolLibraryIntegration:
         assert "prompt" not in props
         assert "web_search_options" not in props
         assert "call_params" not in props
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("engine", ["retriever/firecrawl", "model/provider/model"])
+async def test_search_tool_releases_its_backend(engine, mocker):
+    from types import SimpleNamespace
+    from unittest.mock import AsyncMock
+
+    backend = SimpleNamespace(close=MagicMock(), aclose=AsyncMock())
+    target = (
+        "msgflux.tools.builtin.web_search.Retriever.web_search"
+        if engine.startswith("retriever/")
+        else "msgflux.tools.builtin.web_search.Model.chat_completion"
+    )
+    mocker.patch(target, return_value=backend)
+    tool = WebSearchTool(engine)
+    tool.close()
+    backend.close.assert_called_once()
+    await tool.aclose()
+    backend.aclose.assert_awaited_once()
