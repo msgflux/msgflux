@@ -298,16 +298,29 @@ class TestArxivWebRetriever:
         assert all(request.url.params["max_results"] == "1" for request in api.requests)
 
     def test_search_with_multiple_queries(self, retriever, api):
-        """Test search with multiple queries."""
-        api.responder = lambda request: _atom_response(_ENTRY_ONE, request=request)
+        """Test that parallel queries keep results in input order."""
+        entries_by_query = {
+            "machine learning": _ENTRY_ONE,
+            "deep learning": _ENTRY_TWO,
+        }
+
+        def responder(request):
+            return _atom_response(
+                entries_by_query[request.url.params["search_query"]], request=request
+            )
+
+        api.responder = responder
 
         results = retriever(["machine learning", "deep learning"], top_k=1)
 
         assert len(results.data) == 2
-        assert [request.url.params["search_query"] for request in api.requests] == [
-            "machine learning",
-            "deep learning",
+        assert [group["results"][0]["data"]["title"] for group in results.data] == [
+            "Deep Learning for Natural Language Processing",
+            "Graph Neural Networks in Practice",
         ]
+        assert sorted(
+            request.url.params["search_query"] for request in api.requests
+        ) == ["deep learning", "machine learning"]
 
     def test_search_returns_empty_results_on_http_error(self, retriever, api):
         """Test that HTTP failures are logged and return no results."""
