@@ -3496,6 +3496,25 @@ update. `state_updates` and `message_updates` shallowly replace supplied fields;
 omitted fields remain unchanged. Message updates cannot supply `items`, and
 state updates cannot supply `messages`, `_messages` or `_checkpoint`.
 
+Full revision commits can also return atomic append provenance through
+`CheckpointCommit.base`. This avoids a separate read when the caller already
+has the complete history:
+
+```python
+committed = store.commit_state(
+    namespace, thread_id, run_id, complete_state, expected_revision=revision
+)
+if committed.base is not None:
+    appended = store.append_state(
+        namespace, thread_id, run_id, new_items, base=committed.base
+    )
+```
+
+Here `complete_state` is the full snapshot and `new_items` is the subsequent
+delta. The returned base identifies exactly the committed snapshot; a later
+writer cannot change it. Providers or full snapshots outside the incremental
+contract return `base=None` and continue to support full commits.
+
 The base is bound to the store, namespace, thread, run and complete persisted
 snapshot. Stale bases fail with `CheckpointConflictError`, including when
 `save_state()` changes a snapshot without advancing its revision. Reopen a
@@ -3513,10 +3532,11 @@ items and branching continue to use the full checkpoint and fork APIs.
 
 A storage suffix may start in the middle of a turn or tool exchange. It is not
 a model context or a complete `ChatMessages` state. Do not pass `tail.state` to
-`save_state()` or `commit_state()` as a replacement history. The Agent still
-uses full restore and commit by default; compaction-aware active recovery and
-hook integration are separate work. Sync stores also expose `aload_tail()` and
-`aappend_state()` wrappers. Providers without this capability retain their
+`save_state()` or `commit_state()` as a replacement history. The Agent retains
+full-history restore and hook semantics; automatic incremental writes are
+selected separately as described below. Compaction-aware active recovery is
+separate work. Sync stores also expose `aload_tail()` and `aappend_state()`
+wrappers. Providers without this capability retain their
 existing APIs and raise `NotImplementedError` for the optional methods.
 
 For segmented checkpoints, suffix recovery reads the requested pages and at
@@ -3535,6 +3555,43 @@ roots. Consequently, this API reduces repeated writes but does not promise
 constant commit latency or bounded memory for the current Agent. State,
 revision, event and page cleanup publish atomically; a failed append leaves the
 previous checkpoint intact.
+
+### Automatic Agent checkpoint writes
+
+The Agent uses incremental appends within a run when the store advertises
+`supports_agent_incremental` and returns atomic commit provenance. The first
+checkpoint of a new run, and the first checkpoint after recovery, uses a full
+commit. Later checkpoints can append only the new occurrences while preserving
+the full canonical history.
+
+Before selecting an append, the Agent checks the run identity, revision and
+store routing, then fingerprints the complete previously committed item prefix.
+An edit, reorder, insertion or truncation in that prefix uses a full commit.
+Removing control fields also requires a full commit because incremental
+updates merge fields. Unsupported snapshot values or providers without the
+capability retain the full path. This includes full-commit overrides installed
+on the built-in stores: the optimization does not bypass their custom checks.
+Custom providers must explicitly advertise the Agent capability when their
+append operation preserves those checks.
+
+The remembered base and fingerprint belong to the live `AgentRun`; they do not
+retain another full history and are not serialized into extensions or budgets.
+A process restart starts with a cache miss and a full checkpoint. Context scopes,
+streaming finalization, hooks, tool results and turn indexes continue to see the
+complete history. A failed append propagates its persistence error rather than
+silently retrying as a full overwrite in the same checkpoint operation.
+
+This changes write selection, not the model context or restore contract. State
+construction and prefix hashing still examine the full history, strict commits
+validate prior payloads, and changed-head cleanup walks retained references.
+Long-running tasks can therefore still consume increasing memory and CPU even
+when payload and page INSERT attempts remain small.
+
+Automatic compaction currently cuts at completed-turn boundaries. A single
+active task cannot compact its own growing tool trajectory until that turn is
+completed; earlier completed turns can still be compacted. Measure a long active
+task separately from many completed tasks sharing one thread. Reducing local
+checkpoint writes alone does not bound either trajectory's model input.
 
 ### Offline extension matrix
 

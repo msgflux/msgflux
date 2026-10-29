@@ -16,6 +16,16 @@ from typing import (
 
 import msgspec
 
+from msgflux._private.checkpoint_write import (
+    accept_append,
+    advance_revision,
+    commit_tracker,
+    invalidate_tracker,
+    plan_append,
+    select_async_append,
+    tracker_from_commit,
+    tracker_snapshot,
+)
 from msgflux._private.model_metadata import (
     last_model_configuration,
     last_model_metadata,
@@ -1348,31 +1358,73 @@ class AgentConversationMixin:
 
         thread_id = messages.thread_id or new_thread_id()
         run_id = turns[-1]["turn_id"]
-        state = self._build_checkpoint_state(
-            messages, status=status, task_result=task_result
-        )
+        namespace = self.get_module_name()
+        event = {"event_type": "checkpoint", "status": status}
+        run = None
+        expected_tracker = None
+        expected_revision = None
         try:
             run = get_agent_run()
+            if run is not None:
+                expected_tracker, expected_revision = tracker_snapshot(run)
+            # Bind the body to the revision observed before constructing it.
+            # A newer commit during preparation must conflict, never be adopted.
+            state = self._build_checkpoint_state(
+                messages, status=status, task_result=task_result
+            )
             if run is not None and getattr(
                 checkpoint_store, "supports_atomic_commit", False
             ):
-                committed = checkpoint_store.commit_state(
-                    self.get_module_name(),
-                    thread_id,
-                    run_id,
+                plan = plan_append(
+                    checkpoint_store,
+                    run,
                     state,
-                    expected_revision=run.revision,
-                    extension_state=run.extension_state,
-                    event={"event_type": "checkpoint", "status": status},
-                    branch_id=run.branch_id,
-                    head_item_id=run.head_item_id,
+                    expected_tracker,
+                    namespace=namespace,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    expected_revision=expected_revision,
                 )
-                run.revision = committed.revision
+                if plan is not None:
+                    tail = checkpoint_store.append_state(
+                        namespace,
+                        thread_id,
+                        run_id,
+                        plan.items,
+                        base=plan.base,
+                        state_updates=plan.state_updates,
+                        message_updates=plan.message_updates,
+                        event=event,
+                        branch_id=run.branch_id,
+                        head_item_id=run.head_item_id,
+                        extension_state=run.extension_state,
+                    )
+                    replacement = accept_append(plan, tail)
+                    commit_tracker(
+                        run, expected_tracker, replacement, tail.base.revision
+                    )
+                else:
+                    committed = checkpoint_store.commit_state(
+                        namespace,
+                        thread_id,
+                        run_id,
+                        state,
+                        expected_revision=expected_revision,
+                        extension_state=run.extension_state,
+                        event=event,
+                        branch_id=run.branch_id,
+                        head_item_id=run.head_item_id,
+                    )
+                    advance_revision(run, committed.revision)
+                    replacement = tracker_from_commit(committed, checkpoint_store)
+                    commit_tracker(
+                        run, expected_tracker, replacement, committed.revision
+                    )
             else:
-                checkpoint_store.save_state(
-                    self.get_module_name(), thread_id, run_id, state
-                )
+                invalidate_tracker(run, expected_tracker)
+                checkpoint_store.save_state(namespace, thread_id, run_id, state)
         except BaseException as error:
+            invalidate_tracker(run, expected_tracker)
             self._release_inbox_notifications(error)
             raise
         self._ack_inbox_notifications(messages)
@@ -1395,45 +1447,133 @@ class AgentConversationMixin:
 
         thread_id = messages.thread_id or new_thread_id()
         run_id = turns[-1]["turn_id"]
-        state = self._build_checkpoint_state(
-            messages, status=status, task_result=task_result
-        )
+        namespace = self.get_module_name()
+        event = {"event_type": "checkpoint", "status": status}
+        run = None
+        expected_tracker = None
+        expected_revision = None
         try:
             run = get_agent_run()
+            if run is not None:
+                expected_tracker, expected_revision = tracker_snapshot(run)
+            # Bind the body to the revision observed before constructing it.
+            # A newer commit during preparation must conflict, never be adopted.
+            state = self._build_checkpoint_state(
+                messages, status=status, task_result=task_result
+            )
             if run is not None and getattr(
                 checkpoint_store, "supports_atomic_commit", False
             ):
-                params = {
-                    "expected_revision": run.revision,
-                    "extension_state": run.extension_state,
-                    "event": {"event_type": "checkpoint", "status": status},
-                    "branch_id": run.branch_id,
-                    "head_item_id": run.head_item_id,
-                }
-                if hasattr(checkpoint_store, "acommit_state"):
-                    committed = await checkpoint_store.acommit_state(
-                        self.get_module_name(), thread_id, run_id, state, **params
+                plan = plan_append(
+                    checkpoint_store,
+                    run,
+                    state,
+                    expected_tracker,
+                    namespace=namespace,
+                    thread_id=thread_id,
+                    run_id=run_id,
+                    expected_revision=expected_revision,
+                )
+                if plan is not None:
+                    tail = await self._aappend_checkpoint_state(
+                        checkpoint_store,
+                        namespace,
+                        thread_id,
+                        run_id,
+                        plan,
+                        run=run,
+                        event=event,
+                    )
+                    replacement = accept_append(plan, tail)
+                    commit_tracker(
+                        run, expected_tracker, replacement, tail.base.revision
                     )
                 else:
-                    committed = checkpoint_store.commit_state(
-                        self.get_module_name(), thread_id, run_id, state, **params
+                    committed = await self._acommit_checkpoint_state(
+                        checkpoint_store,
+                        namespace,
+                        thread_id,
+                        run_id,
+                        state,
+                        expected_revision=expected_revision,
+                        run=run,
+                        event=event,
                     )
-                run.revision = committed.revision
+                    advance_revision(run, committed.revision)
+                    replacement = tracker_from_commit(committed, checkpoint_store)
+                    commit_tracker(
+                        run, expected_tracker, replacement, committed.revision
+                    )
             elif hasattr(checkpoint_store, "asave_state"):
+                invalidate_tracker(run, expected_tracker)
                 await checkpoint_store.asave_state(
-                    self.get_module_name(),
+                    namespace,
                     thread_id,
                     run_id,
                     state,
                 )
             else:
-                checkpoint_store.save_state(
-                    self.get_module_name(), thread_id, run_id, state
-                )
+                invalidate_tracker(run, expected_tracker)
+                checkpoint_store.save_state(namespace, thread_id, run_id, state)
         except BaseException as error:
+            invalidate_tracker(run, expected_tracker)
             self._release_inbox_notifications(error)
             raise
         self._ack_inbox_notifications(messages)
+
+    async def _aappend_checkpoint_state(
+        self,
+        checkpoint_store,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        plan,
+        *,
+        run: AgentRun,
+        event: Mapping[str, Any],
+    ):
+        params = {
+            "base": plan.base,
+            "state_updates": plan.state_updates,
+            "message_updates": plan.message_updates,
+            "event": event,
+            "branch_id": run.branch_id,
+            "head_item_id": run.head_item_id,
+            "extension_state": run.extension_state,
+        }
+        append = select_async_append(checkpoint_store)
+        if append is not None:
+            return await append(namespace, thread_id, run_id, plan.items, **params)
+        return checkpoint_store.append_state(
+            namespace, thread_id, run_id, plan.items, **params
+        )
+
+    async def _acommit_checkpoint_state(
+        self,
+        checkpoint_store,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        state: Mapping[str, Any],
+        *,
+        expected_revision: int,
+        run: AgentRun,
+        event: Mapping[str, Any],
+    ):
+        params = {
+            "expected_revision": expected_revision,
+            "extension_state": run.extension_state,
+            "event": event,
+            "branch_id": run.branch_id,
+            "head_item_id": run.head_item_id,
+        }
+        if hasattr(checkpoint_store, "acommit_state"):
+            return await checkpoint_store.acommit_state(
+                namespace, thread_id, run_id, state, **params
+            )
+        return checkpoint_store.commit_state(
+            namespace, thread_id, run_id, state, **params
+        )
 
     def _checkpoint_interrupted(
         self,
@@ -1850,5 +1990,8 @@ class AgentConversationMixin:
         restored.thread_id = thread_id
         restored.run_id = run_id
         current.__dict__.update(restored.__dict__)
+        # A restored run has no in-process append provenance. The first save
+        # seeds it from a full commit instead of pairing load_state with a tail.
+        current._checkpoint_tracker = None
 
     # --- Configuration ---

@@ -73,6 +73,7 @@ from msgflux.data.stores.incremental import (
     append_control_state,
     compose_append_state,
     migrate_inline_entries,
+    optional_snapshot_base,
     recover_tail,
     same_payload_value,
     snapshot_base,
@@ -246,6 +247,12 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     provider = "sqlite"
     supports_atomic_commit = True
     supports_incremental = True
+
+    @property
+    def supports_agent_incremental(self) -> bool:
+        return self._has_default_agent_commit(
+            SQLiteCheckpointStore._agent_commit_implementation
+        )
 
     def _write_manifest_page(
         self,
@@ -1309,16 +1316,23 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                     ),
                 ),
             )
+            commit_base = optional_snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, normalized
+            )
             self._conn.commit()
             return CheckpointCommit(
                 next_revision,
                 committed,
                 committed["_checkpoint"]["branch_id"],
                 committed["_checkpoint"]["head_item_id"],
+                base=commit_base,
             )
         except BaseException as error:
             self._rollback_preserving_error(error)
             raise
+
+    # Freeze the original identity so a later class-level wrapper is honored.
+    _agent_commit_implementation = commit_state
 
     @_locked
     def fork_run(

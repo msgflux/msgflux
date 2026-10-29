@@ -172,25 +172,46 @@ def _persist_command_receipt(state, receipt) -> None:
         isinstance(value, str) and value for value in (thread_id, run_id, namespace)
     ):
         raise RuntimeError("Command receipt requires a durable Agent run identity")
+    from msgflux._private.checkpoint_write import (  # noqa: PLC0415
+        advance_revision,
+        commit_tracker,
+        invalidate_tracker,
+        tracker_from_commit,
+        tracker_snapshot,
+    )
+
     with run._command_receipt_lock:
+        expected_tracker, expected_revision = tracker_snapshot(run)
         state_snapshot = agent._build_checkpoint_state(messages, status="running")
         extensions = dict(run.extension_state)
         extensions["command_receipts"] = retain_command_receipts(
             extensions.get("command_receipts", []), receipt
         )
-        committed = store.commit_state(
-            namespace,
-            thread_id,
-            run_id,
-            state_snapshot,
-            expected_revision=run.revision,
-            extension_state=extensions,
-            branch_id=run.branch_id,
-            head_item_id=run.head_item_id,
-            event={"event_type": "command_receipt", "state": receipt.state},
-        )
+        try:
+            committed = store.commit_state(
+                namespace,
+                thread_id,
+                run_id,
+                state_snapshot,
+                expected_revision=expected_revision,
+                extension_state=extensions,
+                branch_id=run.branch_id,
+                head_item_id=run.head_item_id,
+                event={"event_type": "command_receipt", "state": receipt.state},
+            )
+        except BaseException:
+            invalidate_tracker(run, expected_tracker)
+            raise
         run.extension_state = extensions
-        run.revision = committed.revision
+        # Record the new revision before the potentially long seed hash so a
+        # concurrent receipt uses the persisted revision instead of conflicting.
+        advance_revision(run, committed.revision)
+    try:
+        tracker = tracker_from_commit(committed, store)
+        commit_tracker(run, expected_tracker, tracker, committed.revision)
+    except BaseException:
+        invalidate_tracker(run, expected_tracker)
+        raise
 
 
 def _prepare_agent_guard_input(model_execution_params):
