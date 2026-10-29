@@ -53,7 +53,11 @@ def test_registration_freezes_metadata_and_validates_before_mutating(service):
     [
         ("openai-codex/example", None, ("bash", "read", "apply_patch")),
         ("other/example", None, ("bash", "read", "edit", "write", "delete")),
-        ("openai-codex/example", "explorer", ("read", "ls", "glob", "grep")),
+        (
+            "openai-codex/example",
+            "explorer",
+            ("read", "ls", "glob", "grep", "web_fetch", "web_search"),
+        ),
     ],
 )
 def test_manifest_metadata_reuses_provider_permission_and_preset_resolution(
@@ -67,7 +71,8 @@ def test_manifest_metadata_reuses_provider_permission_and_preset_resolution(
     manifest = load_service_manifest(config)
     result = manifest_agent_configuration(manifest, "coding")
     assert result.model == model and result.reasoning_effort == "medium"
-    assert result.tools_active == expected and result.tools_deferred == ()
+    assert result.tools_active == expected
+    assert result.tools_deferred == ()
     assert result.prompt_source == ("preset" if preset is not None else "default")
     assert result.preset == preset and result.prompt_file is None
     assert result.config_digest == manifest.digest

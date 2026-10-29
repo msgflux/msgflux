@@ -769,3 +769,165 @@ async def test_factory_enforces_independent_workspace_permissions(
         )
     finally:
         await session._close()
+
+
+@pytest.mark.asyncio
+async def test_builtin_roles_delegate_with_custom_ids_and_keep_raw_research_local(
+    tmp_path, monkeypatch
+):
+    import json
+
+    import msgflux.coding.factory as factory_module
+    from msgflux.coding.config import coding_agent_options
+    from msgflux.runtime.context import get_execution_scope
+
+    monkeypatch.setattr(factory_module, "_create_model", lambda _options: _FakeModel())
+
+    class WebSearch:
+        """Search a fixture source."""
+
+        name = "web_search"
+
+        def __call__(self, query: str) -> str:
+            return "unused search"
+
+    class WebFetch:
+        """Fetch a fixture source."""
+
+        name = "web_fetch"
+
+        def __call__(self, url: str) -> str:
+            return "unused fetch"
+
+    monkeypatch.setitem(factory_module._TOOL_FACTORIES, "web_search", WebSearch)
+    monkeypatch.setitem(factory_module._TOOL_FACTORIES, "web_fetch", WebFetch)
+    custom = tmp_path / "parent.md"
+    custom.write_text("CUSTOM PARENT INSTRUCTIONS")
+    parent = coding_agent_options(
+        "coding", "openai/example", subagents=("scout", "worker"), prompt_file=custom
+    )
+    scout = coding_agent_options("scout", "openai/example", preset="explorer")
+    worker = coding_agent_options("worker", "openai/example", preset="builder")
+    session = await create_coding_session_factory(
+        options=parent,
+        catalog=CodingAgentCatalog(
+            agents={"coding": parent, "scout": scout, "worker": worker}
+        ),
+        config_path=tmp_path / "config.toml",
+        runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "state",
+    )(ServiceThread("role-thread", "coding", str(tmp_path)))
+    main = session.agent
+    explorer = main.tool_library.get_tool_definition("scout").executor.impl
+    builder = main.tool_library.get_tool_definition("worker").executor.impl
+    assert "CUSTOM PARENT INSTRUCTIONS" in main.system_prompt.data
+    assert "scout: Delegate repository searches" in main.system_prompt.data
+    assert "worker: Delegate focused implementation" in main.system_prompt.data
+    assert "explorer:" not in main.system_prompt.data
+    assert {
+        "read",
+        "ls",
+        "glob",
+        "grep",
+        "web_fetch",
+    } <= explorer.tool_library.library.keys()
+    assert not explorer.tool_library.get_tool_definition("web_search").loading.deferred
+    assert (
+        not {"bash", "apply_patch", "edit", "write", "delete"}
+        & explorer.tool_library.library.keys()
+    )
+    assert {"bash", "read", "apply_patch"} <= builder.tool_library.library.keys()
+    assert (
+        not {"web_fetch", "web_search", "ls", "grep", "glob"}
+        & builder.tool_library.library.keys()
+    )
+    (tmp_path / "marker.txt").write_text("marker")
+
+    async def research(**kwargs):
+        scope = get_execution_scope()
+        assert scope.workspace.read_text("marker.txt") == "marker"
+        with pytest.raises(PermissionError):
+            scope.workspace.write_text("forbidden.txt", "no")
+        with pytest.raises(PermissionError):
+            scope.workspace.run(["touch", "forbidden.txt"], timeout=5)
+        kwargs["messages"].add_assistant("RAW_RESEARCH_ONLY_IN_SCOUT_CONTEXT")
+        return _text_response("Found marker.txt:1; implement the requested file.")
+
+    async def implement(**_kwargs):
+        scope = get_execution_scope()
+        scope.workspace.write_text("built.txt", "builder result")
+        return _text_response("Created built.txt; verified its content.")
+
+    explorer.generator.aforward = AsyncMock(side_effect=research)
+    builder.generator.aforward = AsyncMock(side_effect=implement)
+
+    def delegate(name, message, call_id):
+        calls = ToolCallAggregator()
+        calls.process(
+            0, call_id, "agent", json.dumps({"name": name, "message": message})
+        )
+        response = ModelResponse()
+        response.set_response_type("tool_call")
+        response.add(calls)
+        return response
+
+    main.generator.aforward = AsyncMock(
+        side_effect=[
+            delegate("scout", "Find the marker", "research"),
+            delegate("worker", "Create built.txt using the findings", "build"),
+            _stream_response("complete"),
+        ]
+    )
+    store = SQLiteServiceStore(tmp_path / "service.sqlite3")
+    service = AgentService(store=store)
+    service.register("coding", lambda _thread: session)
+    try:
+        thread = await service.open_thread(
+            "coding", thread_id="role-thread", cwd=str(tmp_path)
+        )
+        receipt = await service.prompt(
+            thread.thread_id, "Research and implement", request_id="roles"
+        )
+        result = await service.wait(thread.thread_id, receipt.request_id)
+        assert result.status == "completed", result.error
+        assert (tmp_path / "built.txt").read_text() == "builder result"
+        assert not (tmp_path / "forbidden.txt").exists()
+        state = session.checkpoint_store.load_latest_run("coding", thread.thread_id)
+        assert "RAW_RESEARCH_ONLY_IN_SCOUT_CONTEXT" not in json.dumps(state["messages"])
+        assert "Created built.txt" in json.dumps(state["messages"])
+    finally:
+        await service.aclose()
+        store.close()
+
+
+@pytest.mark.asyncio
+async def test_builder_preset_cannot_expand_read_only_parent_permissions(
+    tmp_path, monkeypatch
+):
+    import msgflux.coding.factory as factory_module
+    from msgflux.coding.config import coding_agent_options
+
+    monkeypatch.setattr(factory_module, "_create_model", lambda _options: _FakeModel())
+    parent = coding_agent_options(
+        "reader", "openai/example", permissions=("read",), subagents=("worker",)
+    )
+    worker = coding_agent_options("worker", "openai/example", preset="builder")
+    session = await create_coding_session_factory(
+        options=parent,
+        catalog=CodingAgentCatalog(agents={"reader": parent, "worker": worker}),
+        config_path=tmp_path / "config.toml",
+        runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "state",
+    )(ServiceThread("clipped-builder", "reader", str(tmp_path)))
+    try:
+        child = session.agent.tool_library.get_tool_definition("worker").executor.impl
+        assert (
+            not {"bash", "apply_patch", "edit", "write", "delete"}
+            & child.tool_library.library.keys()
+        )
+        assert "Workspace permissions: read." in child.system_prompt.data
+        assert "Process execution is unavailable." in child.system_prompt.data
+        with pytest.raises(PermissionError):
+            child.workspace.write_text("forbidden.txt", "no")
+    finally:
+        await session.on_close()

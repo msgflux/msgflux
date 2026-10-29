@@ -265,7 +265,8 @@ def test_initialize_config_is_secure_idempotent_and_never_overwrites(tmp_path):
     assert '# model = "provider/model-id"' in template
     assert "[agents.coding.tools]" not in template
     assert 'active = ["workspace", "agent"]' not in template
-    assert '# permissions = ["read"]' in template
+    assert 'preset = "explorer"' in template
+    assert 'preset = "builder"' in template
     config.write_text("existing user config\n")
     assert initialize_service_config(config) == config.resolve()
     assert config.read_text() == "existing user config\n"
@@ -586,12 +587,12 @@ async def test_connect_requires_model_from_initialized_default_manifest(
 
     manifest = load_service_manifest(config)
     assert manifest.defaults.agent == "coding"
-    assert manifest.agents["coding"].subagents == ["lite-coding"]
+    assert manifest.agents["coding"].subagents == ["explorer", "builder"]
     client = await connect_local_service(
         runtime_dir=clean_manifest_runtime, cwd=tmp_path, startup_timeout=15
     )
     try:
-        assert await client.agents() == ("coding", "lite-coding")
+        assert await client.agents() == ("coding", "explorer", "builder")
         record = read_record(clean_manifest_runtime)
         assert record is not None
         assert record.config_path == str(config.resolve())

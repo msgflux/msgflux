@@ -8,6 +8,7 @@ def system_prompt(
     interactive: bool = True,
     permissions: tuple[str, ...] = ("read", "write", "execute"),
     custom_instructions: str | None = None,
+    delegation_guidance: tuple[str, ...] = (),
 ) -> str:
     """Build the default prompt for one coding agent and workspace."""
     access_instruction = f"Workspace permissions: {', '.join(permissions) or 'none'}."
@@ -52,5 +53,10 @@ def system_prompt(
                 access_instruction,
                 interaction_instruction,
             )
+        )
+    if delegation_guidance:
+        instructions.append(
+            "Use the configured subagents through the agent tool:\n"
+            + "\n".join(delegation_guidance)
         )
     return "\n\n".join(instructions)

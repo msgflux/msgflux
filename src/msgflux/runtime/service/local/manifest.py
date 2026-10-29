@@ -43,15 +43,15 @@ account = "default"
 
 [agents.coding]
 harness = "coding"
-subagents = ["lite-coding"]
+subagents = ["explorer", "builder"]
 
-[agents.lite-coding]
+[agents.explorer]
 harness = "coding"
+preset = "explorer"
 
-# Example of a read-only explorer subagent:
-# [agents.explorer]
-# harness = "coding"
-# permissions = ["read"]
+[agents.builder]
+harness = "coding"
+preset = "builder"
 """
 
 

@@ -19,6 +19,7 @@ from msgflux.coding.config import (
     validate_coding_catalog,
     workspace_coding_permissions,
 )
+from msgflux.coding.presets import get_coding_preset
 from msgflux.coding.prompts import system_prompt
 from msgflux.nn.extensions.discovery import AgentExtensionCatalog
 from msgflux.nn.extensions.installation import AgentExtensionInstallation
@@ -105,6 +106,7 @@ def _load_prompt(
     config_path: Path,
     interactive: bool,
     permissions: tuple[CodingPermission, ...],
+    delegation_guidance: tuple[str, ...] = (),
 ) -> str:
     custom_instructions = options.instructions
     if options.prompt_file is not None:
@@ -121,6 +123,7 @@ def _load_prompt(
         interactive=interactive,
         permissions=permissions,
         custom_instructions=custom_instructions,
+        delegation_guidance=delegation_guidance,
     )
 
 
@@ -320,6 +323,7 @@ class _CodingSessionBuilder:
                 config_path=self.config_path,
                 interactive=interactive,
                 permissions=permissions,
+                delegation_guidance=self._delegation_guidance(selected),
             ),
             # Children return through AgentTool as checkpointed tool results, so
             # they must settle to a plain value before the parent records them.
@@ -338,6 +342,17 @@ class _CodingSessionBuilder:
         agent.tool_library.extensions["background_tasks"].enable_grouping()
         agent.tool_library.apply_default_usage_guidance()
         return agent
+
+    def _delegation_guidance(self, selected: CodingAgentOptions) -> tuple[str, ...]:
+        guidance = []
+        for child_id in selected.subagents:
+            child = self.catalog.agents[child_id]
+            if child.preset is None:
+                continue
+            preset = get_coding_preset(child.preset)
+            if preset.delegation_guidance:
+                guidance.append(f"{child_id}: {preset.delegation_guidance}")
+        return tuple(guidance)
 
     def _build_children(
         self,

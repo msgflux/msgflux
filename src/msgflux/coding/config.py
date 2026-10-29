@@ -122,6 +122,7 @@ class CodingAgentOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     description: str | None = None
     instructions: str | None = None
     extensions: tuple[str, ...] = ()
+    preset: str | None = None
 
 
 def coding_agent_options(
@@ -143,6 +144,7 @@ def coding_agent_options(
     options = CodingAgentOptions(
         agent_id=agent_id,
         model=model,
+        preset=preset,
         reasoning_effort=reasoning_effort,
         tools_active=active
         if active is not None
@@ -237,6 +239,7 @@ def resolve_coding_tools(
     if not isinstance(options, CodingAgentOptions):
         raise TypeError("options must be CodingAgentOptions")
     validate_model_path(options.model)
+    _validate_preset(options)
     _validate_extensions(options)
     validate_coding_permissions(options.permissions)
     active = _expand_selection(
@@ -283,6 +286,11 @@ def validate_coding_catalog(catalog: CodingAgentCatalog) -> None:
     _validate_subagent_graph(catalog)
 
 
+def _validate_preset(options: CodingAgentOptions) -> None:
+    if options.preset is not None:
+        get_coding_preset(options.preset)
+
+
 def _validate_extensions(options: CodingAgentOptions) -> None:
     if not isinstance(options.extensions, (tuple, list)) or any(
         not isinstance(name, str) or not name.strip() for name in options.extensions
@@ -307,6 +315,7 @@ def _validate_coding_agent(
             f"agent_id {options.agent_id!r}"
         )
     _validate_extensions(options)
+    _validate_preset(options)
     validate_model_path(options.model)
     valid_ids = _TOOL_SELECTORS - {"workspace"}
     for category, names in (
