@@ -131,16 +131,26 @@ _ITEM_BATCH_SIZE = 500
 
 _DELETE_RUN = "DELETE FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?"
 
-_DELETE_ORPHAN_MESSAGE_ITEMS = """\
-DELETE FROM checkpoint_message_items
+_SELECT_MESSAGE_ITEM_REFS = """\
+SELECT item_ref FROM checkpoint_message_items
 WHERE namespace=? AND thread_id=?
-AND item_ref NOT IN (SELECT ref FROM live_checkpoint_refs)
 """
 
-_DELETE_ORPHAN_MANIFEST_SEGMENTS = """\
+_SELECT_MANIFEST_SEGMENT_REFS = """\
+SELECT segment_ref FROM checkpoint_manifest_segments
+WHERE namespace=? AND thread_id=?
+"""
+
+_DELETE_MESSAGE_ITEMS_BY_REF = """\
+DELETE FROM checkpoint_message_items
+WHERE namespace=? AND thread_id=?
+AND item_ref IN ({placeholders})
+"""
+
+_DELETE_MANIFEST_SEGMENTS_BY_REF = """\
 DELETE FROM checkpoint_manifest_segments
 WHERE namespace=? AND thread_id=?
-AND segment_ref NOT IN (SELECT ref FROM live_checkpoint_refs)
+AND segment_ref IN ({placeholders})
 """
 
 _DELETE_ALL_MESSAGE_ITEMS = """\
@@ -1024,14 +1034,16 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         live_items, live_segments = self._list_live_refs(namespace, thread_id)
         self._delete_unreachable(
             live_items,
-            orphan_query=_DELETE_ORPHAN_MESSAGE_ITEMS,
+            select_query=_SELECT_MESSAGE_ITEM_REFS,
+            delete_query=_DELETE_MESSAGE_ITEMS_BY_REF,
             delete_all_query=_DELETE_ALL_MESSAGE_ITEMS,
             namespace=namespace,
             thread_id=thread_id,
         )
         self._delete_unreachable(
             live_segments,
-            orphan_query=_DELETE_ORPHAN_MANIFEST_SEGMENTS,
+            select_query=_SELECT_MANIFEST_SEGMENT_REFS,
+            delete_query=_DELETE_MANIFEST_SEGMENTS_BY_REF,
             delete_all_query=_DELETE_ALL_MANIFEST_SEGMENTS,
             namespace=namespace,
             thread_id=thread_id,
@@ -1041,25 +1053,32 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self,
         live: set[str],
         *,
-        orphan_query: str,
+        select_query: str,
+        delete_query: str,
         delete_all_query: str,
         namespace: str,
         thread_id: str,
     ) -> None:
-        if live:
-            self._conn.execute(
-                "CREATE TEMP TABLE IF NOT EXISTS live_checkpoint_refs "
-                "(ref TEXT PRIMARY KEY)"
-            )
-            self._conn.execute("DELETE FROM live_checkpoint_refs")
-            self._conn.executemany(
-                "INSERT INTO live_checkpoint_refs(ref) VALUES (?)",
-                [(ref,) for ref in live],
-            )
-            self._conn.execute(orphan_query, (namespace, thread_id))
-            self._conn.execute("DELETE FROM live_checkpoint_refs")
+        if not live:
+            self._conn.execute(delete_all_query, (namespace, thread_id))
             return
-        self._conn.execute(delete_all_query, (namespace, thread_id))
+        # Reachability has already been validated across every retained root.
+        # Read only stored keys and finish the cursor before deleting from its
+        # source table. Retain only garbage, rather than inserting the complete
+        # live archive into a temporary table on every changed-head append.
+        cursor = self._conn.execute(select_query, (namespace, thread_id))
+        try:
+            orphan_refs = [ref for (ref,) in cursor if ref not in live]
+        finally:
+            cursor.close()
+        orphan_iterator = iter(orphan_refs)
+        while batch := list(islice(orphan_iterator, _ITEM_BATCH_SIZE)):
+            # Both query templates are fixed; only bound placeholders vary.
+            placeholders = ",".join("?" for _ in batch)
+            self._conn.execute(
+                delete_query.format(placeholders=placeholders),
+                (namespace, thread_id, *batch),
+            )
 
     @staticmethod
     def _clear_queries(

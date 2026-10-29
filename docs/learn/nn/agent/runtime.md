@@ -3416,6 +3416,14 @@ unreferenced old segments. The replacement and cleanup publish atomically;
 segments referenced by retained runs remain available. New runs and updates
 with an unchanged manifest head skip this sweep.
 
+SQLite cleanup scans stored reference keys against the validated live set and
+deletes only unreferenced payloads and segments, using bounded SQL batches.
+It does not rebuild a temporary SQL table containing every live reference on
+each sweep. Existing orphaned rows are still collected, and shared history is
+retained. This reduces cleanup writes during long append sequences; validating
+retained roots and scanning stored keys still costs more as the archive grows.
+The live set and orphan candidates also require memory during cleanup.
+
 Existing checkpoints with inline manifests remain readable. Newly written
 segmented checkpoints require a msgFlux version that supports this storage
 format; older releases cannot read them. Every process accessing a segmented
