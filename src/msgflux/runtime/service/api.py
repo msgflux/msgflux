@@ -140,8 +140,9 @@ class AgentSession:
         if self._thread_id is not None and self._thread_id != thread_id:
             raise ValueError("AgentSession must retain its bound thread identity")
         self._thread_id = thread_id
-        path = self.agent.agent_dir / "threads" / thread_id / "checkpoints.sqlite3"
-        if self.checkpoint_store is None and (create or path.exists()):
+        if self.checkpoint_store is None and (
+            create or self.agent._resources.has_thread(thread_id)
+        ):
             resources = self.agent._bind_resources(thread_id)
             self.checkpoint_store = resources.checkpoint_store
             self.task_store = resources.task_store

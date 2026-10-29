@@ -100,7 +100,23 @@ class AgentResourceMixin:
             async for event in events:
                 yield event
 
-    def _init_resources(self, agent_dir, *, checkpoint_store, agent_inbox, approvals):
+    def _init_resources(
+        self, agent_dir, *, checkpoint_store, agent_inbox, approvals, backend=None
+    ):
+        if backend is not None:
+            from msgflux.runtime.agent_backend import (  # noqa: PLC0415
+                SQLiteAgentBackend,
+            )
+
+            if not isinstance(backend, SQLiteAgentBackend):
+                raise TypeError("backend must be a SQLiteAgentBackend or None")
+            if agent_dir is not None or any(
+                item is not None for item in (checkpoint_store, agent_inbox, approvals)
+            ):
+                raise ValueError(
+                    "backend cannot be combined with agent_dir, explicit "
+                    "checkpoint_store, agent_inbox or approvals"
+                )
         if agent_dir is not None and any(
             item is not None for item in (checkpoint_store, agent_inbox, approvals)
         ):
@@ -108,7 +124,14 @@ class AgentResourceMixin:
                 "agent_dir cannot be combined with explicit checkpoint_store, "
                 "agent_inbox or approvals; choose managed or host-owned storage"
             )
-        self._resources = AgentResources(agent_dir) if agent_dir is not None else None
+        self.backend = backend
+        self._resources = (
+            backend
+            if backend is not None
+            else AgentResources(agent_dir)
+            if agent_dir is not None
+            else None
+        )
         self.agent_dir: Path | None = (
             self._resources.agent_dir if self._resources is not None else None
         )
@@ -206,6 +229,10 @@ class AgentResourceMixin:
         if inherited is not None:
             if thread_id != inherited.resources.thread_id:
                 raise ValueError("Nested Agent cannot replace its durable thread")
+            if self.backend is not None and self.backend is not getattr(
+                inherited.resources, "backend", None
+            ):
+                raise ValueError("Nested Agent cannot replace its persistence backend")
             if self.agent_dir is not None and (
                 self.agent_dir != inherited.resources.thread_dir.parent.parent
             ):
@@ -421,7 +448,7 @@ class AgentResourceMixin:
                 futures = set()
                 with owned.lock:
                     libraries = tuple(owned.libraries)
-                for task in owned.resources.task_store.list():
+                for task in owned.resources.task_store.list(include_result=False):
                     for library in libraries:
                         future = library.get_background_dispatcher().get_task_future(
                             task.task_id

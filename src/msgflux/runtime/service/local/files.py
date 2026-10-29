@@ -94,17 +94,20 @@ def remove_record(runtime_dir: Path, instance_id: str) -> None:
 
 
 @contextmanager
-def process_lock(path: Path, *, blocking: bool = False) -> Iterator[BinaryIO | None]:
+def process_lock(
+    path: Path, *, blocking: bool = False, create: bool = True
+) -> Iterator[BinaryIO | None]:
     """Lock a private file; yield None if a nonblocking lock is already held.
 
     The returned handle owns the flock until the context exits. Callers doing
     async coordination should poll this nonblocking operation between awaits.
+    With create=False, a missing lock raises FileNotFoundError without creating it.
     """
     _require_posix()
     import fcntl  # noqa: PLC0415
 
     lock_path = Path(path)
-    flags = os.O_CREAT | os.O_RDWR
+    flags = os.O_RDWR | (os.O_CREAT if create else 0)
     if hasattr(os, "O_NOFOLLOW"):
         flags |= os.O_NOFOLLOW
     descriptor = os.open(lock_path, flags, 0o600)

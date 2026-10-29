@@ -324,8 +324,7 @@ class AgentConversationMixin:
             return inherited
         thread_id = thread_id or context.get("thread_id")
         if self.agent_dir is not None and thread_id is not None:
-            path = self.agent_dir / "threads" / thread_id / "checkpoints.sqlite3"
-            if path.exists():
+            if self._resources.has_thread(thread_id):
                 return self._bind_resources(thread_id).checkpoint_store
         return None
 

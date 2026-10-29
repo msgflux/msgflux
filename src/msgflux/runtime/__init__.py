@@ -1,3 +1,5 @@
+from typing import TYPE_CHECKING
+
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.agent_inbox import (
     AgentControlMessage,
@@ -138,7 +140,23 @@ from msgflux.runtime.workspace.process_capture import (
 from msgflux.runtime.workspace.receipts import CommandReceipt
 from msgflux.runtime.workspace.registry import SQLiteWorkspaceRegistry
 
+if TYPE_CHECKING:
+    from msgflux.runtime.agent_backend import SQLiteAgentBackend
+
+
+def __getattr__(name):
+    # TaskHandle imports runtime while msgflux.tasks is still initializing.
+    # Resolve the backend only when requested, after that bootstrap completes.
+    if name == "SQLiteAgentBackend":
+        from msgflux.runtime.agent_backend import SQLiteAgentBackend  # noqa: PLC0415
+
+        globals()[name] = SQLiteAgentBackend
+        return SQLiteAgentBackend
+    raise AttributeError(f"module {__name__!r} has no attribute {name!r}")
+
+
 __all__ = [
+    "SQLiteAgentBackend",
     "CompactionResult",
     "CompactionBusyError",
     "CompactionRecoveryRequiredError",

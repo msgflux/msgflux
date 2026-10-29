@@ -43,7 +43,9 @@ lazy; the first admitted prompt creates the private runtime directories:
 
 ```text
 ~/.msgflux/
-  runtime/service.sqlite3
+  runtime/
+    service.sqlite3
+    backend-layout.lock            # serializes legacy/shared layout initialization
   threads/project-thread-1/
     checkpoints.sqlite3
     tasks.sqlite3
@@ -212,11 +214,215 @@ threads, metadata, or staging files. This read checks the live
 `filesystem.read` permission and works with Local and Docker project workspaces
 without mounting the host result directory into a container. Project files
 still require a separately configured `AgentWorkspace`. Offload is opt-in and
-requires `agent_dir` unless the Agent inherits managed resources from its
-parent. The approval journal provides storage; workspace review is enabled by
+requires `agent_dir`, a shared `backend`, or managed resources inherited
+from its parent. The approval journal provides storage; workspace review is enabled by
 the workspace's `approval_policy`, and the reviewer identity remains
 host-configured. Do not combine `agent_dir` with manually supplied checkpoint,
 task, inbox, or approval stores.
+
+## Shared SQLite Backend
+
+The managed `agent_dir` setup above opens a separate checkpoint, task, inbox,
+and approval SQLite connection for every thread. A host that runs many durable
+threads can instead construct one `SQLiteAgentBackend` and share the same four
+connections across all of them:
+
+```python
+import asyncio
+from pathlib import Path
+
+import msgflux as mf
+from msgflux.nn import Agent
+from msgflux.runtime import SQLiteAgentBackend
+
+
+async def main():
+    backend = SQLiteAgentBackend(Path.home() / ".msgflux-shared")
+    model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+    agents = [
+        Agent(name="assistant", model=model, backend=backend)
+        for _ in range(2)
+    ]
+    try:
+        await asyncio.gather(
+            agents[0].acall(
+                "Remember the marker silver fern.",
+                scope=mf.ExecutionScope(thread_id="project-thread-1"),
+            ),
+            agents[1].acall(
+                "Remember the marker copper pine.",
+                scope=mf.ExecutionScope(thread_id="project-thread-2"),
+            ),
+        )
+    finally:
+        for agent in agents:
+            await agent.aclose()
+        backend.close()
+        model.close()
+
+
+asyncio.run(main())
+```
+
+This example creates one backend, two independent Agents, and two durable
+threads. Both Agents borrow the same four backend stores while retaining their
+own thread bindings. The host still owns the model; neither the backend nor
+`Agent.aclose()` closes it. Reuse one backend per `agent_dir` and share it
+instead of constructing a second backend for the same root.
+
+The first call that binds a thread creates the shared layout and that thread's
+private artifact directory. Constructing the backend and calling `has_thread()`
+do not create directories. The resulting layout is:
+
+```text
+~/.msgflux-shared/
+  runtime/
+    backend/
+      layout.json                  # versioned shared-layout marker
+      checkpoints.sqlite3
+      tasks.sqlite3
+      inbox.sqlite3
+      approvals.sqlite3
+    backend-layout.lock
+  threads/
+    project-thread-1/
+      tool-results/                # created only when a result is offloaded
+    project-thread-2/
+      tool-results/
+```
+
+The service journal is not one of the four backend stores. It remains a
+separate host-owned database, such as `runtime/service.sqlite3` in the managed
+setup above or another path chosen by the host.
+
+### Backend API and Ownership
+
+| Member | Behavior |
+| --- | --- |
+| `SQLiteAgentBackend(agent_dir, *, cache_bytes=2 * 1024 * 1024)` | Creates a lazy backend rooted at `agent_dir`. A filesystem root is rejected. |
+| `bind(thread_id, *, namespace, verbose=False)` | Borrows the shared stores for one safe thread ID and creates its artifact directory. Returns `BoundAgentResources`. |
+| `has_thread(thread_id)` | Passively reports whether that thread's artifact directory exists under a valid shared layout. It does not create or load anything. |
+| `active_bindings` | Number of live binding leases. |
+| `connection_count` | Open pooled adapters: zero before the first bind and after a successful close, normally four while open. |
+| `close()` / `await aclose()` | Closes the four pooled adapters after every binding lease is released. `aclose()` is the async shutdown alias. |
+
+`bind()` is normally an implementation detail used by `Agent(backend=...)`. An
+Agent creates a binding on first use and owns its lease; do not close the
+borrowed `checkpoint_store`, `task_store`, `inbox_store`, or `approval_store`
+directly. Close the Agent or service first, then close the backend:
+
+```python
+backend = SQLiteAgentBackend("./agent-state")
+agent = Agent(name="assistant", model=model, backend=backend)
+try:
+    await agent.acall(
+        "Use this thread.",
+        scope=mf.ExecutionScope(thread_id="thread-a"),
+    )
+finally:
+    await agent.aclose()   # releases this Agent's binding leases
+    backend.close()        # closes the four shared connections
+```
+
+`backend.close()` refuses while any binding lease is active and raises
+`RuntimeError`; that refusal does not poison the backend or its live bindings.
+A genuine adapter close failure quarantines new binds until a retry closes the
+remaining handles. Handles that already closed are not closed twice. Closing
+the backend releases its connections; it does not delete the shared databases,
+thread directories, tool results, or history.
+
+The backend owns store resources, not execution state. A
+`CheckpointStore` persists execution snapshots keyed by namespace, thread ID,
+and run ID. Every binding borrows the same shared checkpoint store, but
+different thread IDs still have separate histories. The backend does not own
+Agents, models, workspaces, the service journal, or the processes that use
+them. A nested Agent inherits its parent's binding and cannot replace the
+backend.
+
+`Agent(backend=...)` cannot be combined with `agent_dir` or with explicit
+`checkpoint_store`, `agent_inbox`, or `approvals` configuration. The backend is
+the managed persistence configuration for that Agent.
+
+### Task Isolation and Recovery
+
+Each binding gets a thread-scoped task view over the shared task table.
+A thread index lets scoped listings select that thread before decoding task
+payloads.
+`create()` stamps the binding's `thread_id` into task metadata and rejects a
+conflicting value. Reads and mutations through that view only see tasks for the
+bound thread; a task ID owned by another thread behaves as missing. Approval
+operations and inbox records remain keyed by namespace, thread, and run as
+before.
+
+Task IDs are globally unique within one backend, not merely within one thread.
+Creating the same ID in another thread raises `TaskIdCollisionError`; the
+background dispatcher retries a generated ID when that happens.
+`list_summaries()` and `has_unfinished_for_thread()` also reject an explicit
+thread ID that does not match the binding. Use a distinct `thread_id` for each
+logical Agent conversation; the namespace does not partition the shared task
+table.
+
+`threads/<thread_id>/` is the durable thread identity. `has_thread()` is true
+for a task-only or approval-only thread before its first checkpoint, because
+the directory was created when the binding was first used. Observation of an
+unknown thread therefore does not create an empty thread. After a process
+restart, construct a new backend for the same root and bind the same thread ID
+to reopen checkpoints, queued tasks, inbox delivery, and pending approvals.
+`has_thread()` returns false after the backend is closed; reopen the backend
+before checking durable threads again.
+
+The backend does not schedule background work, hibernate or automatically
+unload bindings, compress or vacuum SQLite files, deduplicate history, or run
+garbage collection. A binding remains a lease until its Agent or service
+releases it, even when idle. `AgentService` cache policy, host shutdown, and
+explicit `release_session()` control binding lifetimes; see
+[Embedded Agent Service](service.md#automatic-session-cache-policy).
+
+### Cache Budget and Concurrency
+
+`cache_bytes` is a SQLite page-cache target split evenly across the four
+connections. It is configuration, not a hard bound on process RSS. WAL frames,
+temporary files, Python objects, and offloaded tool-result bytes are outside
+that target, and SQLite may still exceed it. Configure the value before the
+first bind; changing the attribute later does not reapply it to open
+connections.
+
+`bind()` is thread-safe, and the four stores serialize access to their shared
+connections with their own locks. SQLite writes across threads still serialize
+at the database level. Checkpoint, task, inbox, and approval commits are
+separate transactions; a crash can leave them at different revisions. The
+backend adds no separate cross-process lease service or distributed
+coordinator; task leases remain SQLite-backed. `AgentService` continues to
+allow one foreground execution per thread and one Agent per service thread.
+
+### Layout Compatibility
+
+The shared layout is marked by `runtime/backend/layout.json` with format
+`msgflux-agent-backend`, layout `shared-sqlite`, and version `1`. Legacy
+`agent_dir` state stores its databases under
+`threads/<thread_id>/checkpoints.sqlite3`, `tasks.sqlite3`, `inbox.sqlite3`,
+and `approvals.sqlite3`.
+
+The two layouts cannot be mixed:
+
+- Initializing a shared backend refuses a root containing legacy per-thread
+  databases.
+- Binding a legacy `AgentResources`, `Agent(agent_dir=...)`, or
+  `RuntimeResources.checkpoint_store()` refuses a root containing the shared
+  backend marker.
+- There is no automatic migration, adoption, or in-place conversion. Stop all
+  writers and migrate through application-owned export/import into a fresh
+  root or explicit adapters.
+- A malformed, unsupported, symlinked, or foreign-owned layout marker fails
+  closed. A partial initialization may leave a marker, temporary file, or
+  database for diagnosis; the backend has no automatic repair command.
+
+`has_thread()` is a shared-layout query, not a compatibility probe. On a legacy
+root it reports no shared thread; `bind()` reports the legacy layout. Inspect
+the error before creating a new state root. The advanced
+`RuntimeResources.checkpoint_store()` helper uses the same layout lock and
+refuses a shared backend root, so explicit per-thread checkpoint files cannot
+be opened through that helper on a shared root.
 
 ## Advanced: Explicit Resource Helpers
 
@@ -225,6 +431,7 @@ result storage directly. Constructing it does not create directories:
 
 ```text
 ~/.msgflux/
+  runtime/backend-layout.lock      # created when opening a checkpoint
   tool-results/
     res_<uuid>/
       content
@@ -261,8 +468,10 @@ The caller owns the connection lifecycle. `resources.plans_path` exposes the
 host directory for application-managed plans; no plan tool, automatic context
 loading or concurrent-edit protocol is installed.
 
-Only `threads` and `tool-results` are created by default. Add optional top-level
-directories when initializing the layout:
+`initialize()` creates only `threads` and `tool-results` by default. Opening a
+checkpoint also creates `runtime/backend-layout.lock` to prevent mixing legacy
+and shared backend layouts. Add optional top-level directories when initializing
+the layout:
 
 ```python
 resources.initialize(extra_dirs=("plans", "skills"))

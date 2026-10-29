@@ -64,6 +64,7 @@ from msgflux.tools.policy import ToolFilterPolicy, bind_tool_filter_policy
 
 if TYPE_CHECKING:
     from msgflux.data.stores import CheckpointStore
+    from msgflux.runtime.agent_backend import SQLiteAgentBackend
 from msgflux.nn.modules.agent.compaction import AgentCompactionMixin
 from msgflux.nn.modules.agent.configuration import AgentConfigurationMixin
 from msgflux.nn.modules.agent.context import (
@@ -155,6 +156,7 @@ class Agent(
         approvals: Optional[AgentApprovals] = None,
         workspace: Optional[AgentWorkspace] = None,
         agent_dir: Optional[Union[str, os.PathLike[str]]] = None,
+        backend: Optional["SQLiteAgentBackend"] = None,
     ):
         """Initialize the Agent module.
 
@@ -303,6 +305,10 @@ class Agent(
         agent_dir:
             Managed persistence root. Per-thread SQLite stores are opened lazily.
             Cannot be combined with explicit storage adapters or approvals.
+        backend:
+            Host-owned shared SQLite persistence backend. Multiple Agents can
+            borrow its stores while keeping separate execution identities.
+            Cannot be combined with agent_dir or explicit storage adapters.
         workspace:
             Default live workspace for tool dependency injection. A workspace
             supplied through ExecutionScope overrides this default.
@@ -356,6 +362,7 @@ class Agent(
         self._set_config(config)
         self._init_resources(
             agent_dir,
+            backend=backend,
             checkpoint_store=checkpoint_store,
             agent_inbox=agent_inbox,
             approvals=approvals,
