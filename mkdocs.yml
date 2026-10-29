@@ -149,6 +149,7 @@ nav:
       - learn/retrievers/lexical.md
       - learn/retrievers/fuzzy.md
       - learn/retrievers/web.md
+      - learn/retrievers/web_fetch.md
       - learn/retrievers/weather.md
     - ⎙ Parsers: learn/parsers.md
     - ⛁ Storage: learn/storage.md

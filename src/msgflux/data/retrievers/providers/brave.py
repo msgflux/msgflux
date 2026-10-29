@@ -1,27 +1,29 @@
 import asyncio
-from typing import List, Optional
-
-try:
-    from brave_search_python_client import (
-        BraveSearch,
-        ImagesSearchRequest,
-        NewsSearchRequest,
-        WebSearchRequest,
-    )
-except ImportError:
-    BraveSearch = None
+from os import getenv
+from typing import Any, List, Mapping, Optional
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
+from msgflux.data.retrievers.http import HTTPRetrieverMixin
 from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
+from msgflux.data.retrievers.types import WebSearchRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
 
+API_KEY_ENV_NAME = "BRAVE_SEARCH_API_KEY"
+DEFAULT_BASE_URL = "https://api.search.brave.com"
+SEARCH_PATH_BY_MODE = {
+    "search": "/res/v1/web/search",
+    "news": "/res/v1/news/search",
+    "image": "/res/v1/images/search",
+}
+
 
 @register_retriever
-class BraveWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+class BraveWebRetriever(
+    HTTPRetrieverMixin, BaseWebSearch, BaseRetriever, WebSearchRetriever
+):
     """A Brave Search client for retrieving web, image, and news content.
 
     This class interfaces with the Brave Search API to provide grounded search results.
@@ -34,16 +36,24 @@ class BraveWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         *,
         mode: str = "search",
         return_images: Optional[bool] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[float] = None,
     ):
         """Initialize BraveWebRetriever.
 
-        Requires the `BRAVE_SEARCH_API_KEY` environment variable to be set.
+        Requires the `BRAVE_SEARCH_API_KEY` environment variable to be set when
+        a request is made.
 
         Args:
             mode:
                 Search mode. Can be "search", "image", or "news". Defaults to "search".
             return_images:
                 Whether to include images in the results. Defaults to False.
+            base_url:
+                Brave Search API base URL.
+                Defaults to "https://api.search.brave.com".
+            timeout:
+                Request timeout in seconds. Defaults to 30.
 
         !!! example
 
@@ -53,80 +63,125 @@ class BraveWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        if BraveSearch is None:
-            raise ImportError(
-                "The 'brave-search-python-client' package is not installed. "
-                "Please install it via pip: pip install brave-search-python-client"
-            )
-
-        self.client = BraveSearch()
         self.mode = mode
         self.return_images = return_images or False
+        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.timeout = timeout or 30.0
+        self._initialize()
 
-    async def _asingle_search(self, query: str, top_k: int) -> List[dotdict]:
-        """Async internal method to search Brave for a single query."""
+    def _get_api_key(self) -> str:
+        api_key = getenv(API_KEY_ENV_NAME)
+        if api_key:
+            return api_key
+
+        raise ValueError(
+            f"The Brave Search API key is not available. "
+            f"Please set `{API_KEY_ENV_NAME}`"
+        )
+
+    def _build_headers(self) -> dict:
+        api_key = self._get_api_key()
+        return {
+            "Accept": "application/json",
+            "X-Subscription-Token": api_key,
+        }
+
+    def _get_search_url(self) -> str:
+        path = SEARCH_PATH_BY_MODE.get(self.mode)
+        if path is None:
+            raise ValueError(f"Invalid mode: {self.mode}")
+        return f"{self.base_url}{path}"
+
+    def _build_search_params(self, query: str, top_k: int) -> dict:
+        return {"q": query, "count": top_k}
+
+    def _format_web_result(self, result: Mapping[str, Any]) -> dict:
+        data = {
+            "title": result.get("title"),
+            "content": result.get("description"),
+            "url": result.get("url"),
+        }
+        item = {"data": data}
+        thumbnail = result.get("thumbnail") or {}
+        image_url = thumbnail.get("src")
+        if self.return_images and image_url:
+            item["images"] = [image_url]
+        return item
+
+    def _format_news_result(self, result: Mapping[str, Any]) -> dict:
+        data = {
+            "title": result.get("title"),
+            "content": result.get("description"),
+            "url": result.get("url"),
+            "date": result.get("age"),
+        }
+        item = {"data": data}
+        thumbnail = result.get("thumbnail") or {}
+        image_url = thumbnail.get("src")
+        if self.return_images and image_url:
+            item["images"] = [image_url]
+        return item
+
+    def _format_image_result(self, result: Mapping[str, Any]) -> dict:
+        data = {"title": result.get("title"), "url": result.get("url")}
+        # For image search, the item itself is the image
+        item = {"data": data}
+        image_url = result.get("url")
+        if image_url:
+            item["images"] = [image_url]
+        return item
+
+    def _parse_results(self, response: Mapping[str, Any], top_k: int) -> List[dict]:
+        if self.mode == "search":
+            raw_results = (response.get("web") or {}).get("results") or []
+            formatter = self._format_web_result
+        elif self.mode == "news":
+            raw_results = response.get("results") or []
+            formatter = self._format_news_result
+        elif self.mode == "image":
+            raw_results = response.get("results") or []
+            formatter = self._format_image_result
+        else:
+            raise ValueError(f"Invalid mode: {self.mode}")
+
+        return [formatter(result) for result in raw_results[:top_k]]
+
+    def _single_search(self, query: str, top_k: int) -> List[dict]:
+        """Internal method to search Brave for a single query."""
         try:
-            if self.mode == "search":
-                return await self._search_web(query, top_k)
-            elif self.mode == "news":
-                return await self._search_news(query, top_k)
-            elif self.mode == "image":
-                return await self._search_images(query, top_k)
-            else:
-                raise ValueError(f"Invalid mode: {self.mode}")
+            response = self.client.get(
+                self._get_search_url(),
+                headers=self._build_headers(),
+                params=self._build_search_params(query, top_k),
+            )
+            response.raise_for_status()
+
+            return self._parse_results(response.json(), top_k)
         except Exception as e:
             logger.warning("Brave search failed for query '%s': %s", query, e)
             return []
 
-    async def _search_web(self, query: str, top_k: int) -> List[dotdict]:
-        req = WebSearchRequest(q=query, count=top_k)
-        response = await self.client.web(req)
-        web_results = response.web.results if response.web else []
-        results = []
-        for result in web_results:
-            data = {
-                "title": result.title,
-                "content": result.description,
-                "url": result.url,
-            }
-            item = {"data": data}
-            if self.return_images and result.thumbnail:
-                src = getattr(result.thumbnail, "src", None)
-                if src:
-                    item["images"] = [src]
-            results.append(item)
-        return results
+    async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
+        """Async internal method to search Brave for a single query."""
+        try:
+            response = await self.aclient.get(
+                self._get_search_url(),
+                headers=self._build_headers(),
+                params=self._build_search_params(query, top_k),
+            )
+            response.raise_for_status()
 
-    async def _search_news(self, query: str, top_k: int) -> List[dotdict]:
-        req = NewsSearchRequest(q=query, count=top_k)
-        response = await self.client.news(req)
-        news_results = response.results if response.results else []
-        results = []
-        for result in news_results:
-            data = {
-                "title": result.title,
-                "content": result.description,
-                "url": result.url,
-                "date": getattr(result, "age", None),
-            }
-            item = {"data": data}
-            if self.return_images and getattr(result, "thumbnail", None):
-                src = getattr(result.thumbnail, "src", None)
-                if src:
-                    item["images"] = [src]
-            results.append(item)
-        return results
+            return self._parse_results(response.json(), top_k)
+        except Exception as e:
+            logger.warning("Brave search failed for query '%s': %s", query, e)
+            return []
 
-    async def _search_images(self, query: str, top_k: int) -> List[dotdict]:
-        req = ImagesSearchRequest(q=query, count=top_k)
-        response = await self.client.images(req)
-        image_results = response.results if response.results else []
+    def _search(self, queries: List[str], top_k: int) -> List[dotdict]:
+        """Synchronous search for multiple queries."""
         results = []
-        for result in image_results:
-            data = {"title": result.title, "url": result.url}
-            # For image search, the item itself is the image
-            item = {"data": data, "images": [result.url]}
-            results.append(item)
+        for query in queries:
+            query_results = self._single_search(query, top_k)
+            results.append(dotdict({"results": query_results}))
         return results
 
     async def _asearch(self, queries: List[str], top_k: int) -> List[dotdict]:
@@ -136,14 +191,3 @@ class BraveWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         for result in query_results:
             results.append(dotdict({"results": result}))
         return results
-
-    def _search(self, queries: List[str], top_k: int) -> List[dotdict]:
-        """Synchronous search wrapper."""
-        try:
-            loop = asyncio.get_event_loop()
-        except RuntimeError:
-            loop = asyncio.new_event_loop()
-            asyncio.set_event_loop(loop)
-
-        # Standard asyncio run call
-        return asyncio.run(self._asearch(queries, top_k))

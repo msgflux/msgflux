@@ -135,7 +135,7 @@ preset = "explorer"
         assert code == 0 and not err and "Prompt source: preset" in out
         assert (
             "Permissions: read" in out
-            and "Tools (active defaults): read, ls, glob, grep" in out
+            and "Tools (active defaults): read, ls, glob, grep, web_fetch" in out
         )
         code, out, err = await _command(runtime, "agents", "inspect", "missing")
         assert (

@@ -172,6 +172,21 @@ examples and protocol details.
 |-------------|---------------|
 | RapidFuzz   | `rapidfuzz`   |
 
+### Web Fetch
+
+All fetch providers use the base `httpx2` dependency and need no provider SDK.
+
+| Provider | Auth Env |
+| --- | --- |
+| markdown.new (`markdown`) | None |
+| Firecrawl | Optional `FIRECRAWL_API_KEY`; keyless mode is available |
+| Linkup | `LINKUP_API_KEY` |
+| Cloudflare | `CLOUDFLARE_ACCOUNT_ID`, `CLOUDFLARE_API_TOKEN` |
+| Direct HTTP (`http`) | None |
+| Ordered fallback (`fallback`) | Uses its configured child providers |
+
+See [Web Fetch Retrievers](learn/retrievers/web_fetch.md) for defaults and examples.
+
 ### Web Search
 
 HTTPX2 is a base msgFlux dependency; providers listing it below require no
@@ -183,9 +198,14 @@ additional HTTP client installation.
 | SearXNG     | `httpx2`                          |                                   |
 | SerpApi     | `httpx2`                          | `SERPAPI_KEY`                     |
 | Ceramic     | `httpx2`                          | `CERAMIC_API_KEY`                 |
-| Linkup      | `linkup-sdk`                     | `LINKUP_API_KEY`                  |
-| Tavily      | `tavily-python`                  | `TAVILY_API_KEY`                  |
-| Exa         | `exa-py`                         | `EXA_API_KEY`                     |
-| Brave       | `brave-search-python-client`     | `BRAVE_SEARCH_API_KEY`            |
-| arXiv       | `arxiv`                          |                                   |
-| Wikipedia   | `wikipedia`                      |                                   |
+| Firecrawl   | `httpx2`                          | `FIRECRAWL_API_KEY` (optional)    |
+| Linkup      | `httpx2`                          | `LINKUP_API_KEY`                  |
+| Tavily      | `httpx2`                          | `TAVILY_API_KEY`                  |
+| Exa         | `httpx2`                          | `EXA_API_KEY`                     |
+| Brave       | `httpx2`                          | `BRAVE_SEARCH_API_KEY`            |
+| arXiv       | `httpx2`                          |                                   |
+| Wikipedia   | `httpx2`                          |                                   |
+
+Firecrawl search is keyless by default; `FIRECRAWL_API_KEY` is optional and is
+read per request. arXiv parses Atom XML with Python's standard-library
+`xml.etree.ElementTree`, so it needs no additional XML parser dependency.

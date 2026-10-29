@@ -6,7 +6,7 @@ from msgflux.core.dotdict import dotdict
 
 class BaseRetriever(BaseClient):
     msgflux_type = "retriever"
-    to_ignore = ["client", "documents"]
+    to_ignore = ["client", "aclient", "documents"]
 
     def instance_type(self) -> Mapping[str, str]:
         return {"retriever_type": self.retriever_type}

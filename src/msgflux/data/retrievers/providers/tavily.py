@@ -1,24 +1,24 @@
 import asyncio
 from os import getenv
-from typing import List, Optional
-
-try:
-    from tavily import AsyncTavilyClient, TavilyClient
-except ImportError:
-    TavilyClient = None
-    AsyncTavilyClient = None
+from typing import Any, List, Mapping, Optional
 
 from msgflux.core.dotdict import dotdict
 from msgflux.data.retrievers.base import BaseRetriever, BaseWebSearch
+from msgflux.data.retrievers.http import HTTPRetrieverMixin
 from msgflux.data.retrievers.registry import register_retriever
-from msgflux.data.retrievers.types import WebRetriever
+from msgflux.data.retrievers.types import WebSearchRetriever
 from msgflux.logger import init_logger
 
 logger = init_logger(__name__)
 
+API_KEY_ENV_NAME = "TAVILY_API_KEY"
+DEFAULT_BASE_URL = "https://api.tavily.com"
+
 
 @register_retriever
-class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
+class TavilyWebRetriever(
+    HTTPRetrieverMixin, BaseWebSearch, BaseRetriever, WebSearchRetriever
+):
     """A Tavily client for retrieving web content with AI-powered search.
 
     This class interfaces with the Tavily API to provide search results
@@ -38,10 +38,13 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         include_answer: Optional[bool] = None,
         include_images: Optional[bool] = None,
         include_raw_content: Optional[bool] = None,
+        base_url: Optional[str] = None,
+        timeout: Optional[float] = None,
     ):
         """Initialize TavilyWebRetriever.
 
-        Requires the `TAVILY_API_KEY` environment variable to be set.
+        Requires the `TAVILY_API_KEY` environment variable to be set when a
+        request is made.
 
         Args:
             search_depth:
@@ -62,6 +65,10 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
                 Whether to include images in results. Defaults to False.
             include_raw_content:
                 Whether to include raw page content. Defaults to False.
+            base_url:
+                Tavily API base URL. Defaults to "https://api.tavily.com".
+            timeout:
+                Request timeout in seconds. Defaults to 30.
 
         !!! example
 
@@ -71,20 +78,6 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
             print(results)
             ```
         """
-        if TavilyClient is None:
-            raise ImportError(
-                "The 'tavily-python' package is not installed. "
-                "Please install it via pip: pip install tavily-python"
-            )
-
-        api_key = getenv("TAVILY_API_KEY")
-        if not api_key:
-            raise ValueError(
-                "The Tavily API key is not available. Please set `TAVILY_API_KEY`"
-            )
-
-        self.client = TavilyClient(api_key=api_key)
-        self.aclient = AsyncTavilyClient(api_key=api_key)
         self.search_depth = search_depth or "basic"
         self.topic = topic or "general"
         self.time_range = time_range
@@ -93,9 +86,29 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
         self.include_answer = include_answer or False
         self.include_images = include_images or False
         self.include_raw_content = include_raw_content or False
+        self.base_url = (base_url or DEFAULT_BASE_URL).rstrip("/")
+        self.search_url = f"{self.base_url}/search"
+        self.timeout = timeout or 30.0
+        self._initialize()
+
+    def _get_api_key(self) -> str:
+        api_key = getenv(API_KEY_ENV_NAME)
+        if api_key:
+            return api_key
+
+        raise ValueError(
+            f"The Tavily API key is not available. Please set `{API_KEY_ENV_NAME}`"
+        )
+
+    def _build_headers(self) -> dict:
+        api_key = self._get_api_key()
+        return {
+            "Authorization": f"Bearer {api_key}",
+            "Content-Type": "application/json",
+        }
 
     def _build_search_kwargs(self, top_k: int) -> dict:
-        """Build kwargs for Tavily search methods."""
+        """Build REST payload fields for Tavily search requests."""
         kwargs = {
             "max_results": top_k,
             "search_depth": self.search_depth,
@@ -114,10 +127,13 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
 
         return kwargs
 
-    def _parse_results(self, response: dict) -> List[dict]:
+    def _build_payload(self, query: str, top_k: int) -> dict:
+        return {"query": query, **self._build_search_kwargs(top_k)}
+
+    def _parse_results(self, response: Mapping[str, Any], top_k: int) -> List[dict]:
         """Parse Tavily response into standard format."""
         results = []
-        for result in response.get("results", []):
+        for result in response.get("results", [])[:top_k]:
             data = {
                 "title": result.get("title"),
                 "content": result.get("content"),
@@ -145,9 +161,14 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     def _single_search(self, query: str, top_k: int) -> List[dict]:
         """Internal method to search Tavily for a single query."""
         try:
-            kwargs = self._build_search_kwargs(top_k)
-            response = self.client.search(query, **kwargs)
-            return self._parse_results(response)
+            response = self.client.post(
+                self.search_url,
+                headers=self._build_headers(),
+                json=self._build_payload(query, top_k),
+            )
+            response.raise_for_status()
+
+            return self._parse_results(response.json(), top_k)
         except Exception as e:
             logger.warning("Tavily search failed for query '%s': %s", query, e)
             return []
@@ -155,9 +176,14 @@ class TavilyWebRetriever(BaseWebSearch, BaseRetriever, WebRetriever):
     async def _asingle_search(self, query: str, top_k: int) -> List[dict]:
         """Async internal method to search Tavily for a single query."""
         try:
-            kwargs = self._build_search_kwargs(top_k)
-            response = await self.aclient.search(query, **kwargs)
-            return self._parse_results(response)
+            response = await self.aclient.post(
+                self.search_url,
+                headers=self._build_headers(),
+                json=self._build_payload(query, top_k),
+            )
+            response.raise_for_status()
+
+            return self._parse_results(response.json(), top_k)
         except Exception as e:
             logger.warning("Tavily search failed for query '%s': %s", query, e)
             return []

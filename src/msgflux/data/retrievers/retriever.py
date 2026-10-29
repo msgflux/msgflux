@@ -10,7 +10,8 @@ from msgflux.data.retrievers.types import (
     LexicalRetriever,
     SemanticRetriever,
     WeatherRetriever,
-    WebRetriever,
+    WebFetchRetriever,
+    WebSearchRetriever,
 )
 
 
@@ -27,6 +28,9 @@ class Retriever:
     def _get_retriever_class(
         cls, retriever_type: str, provider: str
     ) -> type["BaseRetriever"]:
+        # Records serialized before the web search/fetch split used "web".
+        if retriever_type == "web":
+            retriever_type = "web_search"
         if retriever_type not in retriever_registry:
             raise ValueError(f"Retriever type `{retriever_type}` is not supported")
         if provider not in retriever_registry[retriever_type]:
@@ -53,7 +57,7 @@ class Retriever:
             provider:
                 The retriever provider (e.g., "bm25", "rank_bm25").
             retriever_type:
-                The type of retriever (e.g., "lexical", "web").
+                The type of retriever (e.g., "lexical", "web_search").
             params:
                 Dictionary containing the serialized retriever parameters.
 
@@ -72,13 +76,19 @@ class Retriever:
         return cls._create_retriever("semantic", provider, **kwargs)
 
     @classmethod
-    def web(cls, provider: str, **kwargs) -> WebRetriever:
-        return cls._create_retriever("web", provider, **kwargs)
+    def web(cls, provider: str, **kwargs) -> WebSearchRetriever:
+        """Compatibility alias for :meth:`web_search`."""
+        return cls.web_search(provider, **kwargs)
 
     @classmethod
-    def web_search(cls, provider: str, **kwargs) -> WebRetriever:
-        """Alias for ``web`` kept for readability in web search flows."""
-        return cls.web(provider, **kwargs)
+    def web_search(cls, provider: str, **kwargs) -> WebSearchRetriever:
+        """Create a retriever that searches web sources for a query."""
+        return cls._create_retriever("web_search", provider, **kwargs)
+
+    @classmethod
+    def web_fetch(cls, provider: str, **kwargs) -> WebFetchRetriever:
+        """Create a retriever that fetches known URLs as page content."""
+        return cls._create_retriever("web_fetch", provider, **kwargs)
 
     @classmethod
     def weather(cls, provider: str, **kwargs) -> WeatherRetriever:

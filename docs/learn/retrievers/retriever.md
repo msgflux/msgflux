@@ -4,13 +4,14 @@
 
 `Retriever` provides a unified interface for fetching relevant content from different sources. Search-style retrievers return a consistent `dotdict` response, while weather retrievers return a structured `dotdict` for one place and time. All retrievers support both synchronous and async execution.
 
-There are four retriever families:
+The available retriever families include:
 
 | Family | Providers | Use Case |
 |--------|-----------|----------|
 | **Lexical** | `bm25`, `bm25s`, `rank_bm25` | Search a local document corpus by keyword relevance |
 | **Fuzzy** | `rapidfuzz` | Approximate string matching — tolerates typos and partial matches |
-| **Web** | `wikipedia`, `serpapi`, `brave`, `tavily`, `linkup`, `exa`, `arxiv` | Fetch content from external sources at query time |
+| **Web Search** | `firecrawl`, `wikipedia`, `searxng`, `serpapi`, `ceramic`, `brave`, `tavily`, `linkup`, `exa`, `arxiv` | Discover pages from a search query |
+| **Web Fetch** | `markdown`, `firecrawl`, `linkup`, `cloudflare`, `http`, `fallback` | Read content from known URLs |
 | **Weather** | `open_meteo` | Retrieve current, forecast, or historical weather data |
 
 ---
@@ -57,12 +58,12 @@ There are four retriever families:
     # [93.3] Alice Johnson
     ```
 
-???+ example "Web — Wikipedia"
+???+ example "Web Search — Wikipedia"
 
     ```python
     import msgflux as mf
 
-    retriever = mf.Retriever.web("wikipedia", summary=2)
+    retriever = mf.Retriever.web_search("wikipedia", summary=2)
 
     response = retriever("quantum entanglement")
 
@@ -98,6 +99,22 @@ response.data           # list — one entry per query
 response.data[0].results        # list of results for the first query
 response.data[0].results[0].data  # the retrieved content
 ```
+
+Web fetch targets URLs instead of queries and returns one content entry per URL:
+
+```python
+retriever = mf.Retriever.web_fetch("fallback")
+try:
+    response = retriever("https://docs.python.org/3/")
+    print(response.response_type)          # "web_fetch"
+    print(response.data[0].data.content)   # page Markdown
+finally:
+    retriever.close()
+```
+
+The default ordered chain tries markdown.new, then Firecrawl. See
+[Web Fetch Retrievers](web_fetch.md) for explicit providers, configuration,
+errors, and async lifecycle.
 
 Weather retrievers return a structured `dotdict` directly because each call
 targets one place and one time:
@@ -166,7 +183,7 @@ stop synchronous work that has already started.
 ```python
 import msgflux as mf
 
-retriever = mf.Retriever.web("wikipedia", summary=3)
+retriever = mf.Retriever.web_search("wikipedia", summary=3)
 
 response = await retriever.acall("artificial intelligence", top_k=2)
 

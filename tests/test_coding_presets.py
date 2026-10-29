@@ -23,8 +23,17 @@ preset = "explorer"
         "explorer", "provider/model-id", preset="explorer"
     )
     assert explorer.permissions == ("read",)
-    assert explorer.tools_active == ("read", "ls", "glob", "grep")
+    assert explorer.tools_active == (
+        "read",
+        "ls",
+        "glob",
+        "grep",
+        "web_fetch",
+        "web_search",
+    )
     assert "trace dependencies" in explorer.description
+    assert explorer.tools_deferred == ()
+    assert explorer.preset == "explorer"
     customized = coding_agent_options(
         "reviewer",
         "other/model",
@@ -58,8 +67,53 @@ model="p/m"
 harness="coding"
 preset="explorer"
 [agents.explorer.tools]
-deferred=["web_fetch"]
+deferred=[]
 """)
     options = load_service_manifest(config).coding_catalog.agents["explorer"]
-    assert options.tools_active == ("read", "ls", "glob", "grep")
-    assert options.tools_deferred == ("web_fetch",)
+    assert options.tools_active == (
+        "read",
+        "ls",
+        "glob",
+        "grep",
+        "web_fetch",
+        "web_search",
+    )
+    assert options.tools_deferred == ()
+
+
+@pytest.mark.parametrize(
+    "model,tools",
+    [
+        ("openai/model", ("bash", "read", "apply_patch")),
+        ("anthropic/model", ("bash", "read", "edit", "write", "delete")),
+        ("opencode-go/openai/model", ("bash", "read", "apply_patch")),
+    ],
+)
+def test_builder_defaults_keep_native_editing_without_redundant_search(model, tools):
+    builder = coding_agent_options("implementer", model, preset="builder")
+    assert builder.preset == "builder"
+    assert builder.permissions == ("read", "write", "execute")
+    assert builder.tools_active == tools
+    assert not builder.tools_deferred
+    assert not set(builder.tools_active) & {
+        "web_fetch",
+        "web_search",
+        "ls",
+        "glob",
+        "grep",
+    }
+    assert "effective workspace permissions" in builder.instructions
+
+
+def test_explicit_builder_tools_and_permissions_replace_preset_defaults():
+    options = coding_agent_options(
+        "custom-builder",
+        "provider/model",
+        preset="builder",
+        active=("read",),
+        permissions=("read",),
+        deferred=(),
+    )
+    assert options.tools_active == ("read",)
+    assert options.permissions == ("read",)
+    assert options.preset == "builder"

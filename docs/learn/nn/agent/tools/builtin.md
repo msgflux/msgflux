@@ -229,12 +229,28 @@ to filter or extract a smaller portion. Image reads retain their separate
 
 ## WebFetchTool
 
-`WebFetchTool` fetches web pages and converts them to Markdown. It uses a parser endpoint (default: `https://markdown.new/`) or falls back to semantic HTML parsing. Text extraction preserves long lines without whitespace by splitting them into bounded chunks instead of dropping the remainder.
+`WebFetchTool` delegates page extraction to a `web_fetch` retriever and returns
+its content as text. Its default retriever tries **markdown.new**, then
+**Firecrawl** when the primary service fails or returns empty content. Neither
+service requires a key for its free usage; service quotas apply.
 
-On the raw-HTML fallback, unclosed `script`, `style`, `head`, `noscript`, or
-`svg` blocks are suppressed through the end of the document. A `head` also ends
-implicitly at a `body` start or the first tag outside head content (such as
-`p` or `div`), so following flow content is retained.
+You can inject another provider:
+
+```python
+import msgflux as mf
+from msgflux.tools.builtin import WebFetchTool
+
+fetch = WebFetchTool(retriever=mf.Retriever.web_fetch("firecrawl"))
+try:
+    content = fetch("https://example.com")
+finally:
+    fetch.close()
+```
+
+This example uses Firecrawl directly. See [Web Fetch](../../../retrievers/web_fetch.md)
+for the standard result shape, asynchronous calls, fallback configuration, and
+Cloudflare or direct-HTTP retrievers. Existing parser endpoint, header and timeout
+arguments configure the default chain.
 
 ```python
 import msgflux as mf
@@ -266,7 +282,8 @@ retriever_search = WebSearchTool("retriever/exa")
 # Model-backed search
 model_search = WebSearchTool("model/openai/gpt-4o-search-preview")
 
-# Or use environment variables:
+# Default: Firecrawl Keyless, without an API key.
+# Override with an environment variable when needed:
 # export MSGFLUX_TOOL_WEB_SEARCH_ENGINE="retriever/wikipedia"
 env_search = WebSearchTool()
 
@@ -280,7 +297,7 @@ agent = Researcher()
 result = agent("What is the latest Python version?")
 ```
 
-Supported retriever engines: `wikipedia`, `searxng`, `serpapi`, `ceramic`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
+Supported retriever engines: `firecrawl` (default), `wikipedia`, `searxng`, `serpapi`, `ceramic`, `brave`, `tavily`, `linkup`, `exa`, `arxiv`.
 
 Supported model engines: any OpenAI-compatible model.
 
@@ -298,10 +315,11 @@ Supported model engines: any OpenAI-compatible model.
 search = WebSearchTool(
     "retriever/exa",
     init_params={"include_text": True, "max_characters": 2000},
+    call_params={"top_k": 5},
 )
 
 # call_params: passed on each call (retriever engines only)
-result = search("Python news", call_params={"top_k": 5})
+result = search("Python news")
 
 # goal: passed at call time for model-backed search only
 model_search = WebSearchTool("model/openai/gpt-4o-search-preview")

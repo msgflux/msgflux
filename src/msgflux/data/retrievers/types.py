@@ -12,10 +12,16 @@ class SemanticRetriever:
     retriever_type = "semantic"
 
 
-class WebRetriever:
-    """Retriever web content based-on queries."""
+class WebSearchRetriever:
+    """Search web sources for content relevant to a query."""
 
-    retriever_type = "web"
+    retriever_type = "web_search"
+
+
+class WebFetchRetriever:
+    """Fetch a known web URL and return its page contents."""
+
+    retriever_type = "web_fetch"
 
 
 class WeatherRetriever:
