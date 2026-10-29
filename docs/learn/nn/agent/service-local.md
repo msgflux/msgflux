@@ -105,25 +105,28 @@ Without `--model`, the generated backend configuration contains:
 [defaults]
 agent = "coding"
 account = "default"
-# Choose an available provider/model, for example:
+# Choose a model available to your configured provider, for example:
 # model = "provider/model-id"
 # reasoning_effort = "medium"
-# accounts_dir = "./accounts"  # defaults to ~/.msgflux/accounts
+# agent_dir = "~/.msgflux" # required only when runtime_dir is non-default
 
 [agents.coding]
 harness = "coding"
-subagents = ["lite-coding"]
+subagents = ["explorer", "builder"]
 
-[agents.lite-coding]
+[agents.explorer]
 harness = "coding"
+preset = "explorer"
 
-# Example read-only explorer:
-# [agents.explorer]
-# harness = "coding"
-# permissions = ["read"]
+[agents.builder]
+harness = "coding"
+preset = "builder"
 ```
 
-`coding` and `lite-coding` are registered agent IDs, not profiles or modes.
+`coding`, `explorer`, and `builder` are registered agent IDs. The two children
+select builtin presets for their role defaults. Existing configuration files,
+including a `lite-coding` entry, are preserved; initialization never renames
+agents or changes an existing conversation binding.
 `defaults.agent` selects the agent used by `open_thread()` when the caller omits
 an agent ID. Reopening a thread retains its original agent binding. The service
 registers all entries and resolves a separate AgentSession for each conversation
@@ -208,7 +211,8 @@ embedded configuration and streaming browser clients.
 ### Builtin And Custom Subagents
 
 Use a preset to supply builtin instructions, description and tool/permission
-defaults. The Explorer investigates code and reports file references:
+defaults. The Explorer investigates code and web sources and reports concise
+findings with file references and source URLs:
 
 ```toml
 [agents.explorer]
@@ -216,9 +220,38 @@ harness = "coding"
 preset = "explorer"
 ```
 
+The starter configuration also includes a Builder:
+
+```toml
+[agents.builder]
+harness = "coding"
+preset = "builder"
+```
+
+| Preset | Workspace permissions | Default tools |
+| --- | --- | --- |
+| `explorer` | `read` | Read, Ls, Glob, Grep, WebFetch and WebSearch (all active). |
+| `builder` | `read`, `write`, `execute` | Bash, Read and the model's editing tools. |
+
+The parent receives delegation guidance using the actual configured child IDs.
+It sends repository exploration and web research to the Explorer and consumes
+its concise findings instead of raw search output. Independent implementation
+work can go to the Builder. The Builder uses Bash for focused local searches;
+its defaults contain no web tools or separate Ls/Glob/Grep tools. Both presets
+remain subject to the caller's effective permissions.
+
+WebSearch defaults to Firecrawl Keyless and needs no engine setting or key.
+Set `MSGFLUX_TOOL_WEB_SEARCH_ENGINE` to override it. WebFetch defaults to
+markdown.new with Firecrawl fallback. Free service quotas still apply; quota
+and provider failures are reported to the tool caller. See
+[Web Fetch](../../retrievers/web_fetch.md) and
+[Web Search](../../retrievers/web.md) for provider configuration.
+
 List `explorer` in a parent's `subagents` to expose it through AgentTool.
 Explicit `description`, `permissions`, tools and `prompt_file` override preset
-defaults, including empty tool/permission lists. A prompt file replaces preset
+defaults, including empty tool/permission lists. For example, overriding
+`tools.active` replaces that whole preset list. To move a tool from active to
+deferred, override both lists so the tool is not selected twice. A prompt file replaces preset
 instructions while preserving host context and effective permissions. Models and
 reasoning continue to inherit `[defaults]`; presets never choose credentials.
 
@@ -257,7 +290,7 @@ permits no active tools. `active` sends the complete tool schema, while `deferre
 uses the existing tool-discovery flow.
 
 Declaring `subagents` automatically adds AgentTool for those children; no `agent`
-tool selector is needed. The coding example can dispatch to `lite-coding`; the
+tool selector is needed. The coding example can dispatch to `explorer` and `builder`; each
 child uses its own configured model and inherits the parent's durable execution scope. Child calls return settled
 output to AgentTool; the parent uses streaming for frontend observation. Child
 references must name coding-harness entries and cannot form cycles. Individual
@@ -285,7 +318,7 @@ For a read-only explorer, set `permissions = ["read"]`:
 ```toml
 [agents.coding]
 harness = "coding"
-subagents = ["lite-coding", "explorer"]
+subagents = ["explorer", "builder"]
 # permissions = ["read", "write", "execute"]  # default
 
 [agents.explorer]
@@ -293,7 +326,10 @@ harness = "coding"
 permissions = ["read"]
 ```
 
-The explorer receives Read, Ls, Glob and Grep, with no Bash or editing tools.
+An explicit read-only `workspace` selection receives Read, Ls, Glob and Grep,
+with no Bash or editing tools. The `explorer` preset additionally supplies
+active WebFetch and WebSearch. Workspace permissions govern filesystem and
+process access; those web tools use their configured network providers.
 Every descendant's permissions are intersected with its caller's permissions;
 a child cannot grant itself additional authority. Restrictions are enforced by
 the workspace, as well as by tool selection.
@@ -312,7 +348,7 @@ not write a `SYSTEM.md` copy. To replace its customizable instructions:
 ```toml
 [agents.coding]
 harness = "coding"
-subagents = ["lite-coding"]
+subagents = ["explorer", "builder"]
 prompt_file = "prompts/coding.md"
 ```
 
