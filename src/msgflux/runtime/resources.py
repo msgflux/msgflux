@@ -60,6 +60,15 @@ class RuntimeResources:
 
         if not isinstance(thread_id, str) or not _THREAD_ID.fullmatch(thread_id):
             raise ValueError("thread_id must be a safe non-empty directory identifier")
-        path = self.root / "threads" / thread_id / "checkpoint.sqlite"
-        path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
-        return SQLiteCheckpointStore(path=str(path))
+        from msgflux.runtime.agent_resources import (  # noqa: PLC0415
+            _agent_layout_lock,
+            _reject_shared_backend_layout,
+        )
+
+        if self.root == Path(self.root.anchor):
+            raise ValueError("Runtime resource root must not be a filesystem root")
+        with _agent_layout_lock(self.root):
+            _reject_shared_backend_layout(self.root)
+            path = self.root / "threads" / thread_id / "checkpoint.sqlite"
+            path.parent.mkdir(mode=0o700, parents=True, exist_ok=True)
+            return SQLiteCheckpointStore(path=str(path))

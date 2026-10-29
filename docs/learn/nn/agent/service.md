@@ -143,6 +143,61 @@ The example uses memory-backed stores and does not survive a process restart.
 Use a file-backed journal and persistent checkpoint/inbox/task stores when the
 application needs persistence. Nothing is written to the home directory by default.
 
+### Share A Persistent Backend
+
+A trusted factory can create Agents that borrow one host-owned
+`SQLiteAgentBackend`. The service still creates one `AgentSession` per thread
+and uses the backend's shared checkpoint, task, inbox, and approval stores:
+
+```python
+import asyncio
+from pathlib import Path
+
+import msgflux as mf
+import msgflux.nn as nn
+from msgflux.runtime import SQLiteAgentBackend
+from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceStore
+
+
+async def main():
+    state_root = Path.home() / ".msgflux-shared"
+    state_root.mkdir(parents=True, exist_ok=True)
+    backend = SQLiteAgentBackend(state_root)
+    journal = SQLiteServiceStore(state_root / "service.sqlite3")
+    service = AgentService(store=journal, default_agent="main")
+
+    def create_session(thread):
+        model = mf.Model.chat_completion("openai/gpt-4.1-mini")
+        agent = nn.Agent(name="main", model=model, backend=backend)
+        return AgentSession(agent, on_close=model.aclose)
+
+    service.register("main", create_session)
+    thread = await service.open_thread("main", thread_id="service-thread-1")
+    try:
+        receipt = await service.prompt(
+            thread.thread_id,
+            "Remember the marker silver fern.",
+            request_id="remember-1",
+        )
+        settled = await service.wait(thread.thread_id, receipt.request_id)
+        print(settled.status)
+    finally:
+        await service.aclose()
+        journal.close()
+        backend.close()
+
+
+asyncio.run(main())
+```
+
+The factory creates a fresh model and Agent for each loaded thread binding.
+`AgentSession` keeps the model outside the backend's lifecycle; `on_close`
+releases it when that binding is closed. The service borrows the journal and
+does not close it. Close `service` before `backend` so loaded sessions release
+their binding leases first; `backend.close()` then closes the four shared
+connections. See [Shared SQLite Backend](resources.md#shared-sqlite-backend)
+for the layout, task isolation, and direct Agent usage rules.
+
 ## Admission And Concurrency
 
 `prompt()` returns after its admission record is committed and its worker is
@@ -413,6 +468,9 @@ Close callbacks release factory-owned resources and must account for delegated
 work using those resources. Non-cooperative code can delay shutdown. The service
 is bound to one event loop; its journal operations are local synchronous SQLite
 transactions. Network serving and daemon startup are separate integrations.
+When factories use a host-owned [shared backend](resources.md#shared-sqlite-backend),
+`aclose()` releases loaded sessions' binding leases. Close the backend after the
+service; the backend does not close the journal, models, or workspaces.
 
 ## Manual Conversation Compaction
 

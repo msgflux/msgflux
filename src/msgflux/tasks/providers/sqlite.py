@@ -412,6 +412,46 @@ class SQLiteTaskStore(SQLiteTaskStoreType):
             rows = self._conn.execute(query, tuple(params)).fetchall()
             return [self._row_to_task(row) for row in rows]
 
+    def _get_for_thread(
+        self, thread_id: str, task_id: str, *, include_result: bool = True
+    ) -> TaskRecord | None:
+        """Read one scoped task without decoding rows from another thread."""
+        # This branch selects between two fixed, internal SQL fragments.
+        result_column = "result" if include_result else "NULL AS result"
+        with self._lock:
+            query = (
+                "SELECT task_id, tool_name, status, created_at, updated_at, "  # noqa: S608 - internal allowlisted column
+                f"completed_at, {result_column}, error, progress, metadata "
+                "FROM tasks WHERE json_extract(metadata, '$.thread_id')=? "
+                "AND task_id=?"
+            )
+            row = self._conn.execute(query, (thread_id, task_id)).fetchone()
+            return self._row_to_task(row) if row is not None else None
+
+    def _list_for_thread(
+        self,
+        thread_id: str,
+        *,
+        status: str | None = None,
+        include_result: bool = True,
+    ) -> List[TaskRecord]:
+        """Apply the logical thread filter before materializing task payloads."""
+        # This branch selects between two fixed, internal SQL fragments.
+        result_column = "result" if include_result else "NULL AS result"
+        with self._lock:
+            query = (
+                "SELECT task_id, tool_name, status, created_at, updated_at, "  # noqa: S608 - internal allowlisted column
+                f"completed_at, {result_column}, error, progress, metadata "
+                "FROM tasks WHERE json_extract(metadata, '$.thread_id')=?"
+            )
+            params: List[Any] = [thread_id]
+            if status is not None:
+                query += " AND status=?"
+                params.append(status)
+            query += " ORDER BY updated_at DESC"
+            rows = self._conn.execute(query, tuple(params)).fetchall()
+            return [self._row_to_task(row) for row in rows]
+
     def list_summaries(self, *, thread_id: str, run_id: str) -> List[TaskSummary]:
         with self._lock:
             rows = self._conn.execute(

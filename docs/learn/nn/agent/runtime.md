@@ -13,6 +13,14 @@ The core pieces are:
 | `TaskStore` | Persists background task records, activity, outputs, and routing metadata. |
 | `AgentInbox` | Holds pending messages, notifications, and control signals for the agent loop. |
 | `AgentInboxStore` | Optional persistence boundary for the inbox. Without one, the inbox is in memory. |
+| `SQLiteAgentBackend` | Shares four SQLite store connections across many durable Agent thread bindings. |
+
+For a host that runs many durable Agents in one process, construct one
+`SQLiteAgentBackend` and pass it to each `Agent(backend=...)`. The backend owns
+the four shared stores; each Agent owns its thread binding lease, while models
+and workspaces remain host-owned. Close Agents or an `AgentService` before
+closing the backend. See [Shared SQLite Backend](resources.md#shared-sqlite-backend)
+for the layout, task isolation, cache target, and ownership rules.
 
 ## Workspace
 
