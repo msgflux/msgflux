@@ -63,6 +63,7 @@ from msgflux.data.stores.incremental import (
     append_control_state,
     compose_append_state,
     migrate_inline_entries,
+    optional_snapshot_base,
     recover_tail,
     same_payload_value,
     snapshot_base,
@@ -80,6 +81,12 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
     provider = "in_memory"
     supports_atomic_commit = True
     supports_incremental = True
+
+    @property
+    def supports_agent_incremental(self) -> bool:
+        return self._has_default_agent_commit(
+            InMemoryCheckpointStore._agent_commit_implementation
+        )
 
     def _stage_manifest_page(
         self,
@@ -988,6 +995,9 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                     normalized,
                     page_store,
                 )
+            commit_base = optional_snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, normalized
+            )
             self._publish_staged(namespace, thread_id, item_store, page_store)
             if run is None:
                 run = self._ensure_run(namespace, thread_id, run_id)
@@ -1005,7 +1015,11 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 committed,
                 committed["_checkpoint"]["branch_id"],
                 committed["_checkpoint"]["head_item_id"],
+                base=commit_base,
             )
+
+    # Freeze the original identity so a later class-level wrapper is honored.
+    _agent_commit_implementation = commit_state
 
     def load_latest_run(
         self,

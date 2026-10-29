@@ -33,6 +33,11 @@ class AgentRun:
     head_item_id: str | None = None
     budgets: dict[str, Any] = field(default_factory=dict)
     extension_state: dict[str, Any] = field(default_factory=dict)
+    # Run-local append validation token. It is intentionally not durable state,
+    # not an extension and never part of semantic run equality or its repr.
+    _checkpoint_tracker: Any = field(
+        default=None, init=False, repr=False, compare=False
+    )
     _command_receipt_lock: RLock = field(
         default_factory=RLock, init=False, repr=False, compare=False
     )

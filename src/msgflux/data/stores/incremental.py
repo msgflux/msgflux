@@ -8,6 +8,7 @@ authorization credential. Full checkpoint APIs keep their existing semantics.
 from __future__ import annotations
 
 import hashlib
+import math
 import re
 from copy import deepcopy
 from dataclasses import dataclass
@@ -224,3 +225,62 @@ def same_payload_value(left: Any, right: Any) -> bool:
             for left_item, right_item in zip(left, right)
         )
     return left == right
+
+
+def is_plain_json(value: Any) -> bool:
+    """Qualify optional optimizations without copying or invoking user hooks.
+
+    Full APIs accept opaque objects and Mapping subclasses. Only exact native
+    JSON containers/scalars are eligible for automatic fingerprints, so an
+    optional optimization never calls an opaque object's iteration/conversion
+    methods. The active set is bounded by nesting depth and rejects cycles.
+    """
+    try:
+        return _plain_json_value(value, set())
+    except RecursionError:
+        return False
+
+
+def _plain_json_value(value: Any, active: set[int]) -> bool:
+    value_type = type(value)
+    if value is None or value_type is str or value_type is bool or value_type is int:
+        return True
+    if value_type is float:
+        return math.isfinite(value)
+    if value_type is not list and value_type is not dict:
+        return False
+    identity = id(value)
+    if identity in active:
+        return False
+    active.add(identity)
+    try:
+        if value_type is list:
+            return all(_plain_json_value(item, active) for item in value)
+        return all(
+            type(key) is str and _plain_json_value(item, active)
+            for key, item in value.items()
+        )
+    finally:
+        active.remove(identity)
+
+
+def optional_snapshot_base(
+    routing_id: str,
+    namespace: str,
+    thread_id: str,
+    run_id: str,
+    normalized: Mapping[str, Any],
+) -> CheckpointBase | None:
+    """Derive optional append provenance without narrowing full-commit inputs.
+
+    Full APIs accept control objects beyond the incremental JSON contract. This
+    pure, best-effort derivation performs no storage access: qualification
+    failures disable incremental use, while transaction/integrity errors in the
+    actual commit path remain outside this handler and propagate normally.
+    """
+    if not is_plain_json(normalized):
+        return None
+    try:
+        return snapshot_base(routing_id, namespace, thread_id, run_id, normalized)
+    except (TypeError, ValueError, RecursionError):
+        return None

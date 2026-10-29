@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from abc import ABC, abstractmethod
 from copy import deepcopy
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from typing import Any, List, Literal, Mapping
 from uuid import uuid4
 
@@ -24,12 +24,19 @@ class CheckpointConflictError(RuntimeError):
 
 @dataclass(frozen=True)
 class CheckpointCommit:
-    """Result of one revision-checked state and event commit."""
+    """Result of one revision-checked state and event commit.
+
+    Built-in stores may include atomic append provenance in ``base``. It is
+    optional for unsupported snapshot layouts and custom providers, and is not
+    part of durable state, semantic equality or the result's representation.
+    """
 
     revision: int
     state: Mapping[str, Any]
     branch_id: str | None = None
     head_item_id: str | None = None
+    # Auxiliary provenance does not change semantic commit equality or repr.
+    base: CheckpointBase | None = field(default=None, repr=False, compare=False)
 
 
 class CheckpointStore(ABC):
@@ -38,6 +45,13 @@ class CheckpointStore(ABC):
     supports_atomic_commit = False
 
     supports_incremental = False
+    supports_agent_incremental = False
+
+    def _has_default_agent_commit(self, implementation: Any) -> bool:
+        """Keep custom full-commit hooks on the existing Agent save path."""
+        return getattr(
+            self.commit_state, "__func__", None
+        ) is implementation and not hasattr(self, "acommit_state")
 
     def load_tail(
         self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
@@ -576,6 +590,7 @@ class AsyncCheckpointStore(ABC):
     """Async mirror of :class:`CheckpointStore`."""
 
     supports_incremental = False
+    supports_agent_incremental = False
 
     async def aload_tail(
         self, namespace: str, thread_id: str, run_id: str, *, limit: int = 128
