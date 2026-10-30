@@ -111,22 +111,21 @@ account = "default"
 # agent_dir = "~/.msgflux" # required only when runtime_dir is non-default
 
 [agents.coding]
-harness = "coding"
+preset = "coding"
 subagents = ["explorer", "builder"]
 
 [agents.explorer]
-harness = "coding"
 preset = "explorer"
 
 [agents.builder]
-harness = "coding"
 preset = "builder"
 ```
 
-`coding`, `explorer`, and `builder` are registered agent IDs. The two children
-select builtin presets for their role defaults. Existing configuration files,
-including a `lite-coding` entry, are preserved; initialization never renames
-agents or changes an existing conversation binding.
+`coding`, `explorer`, and `builder` are registered agent IDs. Each builtin entry
+selects one preset; the ID itself can be customized. Initialization never
+overwrites existing files, renames agents, or changes conversation bindings.
+Older files using `harness` need the migration described below; an existing
+`lite-coding` ID can be retained with `preset = "coding"`.
 `defaults.agent` selects the agent used by `open_thread()` when the caller omits
 an agent ID. Reopening a thread retains its original agent binding. The service
 registers all entries and resolves a separate AgentSession for each conversation
@@ -210,13 +209,17 @@ embedded configuration and streaming browser clients.
 
 ### Builtin And Custom Subagents
 
-Use a preset to supply builtin instructions, description and tool/permission
-defaults. The Explorer investigates code and web sources and reports concise
-findings with file references and source URLs:
+Every agent entry declares exactly one of `preset` or `factory`. A preset
+selects a builtin agent definition and its implementation, instructions,
+description, tools and permissions. The implementation is resolved internally;
+there is no separate `harness` setting in TOML.
+
+The `coding` preset preserves the generic coding agent defaults. The Explorer
+investigates code and web sources and reports concise findings with file
+references and source URLs:
 
 ```toml
 [agents.explorer]
-harness = "coding"
 preset = "explorer"
 ```
 
@@ -224,12 +227,12 @@ The starter configuration also includes a Builder:
 
 ```toml
 [agents.builder]
-harness = "coding"
 preset = "builder"
 ```
 
 | Preset | Workspace permissions | Default tools |
 | --- | --- | --- |
+| `coding` | `read`, `write`, `execute` | Bash, Read and the model's editing tools. |
 | `explorer` | `read` | Read, Ls, Glob, Grep, WebFetch and WebSearch (all active). |
 | `builder` | `read`, `write`, `execute` | Bash, Read and the model's editing tools. |
 
@@ -259,7 +262,7 @@ For a custom reviewer:
 
 ```toml
 [agents.reviewer]
-harness = "coding"
+preset = "coding"
 description = "Review changes for defects and missing tests."
 prompt_file = "prompts/reviewer.md"
 permissions = ["read"]
@@ -277,9 +280,42 @@ explorer = coding_agent_options(
 
 Use these resolved options with `create_coding_session_factory()` and a
 `CodingAgentCatalog` as the existing factory does. Trusted application `factory`
-entries own their construction; they do not accept coding presets or options.
+entries own their construction; they do not accept `preset` or coding options.
+
+### Migrating Earlier Configurations
+
+The former `harness` selector is rejected. For each builtin agent:
+
+- replace a standalone `harness = "coding"` with `preset = "coding"`;
+- when `preset = "explorer"` or `preset = "builder"` already exists, remove
+  the `harness` line and keep the preset;
+- keep custom `factory = "module:factory"` entries as they are, without a preset.
+
+Agent IDs, models, account names, explicit tool overrides and other settings do
+not need to change. `msgflux config validate` checks the migrated file. The
+initializer does not rewrite an existing config for you.
 
 ### Tools And Subagents
+
+Tool defaults stay in the selected preset; they are not expanded or written
+back into the TOML. A clean entry such as `preset = "builder"` follows the
+model-specific workspace defaults. Explicit `[agents.ID.tools]` tables are
+optional overrides, including empty lists. To move the Explorer's web search
+into deferred loading explicitly:
+
+```toml
+[agents.researcher]
+preset = "explorer"
+
+[agents.researcher.tools]
+active = ["workspace", "web_fetch"]
+deferred = ["web_search"]
+```
+
+This replaces both tool lists for `researcher`; the preset's read-only
+permissions still apply. `msgflux agents inspect researcher --json` shows the
+resolved active/deferred tools of the running service without materializing
+those defaults in the file. Changes require reloading the service.
 
 `workspace` expands into the tools appropriate to the model. OpenAI models use
 Bash, Read and ApplyPatch; other models use Bash, Read, Edit, Write and Delete.
@@ -293,7 +329,7 @@ Declaring `subagents` automatically adds AgentTool for those children; no `agent
 tool selector is needed. The coding example can dispatch to `explorer` and `builder`; each
 child uses its own configured model and inherits the parent's durable execution scope. Child calls return settled
 output to AgentTool; the parent uses streaming for frontend observation. Child
-references must name coding-harness entries and cannot form cycles. Individual
+references must select builtin presets and cannot form cycles. Individual
 tools can be deferred. The harness explicitly enables default usage guidance for its configured tools.
 
 ### Workspace Permissions
@@ -317,12 +353,12 @@ For a read-only explorer, set `permissions = ["read"]`:
 
 ```toml
 [agents.coding]
-harness = "coding"
+preset = "coding"
 subagents = ["explorer", "builder"]
 # permissions = ["read", "write", "execute"]  # default
 
 [agents.explorer]
-harness = "coding"
+preset = "coding"
 permissions = ["read"]
 ```
 
@@ -347,7 +383,7 @@ not write a `SYSTEM.md` copy. To replace its customizable instructions:
 
 ```toml
 [agents.coding]
-harness = "coding"
+preset = "coding"
 subagents = ["explorer", "builder"]
 prompt_file = "prompts/coding.md"
 ```
@@ -364,7 +400,7 @@ agent without replacing its harness factory:
 
 ```toml
 [agents.coding]
-harness = "coding"
+preset = "coding"
 extensions = ["prompt_suffix", "request_counter"]
 
 [extensions.prompt_suffix.options]
@@ -419,7 +455,7 @@ and validation behavior.
 
 ### Custom Python Factories
 
-Use `factory` instead of `harness` for agents constructed by application code:
+Use `factory` instead of `preset` for agents constructed by application code:
 
 ```toml
 [defaults]
@@ -460,7 +496,7 @@ Custom factories retain the `ServiceThread -> AgentSession` contract and choose
 their models, prompts, tools and resource ownership in code. A factory can be
 synchronous or asynchronous. Its module is imported only by the server, before
 the admission journal opens; the frontend parses configuration without importing
-application modules. `harness` and `factory` are mutually exclusive.
+application modules. `preset` and `factory` are mutually exclusive.
 
 The managed daemon starts Python in safe-path mode, so the launch directory does
 not shadow `msgflux` or server dependencies during bootstrap. For an explicitly
@@ -510,7 +546,7 @@ model = "provider/model-id"
 agent_dir = "./agent-state"
 
 [agents.coding]
-harness = "coding"
+preset = "coding"
 ```
 
 In TOML, an explicit relative `agent_dir` is resolved from the config file's
@@ -889,14 +925,16 @@ Human output is a labeled summary. JSON returns `AgentInspection`:
   "account_name": "work",
   "configuration": {
     "harness": "coding",
+    "preset": "coding",
     "model": "provider/model-id",
     "reasoning_effort": "medium"
   }
 }
 ```
 
-This shortened example omits additional configuration fields. `configuration`
-is null when a programmatic registration did not provide metadata. Inspection
+The `harness` field in inspection is derived implementation metadata; it is
+not a TOML selector. This shortened example omits additional configuration
+fields. `configuration` is null when a programmatic registration did not provide metadata. Inspection
 exits with code `0` on success; unknown agents, unavailable services or request
 failures exit with code `1` and diagnostics on stderr. `--runtime-dir PATH`
 selects a different local daemon.
