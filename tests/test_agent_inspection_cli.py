@@ -96,14 +96,13 @@ account = "not-logged-in"
 accounts_dir = "missing-accounts"
 agent_dir = "agent-state"
 [agents.coding]
-harness = "coding"
+preset = "coding"
 reasoning_effort = "high"
 prompt_file = "system.md"
 subagents = ["explorer"]
 [agents.coding.tools]
 deferred = ["web_fetch"]
 [agents.explorer]
-harness = "coding"
 preset = "explorer"
 """)
     client = await connect_local_service(

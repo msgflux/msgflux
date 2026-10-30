@@ -196,7 +196,7 @@ agent = "coding"
 model = "provider/model-id"
 
 [agents.coding]
-harness = "coding"
+preset = "coding"
 extensions = ["prompt_suffix", "request_counter"]
 
 [extensions.prompt_suffix.options]
@@ -272,7 +272,7 @@ installed distributions advertise the same name:
 
 ```toml
 [agents.coding]
-harness = "coding"
+preset = "coding"
 extensions = ["prompt_suffix"]
 
 [extensions.prompt_suffix]

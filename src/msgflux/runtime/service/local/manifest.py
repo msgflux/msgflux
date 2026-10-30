@@ -33,6 +33,8 @@ __all__ = [
     "validate_factory_path",
 ]
 
+_CODING_HARNESS = "coding"
+
 _CONFIG_TEMPLATE = """[defaults]
 agent = "coding"
 account = "default"
@@ -42,15 +44,13 @@ account = "default"
 # agent_dir = "~/.msgflux" # required only when runtime_dir is non-default
 
 [agents.coding]
-harness = "coding"
+preset = "coding"
 subagents = ["explorer", "builder"]
 
 [agents.explorer]
-harness = "coding"
 preset = "explorer"
 
 [agents.builder]
-harness = "coding"
 preset = "builder"
 """
 
@@ -70,10 +70,9 @@ class _ToolsConfig(msgspec.Struct, forbid_unknown_fields=True):
 
 
 class _AgentConfig(msgspec.Struct, forbid_unknown_fields=True):
-    harness: str | None = None
     preset: str | None = None
-    description: str | None = None
     factory: str | None = None
+    description: str | None = None
     model: str | None = None
     reasoning_effort: str | None = None
     prompt_file: str | None = None
@@ -81,6 +80,11 @@ class _AgentConfig(msgspec.Struct, forbid_unknown_fields=True):
     subagents: list[str] = msgspec.field(default_factory=list)
     tools: _ToolsConfig | None = None
     extensions: list[str] = msgspec.field(default_factory=list)
+
+    @property
+    def harness(self) -> str | None:
+        """Derived implementation family, never a config field or TOML selector."""
+        return _CODING_HARNESS if self.preset is not None else None
 
 
 class _ServiceConfig(msgspec.Struct, forbid_unknown_fields=True):
@@ -267,7 +271,7 @@ def _resolve_coding_options(
 ) -> dict[str, CodingAgentOptions]:
     options_by_id = {}
     for agent_id, agent in config.agents.items():
-        if agent.harness != "coding":
+        if agent.harness != _CODING_HARNESS:
             continue
         model = agent.model or config.defaults.model
         if model is None:
@@ -318,7 +322,7 @@ def _validate_agent(
     custom = agent.factory is not None
     if coding == custom:
         raise ValueError(
-            f"Agent {agent_id!r} must declare exactly one harness or factory"
+            f"Agent {agent_id!r} must declare exactly one preset or factory"
         )
 
     if custom:
@@ -338,13 +342,11 @@ def _validate_agent(
             or agent.subagents
             or agent.permissions is not None
         ):
-            raise ValueError(f"Custom agent {agent_id!r} cannot use coding options")
+            raise ValueError(
+                f"Custom agent {agent_id!r} cannot use a preset or coding options"
+            )
         return
 
-    if agent.harness != "coding":
-        raise ValueError(
-            f"Agent {agent_id!r} uses unsupported harness {agent.harness!r}"
-        )
     _validate_coding_agent(agent_id, agent, agents, config_dir)
 
 
@@ -355,6 +357,7 @@ def _validate_coding_agent(
     config_dir: Path,
 ) -> None:
     for label, value in (
+        ("preset", agent.preset),
         ("description", agent.description),
         ("model", agent.model),
         ("reasoning_effort", agent.reasoning_effort),
@@ -405,8 +408,8 @@ def _validate_subagents(
             )
         if subagent == agent_id:
             raise ValueError(f"Agent {agent_id!r} cannot be its own subagent")
-        if agents[subagent].harness != "coding":
-            raise ValueError(f"Subagent {subagent!r} must use the coding harness")
+        if agents[subagent].harness != _CODING_HARNESS:
+            raise ValueError(f"Subagent {subagent!r} must use a coding preset")
 
 
 def _fsync_directory(directory: Path) -> None:

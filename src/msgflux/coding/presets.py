@@ -6,8 +6,15 @@ import msgspec
 
 
 class CodingPreset(msgspec.Struct, frozen=True):
-    description: str
-    instructions: str
+    """Builtin role defaults resolved into one coding agent's options.
+
+    A neutral role leaves ``description`` and ``instructions`` unset so the
+    generic coding agent keeps its base system prompt and publishes the
+    ``default`` prompt source. Role presets supply both fields.
+    """
+
+    description: str | None = None
+    instructions: str | None = None
     delegation_guidance: str = ""
     permissions: tuple[str, ...] = ("read", "write", "execute")
     active: tuple[str, ...] = ("workspace",)
@@ -15,6 +22,9 @@ class CodingPreset(msgspec.Struct, frozen=True):
 
 
 _PRESETS = {
+    # Generic coding agent: the same defaults as an unspecified preset, without
+    # extra instructions, description or delegation guidance.
+    "coding": CodingPreset(),
     "explorer": CodingPreset(
         description=(
             "Locate relevant code, trace dependencies, research the web, and report "

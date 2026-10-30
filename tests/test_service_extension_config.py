@@ -56,7 +56,7 @@ def test_manifest_extension_selection_does_not_import_factories(tmp_path):
         "[defaults]\nagent='coding'\nmodel='openai/model'\n"
         "[extensions.audit]\nfactory='never_imported_extension:Audit'\n"
         "[extensions.audit.options]\nlabel='configured'\n"
-        "[agents.coding]\nharness='coding'\nextensions=['audit']\n"
+        "[agents.coding]\npreset='coding'\nextensions=['audit']\n"
         "[agents.custom]\nfactory='another_unimported_factory:make'\n"
         "extensions=['audit']\n"
     )
@@ -81,7 +81,7 @@ def test_manifest_rejects_unknown_duplicate_empty_selectors_without_imports(
     config.write_text(
         "[defaults]\nagent='coding'\nmodel='openai/model'\n"
         "[extensions.audit]\nfactory='never_imported_extension:Audit'\n"
-        f"[agents.coding]\nharness='coding'\nextensions={names}\n"
+        f"[agents.coding]\npreset='coding'\nextensions={names}\n"
     )
     with pytest.raises(ValueError):
         load_service_manifest(config)

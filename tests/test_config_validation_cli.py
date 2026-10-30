@@ -13,7 +13,7 @@ model = "unavailable-provider/model-id"
 account = "not-logged-in"
 accounts_dir = "missing-accounts"
 [agents.coding]
-harness = "coding"
+preset = "coding"
 """
 
 
@@ -69,6 +69,10 @@ def test_validate_custom_factory_does_not_import_user_code(
     [
         ("[defaults", "Invalid service config"),
         (_VALID + "unexpected = true\n", "unknown field"),
+        (_VALID + 'harness = "coding"\n', "unknown field"),
+        (_VALID + 'factory = "unused:create"\n', "exactly one preset or factory"),
+        (_VALID.replace('preset = "coding"', 'preset = ""'), "preset"),
+        (_VALID.replace('preset = "coding"', 'preset = "unknown"'), "preset"),
         (_VALID.replace('agent = "coding"', 'agent = "missing"'), "declared agent"),
         (
             _VALID.replace(
@@ -85,7 +89,7 @@ def test_validate_custom_factory_does_not_import_user_code(
         (_VALID + 'subagents = ["unknown"]\n', "unknown subagent"),
         (
             _VALID
-            + 'subagents = ["child"]\n[agents.child]\nharness = "coding"\nsubagents = ["coding"]\n',
+            + 'subagents = ["child"]\n[agents.child]\npreset = "coding"\nsubagents = ["coding"]\n',
             "cycle",
         ),
     ],

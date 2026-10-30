@@ -125,7 +125,7 @@ def test_discovery_works_before_model_or_agent_selection_is_valid(
     config, package = installed_extension
     config.write_text(
         "[defaults]\nagent='coding'\n"
-        "[agents.coding]\nharness='coding'\nextensions=['not_installed']\n"
+        "[agents.coding]\npreset='coding'\nextensions=['not_installed']\n"
     )
     main(["extensions", "ls", "--config", str(config), "--json"])
     assert any(

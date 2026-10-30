@@ -223,7 +223,7 @@ async def test_builtin_daemon_ignores_untrusted_cwd_module_shadows(daemon_worksp
     config.write_text(
         "[defaults]\nagent = 'coding'\nmodel = 'provider/model-id'\n"
         "agent_dir = 'agent-state'\n"
-        "[agents.coding]\nharness = 'coding'\n"
+        "[agents.coding]\npreset = 'coding'\n"
     )
 
     client = await connect_local_service(
