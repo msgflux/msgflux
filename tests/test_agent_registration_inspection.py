@@ -51,8 +51,8 @@ def test_registration_freezes_metadata_and_validates_before_mutating(service):
 @pytest.mark.parametrize(
     "model, preset, expected",
     [
-        ("openai-codex/example", None, ("bash", "read", "apply_patch")),
-        ("other/example", None, ("bash", "read", "edit", "write", "delete")),
+        ("openai-codex/example", "coding", ("bash", "read", "apply_patch")),
+        ("other/example", "coding", ("bash", "read", "edit", "write", "delete")),
         (
             "openai-codex/example",
             "explorer",
@@ -64,20 +64,18 @@ def test_manifest_metadata_reuses_provider_permission_and_preset_resolution(
     tmp_path, model, preset, expected
 ):
     config = tmp_path / "config.toml"
-    content = f"[defaults]\nagent='coding'\nmodel='{model}'\n[agents.coding]\nharness='coding'\n"
-    if preset is not None:
-        content += f"preset='{preset}'\n"
+    content = f"[defaults]\nagent='coding'\nmodel='{model}'\n[agents.coding]\npreset='{preset}'\n"
     config.write_text(content)
     manifest = load_service_manifest(config)
     result = manifest_agent_configuration(manifest, "coding")
     assert result.model == model and result.reasoning_effort == "medium"
     assert result.tools_active == expected
     assert result.tools_deferred == ()
-    assert result.prompt_source == ("preset" if preset is not None else "default")
+    assert result.prompt_source == ("default" if preset == "coding" else "preset")
     assert result.preset == preset and result.prompt_file is None
     assert result.config_digest == manifest.digest
     assert result.permissions == (
-        ("read",) if preset is not None else ("read", "write", "execute")
+        ("read",) if preset == "explorer" else ("read", "write", "execute")
     )
     # The projection reads the loaded manifest, not mutable files on disk.
     config.write_text("not valid toml")

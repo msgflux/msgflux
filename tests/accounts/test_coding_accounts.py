@@ -94,10 +94,10 @@ async def test_manifest_runner_injects_custom_accounts_root_into_parent_and_chil
         'agent_dir = "agent-state"\n'
         'model = "openai/gpt-4.1"\n'
         "\n[agents.coding]\n"
-        'harness = "coding"\n'
+        'preset = "coding"\n'
         'subagents = ["groq-worker"]\n'
         "\n[agents.groq-worker]\n"
-        'harness = "coding"\n'
+        'preset = "coding"\n'
         'model = "groq/openai/gpt-oss-20b"\n'
     )
     manifest = load_service_manifest(manifest_path)

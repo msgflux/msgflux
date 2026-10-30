@@ -2,8 +2,10 @@
 
 import asyncio
 import hashlib
+import tomllib
 from pathlib import Path
 
+import msgspec
 import pytest
 import pytest_asyncio
 
@@ -100,13 +102,32 @@ def test_manifest_parses_coding_agent_permissions(tmp_path):
     path = tmp_path / "config.toml"
     path.write_text(
         "[defaults]\nagent='explorer'\nmodel='provider/model-id'\n"
-        "[agents.explorer]\nharness='coding'\npermissions=['read']\n"
+        "[agents.explorer]\npreset='coding'\npermissions=['read']\n"
     )
 
     manifest = load_service_manifest(path)
 
     assert manifest.agents["explorer"].permissions == ["read"]
     assert manifest.coding_catalog.agents["explorer"].permissions == ("read",)
+
+
+def test_manifest_derives_implementation_without_serialized_selector(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[defaults]\nagent='coding'\nmodel='provider/model-id'\n"
+        "[agents.coding]\npreset='coding'\n"
+        "[agents.custom]\nfactory='tests.test_local_service_runner:local_factory'\n"
+    )
+
+    manifest = load_service_manifest(path)
+
+    declared = manifest.agents["coding"]
+    assert declared.harness == "coding"
+    assert manifest.agents["custom"].harness is None
+    # The implementation family is derived in memory, never a config field.
+    fields = {field.name for field in msgspec.structs.fields(type(declared))}
+    assert "harness" not in fields
+    assert "harness" not in path.read_text()
 
 
 @pytest.mark.parametrize(
@@ -122,6 +143,21 @@ def test_manifest_parses_coding_agent_permissions(tmp_path):
         "[defaults]\nagent = 'worker'\n[agents.worker]\nfactory = 'module:factory'\n\n"
         "[agents.worker]\nfactory = 'module:other'\n",
         "[defaults]\nagent = 'worker'\n[agents]\nworker = 'tests.test_local_service_runner:local_factory'\n",
+        # The former `harness` selector is a rejected legacy field.
+        "[defaults]\nagent = 'worker'\n[agents.worker]\nharness = 'coding'\n",
+        "[defaults]\nagent = 'worker'\n[agents.worker]\npreset = 'coding'\n"
+        "harness = 'coding'\n",
+        # Exactly one of preset or factory.
+        "[defaults]\nagent = 'worker'\n[agents.worker]\n",
+        "[defaults]\nagent = 'worker'\n[agents.worker]\npreset = 'coding'\n"
+        "factory = 'tests.test_local_service_runner:local_factory'\n",
+        # Empty and unknown preset selectors.
+        "[defaults]\nagent = 'worker'\n[agents.worker]\npreset = ''\n",
+        "[defaults]\nagent = 'worker'\n[agents.worker]\npreset = 'unknown'\n",
+        "[defaults]\nagent = 'worker'\n[agents.worker]\npreset = 1\n",
+        # Custom factories own their construction.
+        "[defaults]\nagent = 'worker'\n[agents.worker]\n"
+        "factory = 'tests.test_local_service_runner:local_factory'\nsubagents = ['worker']\n",
     ],
 )
 def test_manifest_rejects_invalid_schema_or_factories(tmp_path, content):
@@ -159,7 +195,7 @@ async def test_runner_rejects_custom_coding_runtime_before_creating_it(
     config = tmp_path / "config.toml"
     config.write_text(
         "[defaults]\nagent='coding'\nmodel='provider/model'\n"
-        "[agents.coding]\nharness='coding'\n"
+        "[agents.coding]\npreset='coding'\n"
     )
     monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
 
@@ -186,7 +222,7 @@ async def test_discovery_rejects_custom_coding_runtime_before_preparing_it(
     config = tmp_path / "config.toml"
     config.write_text(
         "[defaults]\nagent='coding'\nmodel='provider/model'\n"
-        "[agents.coding]\nharness='coding'\n"
+        "[agents.coding]\npreset='coding'\n"
     )
     monkeypatch.setenv("HOME", str(tmp_path / "fake-home"))
 
@@ -223,15 +259,15 @@ def test_manifest_runner_passes_declared_default_agent(tmp_path):
     [
         "[defaults]\nagent='missing'\n[agents.worker]\nfactory='m:f'\n",
         "[defaults]\nagent='worker'\n[agents]\n",
-        "[defaults]\nagent='worker'\n[agents.worker]\nharness='other'\n",
-        "[defaults]\nagent='worker'\n[agents.worker]\nharness='coding'\n"
+        "[defaults]\nagent='worker'\n[agents.worker]\npreset='unknown'\n",
+        "[defaults]\nagent='worker'\n[agents.worker]\npreset='coding'\n"
         "subagents=['missing']\n",
-        "[defaults]\nagent='worker'\n[agents.worker]\nharness='coding'\n"
+        "[defaults]\nagent='worker'\n[agents.worker]\npreset='coding'\n"
         "[agents.worker.tools]\nactive=['agent']\n",
-        "[defaults]\nagent='worker'\n[agents.worker]\nharness='coding'\n"
-        "subagents=['child']\n[agents.child]\nharness='coding'\n"
+        "[defaults]\nagent='worker'\n[agents.worker]\npreset='coding'\n"
+        "subagents=['child']\n[agents.child]\npreset='coding'\n"
         "subagents=['worker']\n",
-        "[defaults]\nagent='worker'\n[agents.worker]\nharness='coding'\n"
+        "[defaults]\nagent='worker'\n[agents.worker]\npreset='coding'\n"
         "[agents.worker.tools]\ndeferred=['agent']\n",
         "[defaults]\nagent='worker'\n[agents.worker]\n"
         "factory='module:factory'\npermissions=['read']\n",
@@ -250,7 +286,7 @@ def test_manifest_rejects_prompt_file_that_is_not_utf8(tmp_path):
     config = tmp_path / "config.toml"
     config.write_text(
         "[defaults]\nagent='worker'\nmodel='openai-codex/gpt-6-luna'\n"
-        "[agents.worker]\nharness='coding'\nprompt_file='prompt.md'\n"
+        "[agents.worker]\npreset='coding'\nprompt_file='prompt.md'\n"
     )
     with pytest.raises(ValueError, match="UTF-8"):
         load_service_manifest(config)
@@ -263,14 +299,42 @@ def test_initialize_config_is_secure_idempotent_and_never_overwrites(tmp_path):
     template = config.read_text()
     assert 'model = "openai' not in template
     assert '# model = "provider/model-id"' in template
-    assert "[agents.coding.tools]" not in template
+    assert "harness" not in template
+    assert ".tools." not in template
     assert 'active = ["workspace", "agent"]' not in template
+    assert 'preset = "coding"' in template
     assert 'preset = "explorer"' in template
     assert 'preset = "builder"' in template
     config.write_text("existing user config\n")
     assert initialize_service_config(config) == config.resolve()
     assert config.read_text() == "existing user config\n"
     assert not list(config.parent.glob(".config-*"))
+
+
+def test_starter_config_declares_only_presets_and_resolves_neutral_coding(tmp_path):
+    config = tmp_path / "config.toml"
+    initialize_service_config(config, model="provider/model-id")
+    published = config.read_text()
+    document = tomllib.loads(published)
+
+    assert document["agents"] == {
+        "coding": {"preset": "coding", "subagents": ["explorer", "builder"]},
+        "explorer": {"preset": "explorer"},
+        "builder": {"preset": "builder"},
+    }
+
+    manifest = load_service_manifest(config)
+    coding = manifest.coding_catalog.agents["coding"]
+    assert coding.preset == "coding"
+    assert coding.description is None and coding.instructions is None
+    assert coding.permissions == ("read", "write", "execute")
+    # A neutral root keeps the generic workspace selection for any model family.
+    assert coding.tools_active == ("bash", "read", "edit", "write", "delete")
+    assert coding.subagents == ("explorer", "builder")
+    assert manifest.coding_catalog.agents["explorer"].preset == "explorer"
+    assert manifest.coding_catalog.agents["builder"].preset == "builder"
+    # Resolved tool selections are never written back to the file.
+    assert config.read_text() == published
 
 
 def test_initialize_config_can_set_default_model_and_preserves_existing_file(tmp_path):
@@ -329,7 +393,7 @@ def test_runner_rejects_expanded_tool_overlap_before_opening_store(
     path.write_text(
         "[defaults]\nagent='worker'\nmodel='openai-codex/gpt-6-luna'\n"
         "agent_dir='agent-state'\n"
-        "[agents.worker]\nharness='coding'\n"
+        "[agents.worker]\npreset='coding'\n"
         "[agents.worker.tools]\nactive=['workspace']\ndeferred=['bash']\n"
     )
 
@@ -613,7 +677,7 @@ def test_manifest_rejects_invalid_or_obsolete_permissions(tmp_path, option):
     path = tmp_path / "config.toml"
     path.write_text(
         "[defaults]\nagent='coding'\nmodel='provider/model-id'\n"
-        f"[agents.coding]\nharness='coding'\n{option}\n"
+        f"[agents.coding]\npreset='coding'\n{option}\n"
     )
     with pytest.raises(ValueError):
         load_service_manifest(path)
@@ -624,7 +688,62 @@ def test_manifest_distinguishes_default_and_empty_permissions(tmp_path, option):
     path = tmp_path / "config.toml"
     path.write_text(
         "[defaults]\nagent='coding'\nmodel='provider/model-id'\n"
-        f"[agents.coding]\nharness='coding'\n{option}\n"
+        f"[agents.coding]\npreset='coding'\n{option}\n"
     )
     options = load_service_manifest(path).coding_catalog.agents["coding"]
     assert options.permissions == (() if option else ("read", "write", "execute"))
+
+
+@pytest.mark.parametrize(
+    "tools, expected_active, expected_deferred",
+    [
+        # Explicit empty lists override the preset defaults instead of
+        # inheriting them.
+        ("active=[]\ndeferred=[]\n", (), ()),
+        # A partial table overrides only the list it names and leaves the other
+        # list following the preset.
+        (
+            "deferred=['web_fetch']\n",
+            ("bash", "read", "edit", "write", "delete"),
+            ("web_fetch",),
+        ),
+        ("active=['read']\n", ("read",), ()),
+    ],
+)
+def test_manifest_preserves_explicit_tool_overrides_without_write_back(
+    tmp_path, tools, expected_active, expected_deferred
+):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[defaults]\nagent='worker'\nmodel='provider/model-id'\n"
+        "[agents.worker]\npreset='coding'\n"
+        f"[agents.worker.tools]\n{tools}"
+    )
+    original = path.read_text()
+
+    options = load_service_manifest(path).coding_catalog.agents["worker"]
+
+    assert options.tools_active == expected_active
+    assert options.tools_deferred == expected_deferred
+    # Neither preset defaults nor resolved selections are written back.
+    assert path.read_text() == original
+
+
+def test_manifest_keeps_preset_tool_defaults_out_of_the_file(tmp_path):
+    path = tmp_path / "config.toml"
+    path.write_text(
+        "[defaults]\nagent='explorer'\nmodel='openai-codex/gpt-6-luna'\n"
+        "[agents.explorer]\npreset='explorer'\n"
+    )
+
+    options = load_service_manifest(path).coding_catalog.agents["explorer"]
+
+    assert options.tools_active == (
+        "read",
+        "ls",
+        "glob",
+        "grep",
+        "web_fetch",
+        "web_search",
+    )
+    assert "tools" not in path.read_text()
