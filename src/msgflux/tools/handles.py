@@ -85,10 +85,37 @@ class ToolLibraryHandle:
         policy = get_tool_filter_policy(self._library)
         return policy is None or policy.allows(tool_name)
 
-    def get_agent_inbox(self) -> AgentInbox:
-        if self._agent_inbox is not None:
-            return self._agent_inbox
-        return self._library.get_agent_inbox()
+    def get_agent_inbox(
+        self, *, thread_id: str | None = None, run_id: str | None = None
+    ) -> AgentInbox:
+        """Return this library's inbox, optionally addressed to a specific run.
+
+        Scoped lookups reuse the effective execution store, including managed
+        persistence. A handle-bound inbox takes precedence over ambient storage.
+        """
+        scoped = thread_id is not None or run_id is not None
+        if scoped and not all(
+            isinstance(value, str) and value.strip() for value in (thread_id, run_id)
+        ):
+            raise ValueError("Scoped inbox lookup requires thread_id and run_id")
+        target = (
+            self._agent_inbox
+            if self._agent_inbox is not None
+            else self._library.get_agent_inbox()
+        )
+        if not scoped:
+            return target
+        storage = self._agent_inbox
+        if storage is None:
+            storage = get_execution_context().get("agent_inbox")
+        if storage is None:
+            storage = target
+        return storage.fork(
+            owner=target.owner,
+            namespace=target.namespace,
+            thread_id=thread_id,
+            run_id=run_id,
+        )
 
     def get_task_store(self) -> Any:
         return self._library.get_task_store(self._task_store)
