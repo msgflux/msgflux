@@ -37,11 +37,11 @@ reproducible. Only the model calls require network access.
 
 ## 1. Configure Responses And Durable Stores
 
-Install the OpenAI extra, put `OPENAI_API_KEY` in `.env`, and create one model
+Install msgflux, put `OPENAI_API_KEY` in `.env`, and create one model
 plus the three storage boundaries used by the workflow:
 
 ```python
-# pip install "msgflux[openai]"
+# pip install msgflux
 import time
 
 import msgflux as mf
