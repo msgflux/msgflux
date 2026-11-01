@@ -93,6 +93,8 @@ coding = [
     "regex>=2024.11.6",
 ]
 service = [
+    # The zstd extra keeps the client and server codec available together.
+    "httpx2[zstd]>=2.16.0",
     "litestar[opentelemetry]>=2.24,<3",
     "tomlkit>=0.15.2",
     "uvicorn>=0.35,<1",

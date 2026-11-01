@@ -104,7 +104,8 @@ async def test_running_inspection_does_not_reread_edited_manifest(tmp_path, caps
         await _inspect_service(args)
         output = capsys.readouterr().out
         assert json.loads(output)["http"] == {
-            "cors_allow_origins": ["https://original.example"]
+            "cors_allow_origins": ["https://original.example"],
+            "compression": True,
         }
         assert record.token not in output
         args.json = False
@@ -129,7 +130,10 @@ async def test_running_inspection_does_not_reread_edited_manifest(tmp_path, caps
         output = capsys.readouterr().out
         result = json.loads(output)
         assert result["service"]["instance_id"] == replacement.instance_id
-        assert result["http"] == {"cors_allow_origins": ["https://edited.example"]}
+        assert result["http"] == {
+            "cors_allow_origins": ["https://edited.example"],
+            "compression": True,
+        }
         assert replacement.token not in output
         args.json = False
         await _inspect_service(args)

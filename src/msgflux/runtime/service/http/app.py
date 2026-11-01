@@ -21,6 +21,7 @@ from msgflux.runtime.approvals import ApprovalConflictError
 from msgflux.runtime.event_buffer import validate_event_buffer_limit
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.runtime.service.api import AgentService
+from msgflux.runtime.service.http.compression import service_compression_config
 from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.http.records import (
     ActiveRunsResponse,
@@ -412,6 +413,7 @@ def create_service_app(  # noqa: C901
 
     return Litestar(
         route_handlers=route_handlers,
+        compression_config=service_compression_config(enabled=http_config.compression),
         cors_config=(
             CORSConfig(
                 allow_origins=list(http_config.cors_allow_origins),

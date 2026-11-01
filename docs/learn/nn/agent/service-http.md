@@ -691,6 +691,41 @@ async with httpx2.AsyncClient(proxy="http://proxy.internal:3128") as http:
 Use the same injection point with `verify=` when a service requires a private CA.
 Model provider HTTP settings are independent of this service client.
 
+## Response Compression
+
+Response compression is enabled by default and negotiated with each client.
+To disable it on an embedded server, set its HTTP policy explicitly:
+
+```python
+from msgflux.runtime.service.http import ServiceHTTPConfig, create_service_app
+
+app = create_service_app(
+    service,
+    token=token,
+    http_config=ServiceHTTPConfig(compression=False),
+)
+```
+
+With the default policy, compression is used for clients that accept a supported
+encoding. The server can use zstd, gzip, or an uncompressed response according to the client's
+`Accept-Encoding` preferences. If the client forbids every available encoding,
+including identity, the server returns HTTP 406. Small complete responses stay
+uncompressed when identity is acceptable. Authentication rejects invalid tokens
+before compression negotiation. Installing `msgflux[service]` supplies the zstd
+codec for the supported Python versions. A client using only the core package
+can install `httpx2[zstd]>=2.16.0` to enable that decoder; httpx2 advertises its
+available decoders automatically.
+
+Compression uses the normal `Content-Encoding` and `Vary: Accept-Encoding`
+headers. SSE output is compressed incrementally and flushed as chunks are sent,
+so clients can receive the snapshot and progress while the Agent is still
+running. Closing an observer still only detaches that observer.
+
+Compression reduces transferred bytes. It does not reduce the expanded event
+size counted by `max_event_size`, paginate history, or change the typed JSON
+records. A large initial snapshot therefore still needs an appropriate event
+limit even when its compressed representation is small.
+
 ## Inspect The Loaded HTTP Policy
 
 `GET /v1/service/inspection` returns an authenticated snapshot of the running
