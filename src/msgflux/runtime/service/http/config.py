@@ -6,11 +6,14 @@ import msgspec
 
 
 class ServiceHTTPConfig(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    """Allow explicit browser origins or a standalone wildcard; empty disables CORS."""
+    """Browser-origin and optional negotiated response-compression policy."""
 
     cors_allow_origins: tuple[str, ...] = ()
+    compression: bool = True
 
     def __post_init__(self) -> None:
+        if not isinstance(self.compression, bool):
+            raise TypeError("compression must be a bool")
         if "*" in self.cors_allow_origins:
             if len(self.cors_allow_origins) != 1:
                 raise ValueError("The CORS wildcard must be the only allowed origin")

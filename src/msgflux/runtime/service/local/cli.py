@@ -317,6 +317,8 @@ async def _inspect_service(args) -> None:
         )
         origins = result["http"].cors_allow_origins
         sys.stdout.write(f"CORS: {', '.join(origins) if origins else 'disabled'}\n")
+        compression = "negotiated" if result["http"].compression else "disabled"
+        sys.stdout.write(f"Compression: {compression}\n")
 
 
 async def _run_operation(args) -> None:

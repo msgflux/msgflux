@@ -207,6 +207,27 @@ the running daemon. Editing the file does not change that running snapshot.
 See [Browser Clients And CORS](service-http.md#browser-clients-and-cors) for
 embedded configuration and streaming browser clients.
 
+### Response Compression
+
+Negotiated response compression is enabled by default. To disable it, use the
+existing HTTP table:
+
+```toml
+[http]
+compression = false
+```
+
+The default is `true`. Clients advertise the encodings they support; the
+service can select zstd, gzip, or an uncompressed response. The service extra
+includes the zstd codec. Compression is incremental for live SSE observations
+and does not change the snapshot or event schemas.
+
+Validate the file and restart the daemon to apply this policy. `msgflux service
+inspect --json` reports the loaded `http.compression` value, and the text view
+shows whether compression is negotiated or disabled. CORS origin edits preserve
+this setting. See [response compression](service-http.md#response-compression)
+for embedded servers, codec negotiation, and event-size limits.
+
 ### Builtin And Custom Subagents
 
 Every agent entry declares exactly one of `preset` or `factory`. A preset

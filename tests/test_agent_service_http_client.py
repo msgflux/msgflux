@@ -505,27 +505,21 @@ async def test_watch_close_with_inflight_read(closed_event_parsers, cancel_reade
 
 
 @pytest.mark.asyncio
-async def test_watch_exit_closes_owned_line_iterator(monkeypatch):
-    from contextlib import aclosing
-
+async def test_watch_exit_closes_owned_response_stream():
     closed = []
-    original_lines = httpx2.Response.aiter_lines
 
-    async def tracked_lines(response):
-        try:
-            async with aclosing(original_lines(response)) as lines:
-                async for line in lines:
-                    yield line
-        finally:
-            closed.append("lines")
+    class WatchBody(httpx2.AsyncByteStream):
+        async def __aiter__(self):
+            yield b'event: snapshot\ndata: {"thread_id":"t"}\n\n'
 
-    monkeypatch.setattr(httpx2.Response, "aiter_lines", tracked_lines)
+        async def aclose(self):
+            closed.append("body")
 
     async def handler(request):
         return httpx2.Response(
             200,
             headers={"content-type": "text/event-stream"},
-            content='event: snapshot\ndata: {"thread_id":"t"}\n\n',
+            stream=WatchBody(),
             request=request,
         )
 
@@ -533,4 +527,5 @@ async def test_watch_exit_closes_owned_line_iterator(monkeypatch):
         client = AgentServiceClient("http://service", token="secret", client=http)
         async with client.watch("t"):
             assert closed == []
-        assert closed == ["lines"]
+        assert closed == ["body"]
+        assert not http.is_closed

@@ -404,6 +404,33 @@ observer, and leaves the Agent running. The client raises `AgentServiceHTTPError
 open another watcher to obtain a fresh snapshot. There are no heartbeat frames or
 automatic reconnect loops in this increment.
 
+### SSE Event Size
+
+`AgentServiceClient` uses the native httpx2 SSE decoder and keeps the service's
+snapshot-first observation contract. Set `max_event_size` to bound each decoded
+SSE event:
+
+```python
+client = AgentServiceClient(
+    "http://127.0.0.1:8765",
+    token=token,
+    max_event_size=8 * 1024 * 1024,
+)
+```
+
+This example allows events up to 8 MiB. The default is `None`, preserving support
+for large initial snapshots without silently imposing httpx2's 1 MiB default.
+An explicit limit must be a positive integer. It applies to individual events,
+including the initial snapshot, after HTTP decompression. It does not limit the
+total bytes sent over a long-lived connection.
+
+An oversized or malformed SSE stream raises `AgentServiceProtocolError`.
+The observation closes without interrupting the Agent. The caller decides
+whether to reconnect with a different limit; reconnection still starts from a
+fresh snapshot. Incomplete frames at connection termination are not accepted as
+complete events. JSON records continue to be decoded into the service's typed
+records with `msgspec`.
+
 ## Retrieve A Recorded Answer
 
 ```python
@@ -663,6 +690,41 @@ async with httpx2.AsyncClient(proxy="http://proxy.internal:3128") as http:
 
 Use the same injection point with `verify=` when a service requires a private CA.
 Model provider HTTP settings are independent of this service client.
+
+## Response Compression
+
+Response compression is enabled by default and negotiated with each client.
+To disable it on an embedded server, set its HTTP policy explicitly:
+
+```python
+from msgflux.runtime.service.http import ServiceHTTPConfig, create_service_app
+
+app = create_service_app(
+    service,
+    token=token,
+    http_config=ServiceHTTPConfig(compression=False),
+)
+```
+
+With the default policy, compression is used for clients that accept a supported
+encoding. The server can use zstd, gzip, or an uncompressed response according to the client's
+`Accept-Encoding` preferences. If the client forbids every available encoding,
+including identity, the server returns HTTP 406. Small complete responses stay
+uncompressed when identity is acceptable. Authentication rejects invalid tokens
+before compression negotiation. Installing `msgflux[service]` supplies the zstd
+codec for the supported Python versions. A client using only the core package
+can install `httpx2[zstd]>=2.16.0` to enable that decoder; httpx2 advertises its
+available decoders automatically.
+
+Compression uses the normal `Content-Encoding` and `Vary: Accept-Encoding`
+headers. SSE output is compressed incrementally and flushed as chunks are sent,
+so clients can receive the snapshot and progress while the Agent is still
+running. Closing an observer still only detaches that observer.
+
+Compression reduces transferred bytes. It does not reduce the expanded event
+size counted by `max_event_size`, paginate history, or change the typed JSON
+records. A large initial snapshot therefore still needs an appropriate event
+limit even when its compressed representation is small.
 
 ## Inspect The Loaded HTTP Policy
 

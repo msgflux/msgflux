@@ -64,7 +64,9 @@ def _agent(
 
 
 @asynccontextmanager
-async def _server(factory, *, journal_path=":memory:", event_buffer_limit=1024):
+async def _server(
+    factory, *, journal_path=":memory:", event_buffer_limit=1024, http_config=None
+):
     journal = SQLiteServiceStore(journal_path)
     service = AgentService(store=journal)
     service.register("main", factory)
@@ -74,7 +76,12 @@ async def _server(factory, *, journal_path=":memory:", event_buffer_limit=1024):
     listener.setblocking(False)
     port = listener.getsockname()[1]
     config = uvicorn.Config(
-        create_service_app(service, token=TOKEN, event_buffer_limit=event_buffer_limit),
+        create_service_app(
+            service,
+            token=TOKEN,
+            http_config=http_config,
+            event_buffer_limit=event_buffer_limit,
+        ),
         host="127.0.0.1",
         port=port,
         log_level="error",
