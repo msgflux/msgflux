@@ -163,6 +163,10 @@ class AgentServiceClient:
     proxy environment variables, so service bearer credentials are only sent to
     ``base_url``. An injected client is borrowed, keeps its caller configuration
     (including an explicit proxy), and remains open after :meth:`aclose`.
+
+    ``max_event_size`` bounds a single server-sent event, in bytes, for
+    :meth:`watch` streams. ``None`` (the default) keeps events unbounded so
+    large initial snapshots are never rejected by the native 1 MiB default.
     """
 
     def __init__(
@@ -172,10 +176,21 @@ class AgentServiceClient:
         token: str,
         client: httpx2.AsyncClient | None = None,
         timeout: float = 30.0,
+        max_event_size: int | None = None,
     ) -> None:
         if not isinstance(token, str) or not token:
             raise ValueError("token must be a non-empty string")
+        if max_event_size is not None and (
+            isinstance(max_event_size, bool) or not isinstance(max_event_size, int)
+        ):
+            raise TypeError("max_event_size must be a positive int or None")
+        if max_event_size is not None and max_event_size <= 0:
+            raise ValueError("max_event_size must be a positive int or None")
         self.base_url = base_url.rstrip("/")
+        # ``None`` keeps watch streams unbounded: service snapshots are
+        # legitimately large, so the native 1 MiB default must not apply
+        # unless the caller opts into a limit.
+        self._max_event_size = max_event_size
         self._owns_client = client is None
         self._authorization = f"Bearer {token}"
         self._client = client or httpx2.AsyncClient(
@@ -441,52 +456,51 @@ class AgentServiceClient:
         fresh snapshot and does not replay missed deltas.
         """
         path = self._thread_path(thread_id) + "/watch"
-        request = self._client.build_request(
-            "GET",
+        async with self._client.sse(
             self.base_url + path,
             headers={
                 "Accept": "text/event-stream",
                 "Authorization": self._authorization,
             },
             timeout=httpx2.Timeout(connect=10.0, read=None, write=10.0, pool=10.0),
-        )
-        response = await self._client.send(request, stream=True)
-        events = None
-        try:
+            # ``None`` keeps genuinely large snapshots readable; an explicit
+            # caller limit is enforced by the native event decoder.
+            max_event_size=self._max_event_size,
+        ) as source:
+            response = source.response
             await self._raise_for_response(response)
-            if "text/event-stream" not in response.headers.get("content-type", ""):
-                raise AgentServiceProtocolError("Watch response is not an SSE stream")
-            events = _sse_events(response.aiter_lines())
+            events = _sse_events(source)
             try:
-                name, data = await anext(events)
-            except StopAsyncIteration as exc:
-                raise AgentServiceProtocolError(
-                    "Watch stream ended before its snapshot"
-                ) from exc
-            if name == "error":
-                _raise_sse_error(data)
-            if name != "snapshot":
-                raise AgentServiceProtocolError(
-                    "Watch stream did not begin with a snapshot"
-                )
-            try:
-                snapshot = msgspec.json.decode(data, type=SnapshotRecord)
-            except (msgspec.DecodeError, TypeError, ValueError) as exc:
-                raise AgentServiceProtocolError(
-                    "Invalid initial snapshot in SSE stream"
-                ) from exc
-            watcher = RemoteThreadWatcher(response, snapshot, events)
-            try:
-                yield watcher
-            finally:
-                await watcher.aclose()
-        except BaseException:
-            try:
-                await response.aclose()
-            finally:
-                if events is not None and not events.ag_running:
+                try:
+                    name, data = await anext(events)
+                except StopAsyncIteration as exc:
+                    raise AgentServiceProtocolError(
+                        "Watch stream ended before its snapshot"
+                    ) from exc
+                if name == "error":
+                    _raise_sse_error(data)
+                if name != "snapshot":
+                    raise AgentServiceProtocolError(
+                        "Watch stream did not begin with a snapshot"
+                    )
+                try:
+                    snapshot = msgspec.json.decode(data, type=SnapshotRecord)
+                except (msgspec.DecodeError, TypeError, ValueError) as exc:
+                    raise AgentServiceProtocolError(
+                        "Invalid initial snapshot in SSE stream"
+                    ) from exc
+                watcher = RemoteThreadWatcher(response, snapshot, events)
+                try:
+                    yield watcher
+                finally:
+                    await watcher.aclose()
+            except BaseException:
+                # An in-flight read owns the generator until __anext__ returns;
+                # closing it concurrently raises. The native SSE context still
+                # closes the response, which unblocks that pending read.
+                if not events.ag_running:
                     await events.aclose()
-            raise
+                raise
 
     async def _json(self, method: str, path: str, result_type, body=None):
         payload = msgspec.to_builtins(body) if body is not None else None
@@ -531,25 +545,23 @@ def _error_payload(response: httpx2.Response) -> ErrorResponse:
         return ErrorResponse("http_error", "AgentService request failed")
 
 
-async def _sse_events(lines):
-    async with aclosing(lines):
-        event_name = "message"
-        data: list[str] = []
-        async for raw in lines:
-            line = raw.rstrip("\r")
-            if not line:
-                if data:
-                    yield event_name, "\n".join(data)
-                event_name, data = "message", []
-                continue
-            if line.startswith(":"):
-                continue
-            field, separator, value = line.partition(":")
-            if separator and value.startswith(" "):
-                value = value[1:]
-            if field == "event":
-                event_name = value
-            elif field == "data":
-                data.append(value)
-        if data:
-            yield event_name, "\n".join(data)
+async def _sse_events(source: httpx2.EventSource):
+    """Adapt native httpx2 SSE events to ``(event, data)`` tuples.
+
+    Event framing, content-type validation, CRLF handling, and the size limit
+    stay in :class:`httpx2.EventSource`; this adapter only exposes the tuple
+    shape the watcher consumes and owns closing the native iteration, so watch
+    teardown and cancellation release the connection deterministically.
+
+    Native :class:`httpx2.SSEError` failures (non-SSE media type, oversized
+    event, undecodable body) are wire-protocol failures for this client.
+    """
+    native = aiter(source)
+    try:
+        async with aclosing(native):
+            async for sse in native:
+                yield sse.event, sse.data
+    except (httpx2.SSEError, httpx2.DecodingError) as exc:
+        raise AgentServiceProtocolError(
+            f"Invalid SSE stream from AgentService: {exc}"
+        ) from exc

@@ -404,6 +404,33 @@ observer, and leaves the Agent running. The client raises `AgentServiceHTTPError
 open another watcher to obtain a fresh snapshot. There are no heartbeat frames or
 automatic reconnect loops in this increment.
 
+### SSE Event Size
+
+`AgentServiceClient` uses the native httpx2 SSE decoder and keeps the service's
+snapshot-first observation contract. Set `max_event_size` to bound each decoded
+SSE event:
+
+```python
+client = AgentServiceClient(
+    "http://127.0.0.1:8765",
+    token=token,
+    max_event_size=8 * 1024 * 1024,
+)
+```
+
+This example allows events up to 8 MiB. The default is `None`, preserving support
+for large initial snapshots without silently imposing httpx2's 1 MiB default.
+An explicit limit must be a positive integer. It applies to individual events,
+including the initial snapshot, after HTTP decompression. It does not limit the
+total bytes sent over a long-lived connection.
+
+An oversized or malformed SSE stream raises `AgentServiceProtocolError`.
+The observation closes without interrupting the Agent. The caller decides
+whether to reconnect with a different limit; reconnection still starts from a
+fresh snapshot. Incomplete frames at connection termination are not accepted as
+complete events. JSON records continue to be decoded into the service's typed
+records with `msgspec`.
+
 ## Retrieve A Recorded Answer
 
 ```python
