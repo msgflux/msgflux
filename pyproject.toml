@@ -84,7 +84,6 @@ Documentation = "https://github.com/msgflux/msgflux"
 Repository = "https://github.com/msgflux/msgflux"
 
 [project.optional-dependencies]
-openai = []
 plot = [
     "code2mermaid>=0.3.0",
     "mermaid-py>=0.8.0",
