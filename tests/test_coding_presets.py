@@ -3,6 +3,7 @@ from pathlib import Path
 import pytest
 
 from msgflux.coding.config import coding_agent_options
+from msgflux.coding.presets import get_coding_preset
 from msgflux.runtime.service.local.manifest import load_service_manifest
 
 _CODING_DEFAULTS = """[defaults]
@@ -26,6 +27,7 @@ def test_coding_preset_is_neutral_and_keeps_generic_defaults(tmp_path):
     assert coding.preset == "coding"
     # A neutral preset adds no role instructions or description.
     assert coding.description is None and coding.instructions is None
+    assert get_coding_preset("coding").usage_guidance == ""
     assert coding.permissions == ("read", "write", "execute")
     assert coding.tools_active == ("bash", "read", "edit", "write", "delete")
     assert coding.tools_deferred == ()
@@ -57,6 +59,9 @@ preset = "explorer"
         "web_search",
     )
     assert "trace dependencies" in explorer.description
+    assert get_coding_preset("explorer").usage_guidance.startswith(
+        "Delegate repository searches"
+    )
     assert explorer.tools_deferred == ()
     assert explorer.preset == "explorer"
     customized = coding_agent_options(
@@ -197,6 +202,9 @@ def test_builder_defaults_keep_native_editing_without_redundant_search(model, to
         "grep",
     }
     assert "effective workspace permissions" in builder.instructions
+    assert get_coding_preset("builder").usage_guidance.startswith(
+        "Delegate focused implementation"
+    )
 
 
 def test_explicit_builder_tools_and_permissions_replace_preset_defaults():

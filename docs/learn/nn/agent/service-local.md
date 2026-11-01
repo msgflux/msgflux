@@ -236,12 +236,15 @@ preset = "builder"
 | `explorer` | `read` | Read, Ls, Glob, Grep, WebFetch and WebSearch (all active). |
 | `builder` | `read`, `write`, `execute` | Bash, Read and the model's editing tools. |
 
-The parent receives delegation guidance using the actual configured child IDs.
-It sends repository exploration and web research to the Explorer and consumes
-its concise findings instead of raw search output. Independent implementation
-work can go to the Builder. The Builder uses Bash for focused local searches;
-its defaults contain no web tools or separate Ls/Glob/Grep tools. Both presets
-remain subject to the caller's effective permissions.
+Role presets attach standard `usage_guidance` to each configured child.
+`AgentTool` aggregates it using the actual child IDs and the normal
+`tool_usage_guidance` mechanism renders it for the model. The parent's custom
+base prompt is preserved. The parent sends repository exploration and web
+research to the Explorer and consumes its concise findings instead of raw search
+output. Independent implementation work can go to the Builder. The Builder uses
+Bash for focused local searches; its defaults contain no web tools or separate
+Ls/Glob/Grep tools. Both presets remain subject to the caller's effective
+permissions.
 
 WebSearch defaults to Firecrawl Keyless and needs no engine setting or key.
 Set `MSGFLUX_TOOL_WEB_SEARCH_ENGINE` to override it. WebFetch defaults to
