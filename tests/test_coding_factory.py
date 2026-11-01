@@ -128,6 +128,11 @@ def test_factory_builds_named_child_agents_lazily_and_closes_models(
         entry.name for entry in session.agent.tool_library.get_bucket_entries("agent")
     ] == ["lite-coding"]
     assert agent_tool.name == "agent"
+    assert "send_parent_message" not in session.agent.tool_library.get_tool_names()
+    child_agent = session.agent.tool_library.get_tool_definition(
+        "lite-coding"
+    ).executor.impl
+    assert "send_parent_message" in child_agent.tool_library.get_tool_names()
     assert (
         session.agent.tool_library.get_tool_definition("bash").loading.deferred is False
     )

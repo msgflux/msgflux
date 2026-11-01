@@ -36,12 +36,14 @@ from msgflux.tools.builtin import (
     DeleteTool,
     EditTool,
     ReadFileTool,
+    SendParentMessageTool,
     SendUserMessageTool,
     WebFetchTool,
     WebSearchTool,
     WriteTool,
 )
 from msgflux.tools.builtin.workspace_query import GlobTool, GrepTool, LsTool
+from msgflux.tools.handles import ToolLibraryHandle
 
 _TOOL_FACTORIES: dict[str, Callable[[], Any]] = {
     "bash": BashTool,
@@ -266,6 +268,7 @@ class _CodingSessionBuilder:
         models: list[Any],
         tool_resources: list[Any],
         ancestors: frozenset[str] = frozenset(),
+        parent: ToolLibraryHandle | None = None,
         interactive: bool = False,
     ) -> Agent:
         if selected.agent_id in ancestors:
@@ -290,29 +293,23 @@ class _CodingSessionBuilder:
             else _create_model(selected)
         )
         models.append(model)
-        children = self._build_children(
-            selected,
-            workspace=workspace,
-            working_directory=working_directory,
-            models=models,
-            tool_resources=tool_resources,
-            ancestors=ancestors | {selected.agent_id},
-        )
         tools = _tool_instances(
             active,
             deferred,
             owned_resources=tool_resources,
             supports_vision=_model_supports_vision(model),
         )
+        if parent is not None:
+            tools.append(SendParentMessageTool(parent))
         if interactive and not _model_has_native_commentary(model):
             tools.append(SendUserMessageTool())
-        if children:
+        if selected.subagents:
             dispatcher = AgentTool()
             dispatcher.tool_config = {
                 **dispatcher.tool_config,
                 "allow_background": True,
             }
-            tools = [dispatcher, *children, *tools]
+            tools = [dispatcher, *tools]
         agent = Agent(
             name=name,
             description=selected.description,
@@ -334,6 +331,16 @@ class _CodingSessionBuilder:
             if selected.agent_id == self.options.agent_id
             else None,
         )
+        for child in self._build_children(
+            selected,
+            workspace=workspace,
+            working_directory=working_directory,
+            models=models,
+            tool_resources=tool_resources,
+            ancestors=ancestors | {selected.agent_id},
+            parent=agent.tool_library.get_handle(),
+        ):
+            agent.tool_library.add(child)
         agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
         if selected.extensions:
             installation = AgentExtensionInstallation(self.extension_catalog, agent)
@@ -363,6 +370,7 @@ class _CodingSessionBuilder:
         models: list[Any],
         tool_resources: list[Any],
         ancestors: frozenset[str],
+        parent: ToolLibraryHandle,
     ) -> list[Agent]:
         children = []
         for child_id in selected.subagents:
@@ -381,6 +389,7 @@ class _CodingSessionBuilder:
                     models=models,
                     tool_resources=tool_resources,
                     ancestors=ancestors,
+                    parent=parent,
                 )
             )
         return children

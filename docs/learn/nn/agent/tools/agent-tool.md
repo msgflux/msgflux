@@ -206,6 +206,21 @@ library. Deferred activation is different: an agent marked
 recorded in that thread's `ChatMessages`. Because that agent does not match
 `AgentTool.capture`, it appears as its own callable after loading.
 
+## Messages to the Parent
+
+A subagent can report intermediate findings through
+[`SendParentMessageTool`](builtin.md#send-a-message-to-the-parent). Include an
+instance in the child's `tools=`, supplying the parent library handle:
+
+```python
+child_tools = [SendParentMessageTool(parent.tool_library.get_handle())]
+```
+
+The coding factory adds this tool when composing its subagents. `AgentTool`
+captures and dispatches the resulting Agent normally; it does not inject tools
+or change their visibility. The parent receives a notice identified by the
+child name and run or task id, alongside the delegation's ordinary final result.
+
 ## Dynamic Agent Registration
 
 A tool can request `runtime_inputs=["handle"]` to register agents while the coordinator is
