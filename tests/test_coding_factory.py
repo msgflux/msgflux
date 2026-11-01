@@ -826,9 +826,17 @@ async def test_builtin_roles_delegate_with_custom_ids_and_keep_raw_research_loca
     explorer = main.tool_library.get_tool_definition("scout").executor.impl
     builder = main.tool_library.get_tool_definition("worker").executor.impl
     assert "CUSTOM PARENT INSTRUCTIONS" in main.system_prompt.data
-    assert "scout: Delegate repository searches" in main.system_prompt.data
-    assert "worker: Delegate focused implementation" in main.system_prompt.data
-    assert "explorer:" not in main.system_prompt.data
+    guidance = main.tool_library.get_tool_usage_guidance()
+    agent_guidance = next(
+        item["guidance"] for item in guidance if item["name"] == "agent"
+    )
+    assert [item["name"] for item in guidance].count("agent") == 1
+    assert "scout: Delegate repository searches" in agent_guidance
+    assert "worker: Delegate focused implementation" in agent_guidance
+    assert "explorer:" not in agent_guidance
+    # Guidance is delivered once, through the tool channel, not the prompt.
+    assert "Delegate repository searches" not in main.system_prompt.data
+    assert "Delegate focused implementation" not in main.system_prompt.data
     assert {
         "read",
         "ls",
@@ -895,6 +903,13 @@ async def test_builtin_roles_delegate_with_custom_ids_and_keep_raw_research_loca
         )
         result = await service.wait(thread.thread_id, receipt.request_id)
         assert result.status == "completed", result.error
+        rendered_prompt = main.generator.aforward.call_args_list[0].kwargs[
+            "system_prompt"
+        ]
+        assert "CUSTOM PARENT INSTRUCTIONS" in rendered_prompt
+        assert "<tool_usage_guidance>" in rendered_prompt
+        assert rendered_prompt.count("scout: Delegate repository searches") == 1
+        assert rendered_prompt.count("worker: Delegate focused implementation") == 1
         assert (tmp_path / "built.txt").read_text() == "builder result"
         assert not (tmp_path / "forbidden.txt").exists()
         state = session.checkpoint_store.load_latest_run("coding", thread.thread_id)
@@ -934,5 +949,52 @@ async def test_builder_preset_cannot_expand_read_only_parent_permissions(
         assert "Process execution is unavailable." in child.system_prompt.data
         with pytest.raises(PermissionError):
             child.workspace.write_text("forbidden.txt", "no")
+    finally:
+        await session.on_close()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("explicit", ["unset", "", "Custom usage guidance"])
+async def test_preset_guidance_preserves_declared_tool_config(
+    tmp_path, monkeypatch, explicit
+):
+    import msgflux.coding.factory as factory_module
+    from msgflux.coding.config import coding_agent_options
+    from msgflux.coding.presets import get_coding_preset
+
+    declared = {"display_name": "Custom role"}
+    if explicit != "unset":
+        declared["usage_guidance"] = explicit
+    original = dict(declared)
+
+    agent_type = factory_module.Agent
+
+    def configured_agent(*args, **kwargs):
+        agent = agent_type(*args, **kwargs)
+        agent.tool_config = declared
+        return agent
+
+    monkeypatch.setattr(factory_module, "Agent", configured_agent)
+    monkeypatch.setattr(factory_module, "_create_model", lambda _options: _FakeModel())
+    options = coding_agent_options(
+        "scout", "openai/example", preset="explorer", active=()
+    )
+    session = await create_coding_session_factory(
+        options=options,
+        catalog=CodingAgentCatalog({"scout": options}),
+        config_path=tmp_path / "config.toml",
+        runtime_dir=tmp_path / "runtime",
+        agent_dir=tmp_path / "state",
+    )(ServiceThread("guidance-thread", "scout", str(tmp_path)))
+    try:
+        expected = (
+            get_coding_preset("explorer").usage_guidance
+            if explicit == "unset"
+            else explicit
+        )
+        assert session.agent.tool_config["usage_guidance"] == expected
+        assert session.agent.tool_config["display_name"] == "Custom role"
+        assert declared == original
+        assert session.agent.tool_config is not declared
     finally:
         await session.on_close()

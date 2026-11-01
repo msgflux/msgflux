@@ -15,7 +15,7 @@ class CodingPreset(msgspec.Struct, frozen=True):
 
     description: str | None = None
     instructions: str | None = None
-    delegation_guidance: str = ""
+    usage_guidance: str = ""
     permissions: tuple[str, ...] = ("read", "write", "execute")
     active: tuple[str, ...] = ("workspace",)
     deferred: tuple[str, ...] = ()
@@ -23,7 +23,7 @@ class CodingPreset(msgspec.Struct, frozen=True):
 
 _PRESETS = {
     # Generic coding agent: the same defaults as an unspecified preset, without
-    # extra instructions, description or delegation guidance.
+    # extra instructions, description or usage guidance.
     "coding": CodingPreset(),
     "explorer": CodingPreset(
         description=(
@@ -32,7 +32,7 @@ _PRESETS = {
         ),
         permissions=("read",),
         active=("workspace", "web_fetch", "web_search"),
-        delegation_guidance=(
+        usage_guidance=(
             "Delegate repository searches, dependency tracing, and web research "
             "to this subagent. Give it a focused question and use its concise "
             "report to preserve your context instead of collecting raw search "
@@ -57,7 +57,7 @@ _PRESETS = {
         description=(
             "Implement focused code changes and verify them with local checks."
         ),
-        delegation_guidance=(
+        usage_guidance=(
             "Delegate focused implementation and verification tasks to this "
             "subagent when useful. Supply the requirements, relevant research "
             "findings, and constraints; use its changed-file and validation report."
