@@ -580,6 +580,22 @@ def rebuild_index(index_name: str, handle: mf.Hidden) -> str:
     return "started"
 ```
 
+#### Scoped Inbox Access
+
+`ToolLibraryHandle.get_agent_inbox()` returns the inbox bound to that handle,
+or its library's default inbox. Supply both identifiers to address a particular
+run of the handle's library:
+
+```python
+inbox = handle.get_agent_inbox(thread_id="thread-42", run_id="run-7")
+inbox.message("Review complete", description="Review status", source="reviewer")
+```
+
+The scoped lookup uses the handle-bound inbox store when present, otherwise the
+active execution's store, then the library default. This preserves managed
+persistence while addressing the target library's namespace. It returns a fork;
+it does not rebind the original inbox. Both identifiers must be non-empty.
+
 ### Structured Tool Parameters
 
 Use `msgspec.Struct` when a tool parameter needs a complex object shape. This

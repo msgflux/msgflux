@@ -38,6 +38,51 @@ asyncio.run(main())
 The tool call publishes a progress message before the Agent's final answer;
 `message.delta` continues to represent answer text.
 
+## Send a message to the parent
+
+`SendParentMessageTool` is an ordinary tool added to a subagent's `tools=`.
+Its constructor receives the parent library's `ToolLibraryHandle`; the model
+supplies only `message: str`. Write objective updates with findings, blockers,
+or decisions in 1-3 sentences, without raw logs or private reasoning.
+
+```python
+import msgflux as mf
+from msgflux.nn import Agent
+from msgflux.tools.builtin import AgentTool, SendParentMessageTool
+
+model = mf.Model.chat_completion("opencode-go/deepseek-v4.1-flash")
+parent = Agent(name="coordinator", model=model, tools=[AgentTool()])
+explorer = Agent(
+    name="explorer",
+    model=model,
+    tools=[SendParentMessageTool(parent.tool_library.get_handle())],
+    system_prompt=(
+        "Investigate the delegated question. Report useful findings with "
+        "send_parent_message, then finish with a concise result."
+    ),
+)
+parent.tool_library.add(explorer)
+response = parent("Delegate an investigation to explorer")
+```
+
+This example configures the coordinator first, then supplies its handle when
+constructing the explorer. Adding the explorer to the coordinator's library
+makes it available through `agent(name, message)`. The message tool belongs to
+the explorer's normal tool list, including its schemas and tool filters.
+The coding CLI factory performs this composition automatically for configured
+subagents; it does not add the tool to the root agent.
+
+The parent receives `[explorer:reference] message` with `origin="subagent"`.
+The reference is the child run id for inline delegation, or the stable task id
+for background delegation, including resumed tasks. Nested subagents each
+receive their immediate parent's handle.
+
+The tool resolves the parent run from the execution scope and uses the effective
+inbox storage, including managed persistence. A successful acknowledgement means
+the notice was queued; the parent consumes it at its normal inbox boundaries.
+It does not restart a completed parent. A closed parent inbox rejects the
+message. Calling the tool without a delegated execution raises an error.
+
 ## Workspace tools
 
 `ReadFileTool`, `WriteTool`, `EditTool`, `DeleteTool` and `ApplyPatchTool`
