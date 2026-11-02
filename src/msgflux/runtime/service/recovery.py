@@ -1,5 +1,7 @@
 """Approval recovery guards; worker ownership is established by the host."""
 
+import msgspec
+
 from msgflux.runtime.service.policies import (
     _validate_pending_decisions,
     approval_review_context,
@@ -103,7 +105,16 @@ def _validate_background_work(session, thread_id, run_id):
     if reason is not None:
         raise ServiceRecoveryRequiredError(reason)
     for task in store.list_summaries(thread_id=thread_id, run_id=run_id):
-        if unresolved_command_receipts(task_command_receipts(store, task.task_id)):
+        receipts = task_command_receipts(store, task.task_id)
+        if task.status == "completed":
+            # Task completion durably records the returned tool result. Combine
+            # that output evidence with each command's own terminal evidence;
+            # an unknown or unstarted command remains unresolved regardless.
+            receipts = tuple(
+                msgspec.structs.replace(receipt, tool_output_recorded=True)
+                for receipt in receipts
+            )
+        if unresolved_command_receipts(receipts):
             raise ServiceRecoveryRequiredError(
                 "Background command outcome requires host reconciliation"
             )

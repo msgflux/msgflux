@@ -103,9 +103,18 @@ separate task queue or shared transaction between the store and the OS/daemon.
 
 A crash between intent and launch, launch and identity persistence, or terminal
 completion and receipt commit can leave an unknown outcome. A terminal receipt
-without its conversation tool output also requires reconciliation. Recovery
+without its conversation tool output or a durably completed background-task
+result also requires reconciliation. Recovery
 does not rerun these commands automatically. Partial output is bounded evidence,
 not a complete recovered stream.
+
+The local executor records `terminated` after an interrupted drain only when it
+retains the reaped leader's return code, both output pipes reached EOF and the
+owned process group has no remaining members. Cleanup escalates for descendants
+that close their pipes and ignore SIGTERM. Failure to persist normal completion
+still records an unknown outcome; it cannot be reclassified as a termination.
+Host inspection reports a saved termination with a known exit code as a known
+completed outcome. This evidence does not roll back command effects.
 
 Docker commands with recording use deterministic execution names, ownership
 labels and bounded logs. Host inspection verifies the exact saved container ID

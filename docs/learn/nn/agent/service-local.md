@@ -1235,6 +1235,9 @@ Starting the replacement daemon never dispatches the paused tools by itself.
 Recovery requires both the admission and checkpoint to be paused, a supported
 approval batch that has not entered execution, unchanged tool/permission/preview
 bindings, and no unfinished background work or uncertain command receipts.
+For a completed background task, its durably recorded result supplies output
+evidence for command receipts with a known terminal state. Receipts still in
+`intent`, `launched` or `unknown` continue to block recovery.
 The daemon verifies and locks the old owner's registered lease file before
 conditionally adopting the paused admission. The lock files beside the service
 journal are retained as recovery evidence; keep them with the journal.
