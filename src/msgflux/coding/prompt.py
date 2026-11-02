@@ -11,6 +11,7 @@ from uuid import uuid4
 import httpx2
 import msgspec
 
+from msgflux.coding.config import validate_model_path
 from msgflux.runtime.service.local import connect_local_service
 
 _TERMINAL_EVENTS = {"run.end", "run.error", "run.paused", "run.interrupted"}
@@ -30,6 +31,12 @@ class PromptResult(msgspec.Struct):
     output: str | None = None
     error: str | None = None
     version: int = 1
+    model: str | None = None
+
+
+def _validate_model_override(model: str | None) -> None:
+    if model is not None:
+        validate_model_path(model)
 
 
 class PromptExecution:
@@ -46,6 +53,7 @@ class PromptExecution:
         runtime_dir: Path | None = None,
         cwd: Path | None = None,
         agent_id: str | None = None,
+        model: str | None = None,
         account_name: str | None = None,
         thread_id: str | None = None,
         observer: ObservationCallback | None = None,
@@ -55,6 +63,7 @@ class PromptExecution:
     ) -> PromptResult:
         if detach and observer is not None:
             raise ValueError("Detached prompts cannot observe events")
+        _validate_model_override(model)
         client = await connect_local_service(
             config=config, runtime_dir=runtime_dir, cwd=cwd
         )
@@ -65,9 +74,11 @@ class PromptExecution:
                 thread_id=thread_id,
                 cwd=cwd if thread_id else cwd or Path.cwd(),
                 interactive=False,
+                model=model,
             )
             self.result.thread_id = thread.thread_id
             self.result.agent_id = thread.agent_id
+            self.result.model = getattr(thread, "model", None)
             self.result.request_id = uuid4().hex
             try:
                 # Attach before admitting so short runs cannot outrun observation.

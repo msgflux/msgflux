@@ -72,7 +72,7 @@ from msgflux.telemetry.service import (
     finish_execution_span,
 )
 from msgflux.utils.errors import exception_message
-from msgflux.utils.validation import is_valid_account_name
+from msgflux.utils.validation import is_valid_account_name, validate_model_path
 
 _DEFAULT_CACHE_POLICY = SessionCachePolicy()
 
@@ -352,6 +352,7 @@ class AgentService:
         thread_id: str | None = None,
         cwd: str | Path | None = None,
         interactive: bool | None = None,
+        model: str | None = None,
     ) -> ServiceThread:
         """Bind a conversation and optional absolute workspace root lazily.
 
@@ -367,6 +368,7 @@ class AgentService:
                 validate_identifier(thread_id, "thread_id")
             interactive = msgspec.convert(interactive, type=bool | None, strict=True)
             selected_agent, existing = self._select_thread_agent(agent_id, thread_id)
+            selected_model = self._thread_model(selected_agent, existing, model)
             selected_interactive = (
                 interactive
                 if interactive is not None
@@ -400,8 +402,26 @@ class AgentService:
                     selected_agent,
                     canonical_cwd,
                     selected_interactive,
+                    selected_model,
                 )
             )
+
+    def _thread_model(self, agent_id, existing, model):
+        if model is not None:
+            validate_model_path(model)
+        if existing is not None:
+            if model is not None and model != existing.model:
+                raise ServiceConflictError(
+                    "The model conflicts with the stored thread binding"
+                )
+            return existing.model
+        configuration = self._configurations.get(agent_id)
+        supported = configuration is not None and configuration.supports_model_override
+        if model is not None and not supported:
+            raise ValueError("The registered factory does not support model overrides")
+        return (
+            model if model is not None else configuration.model if supported else None
+        )
 
     def _require_open(self) -> None:
         if self._closed:

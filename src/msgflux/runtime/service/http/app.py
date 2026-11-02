@@ -195,6 +195,7 @@ def create_service_app(  # noqa: C901
             thread_id=data.thread_id,
             cwd=data.cwd,
             interactive=data.interactive,
+            model=data.model,
         )
         return _response(thread, 201)
 

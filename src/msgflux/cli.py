@@ -74,6 +74,11 @@ def _prompt_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--account-name", help="credential bundle; defaults to defaults.account"
     )
+    parser.add_argument(
+        "--model",
+        metavar="PROVIDER/MODEL",
+        help="bind a model to a new thread; defaults to the selected agent's model",
+    )
     parser.add_argument("--thread", help="continue an existing noninteractive thread")
     parser.add_argument("--config", type=Path, help="backend TOML configuration")
     parser.add_argument(
@@ -121,6 +126,17 @@ def _prompt_text(options, parser: argparse.ArgumentParser) -> str:
     return prompt
 
 
+def _prompt_model(model: str | None, parser: argparse.ArgumentParser) -> str | None:
+    if model is not None:
+        from msgflux.coding.config import validate_model_path  # noqa: PLC0415
+
+        try:
+            validate_model_path(model)
+        except ValueError as error:
+            parser.error(str(error))
+    return model
+
+
 def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
     if as_json and streaming:
         write_observation("result", result, as_json=True)
@@ -135,8 +151,8 @@ def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
 def _write_identities(result) -> None:
     identities = " ".join(
         f"{name}={getattr(result, name)}"
-        for name in ("thread_id", "agent_id", "request_id", "run_id")
-        if getattr(result, name) is not None
+        for name in ("thread_id", "agent_id", "model", "request_id", "run_id")
+        if getattr(result, name, None) is not None
     )
     if identities:
         sys.stderr.write(identities + "\n")
@@ -213,6 +229,7 @@ def main(argv: Sequence[str] | None = None) -> None:
     options = parser.parse_args(args)
     # Resolve the task text before discovery so bad input never starts a service.
     prompt = _prompt_text(options, parser)
+    model = _prompt_model(options.model, parser)
     from msgflux.coding.prompt import PromptExecution  # noqa: PLC0415
 
     execution = PromptExecution()
@@ -230,6 +247,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 runtime_dir=options.runtime_dir,
                 cwd=cwd,
                 agent_id=options.agent,
+                model=model,
                 account_name=options.account_name,
                 thread_id=options.thread,
                 observer=observe if options.stream else None,

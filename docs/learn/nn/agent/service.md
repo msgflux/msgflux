@@ -559,3 +559,40 @@ remain unchanged; uncertain effects require reconciliation.
 See [manual compaction](compaction.md#compact-a-saved-execution-manually) for the
 SDK contract and [HTTP compaction](service-http.md#compact-a-paused-or-failed-run)
 for the endpoint and session client examples.
+
+## Bind A Model To A Thread
+
+Factories can opt into thread-level model selection through registration metadata:
+
+```python
+from msgflux import Model
+from msgflux.nn import Agent
+from msgflux.runtime.service import AgentConfiguration, AgentService, AgentSession
+
+def create_worker(thread):
+    return AgentSession(Agent(
+        name="worker",
+        model=Model.chat_completion(thread.model),
+    ))
+
+service = AgentService()
+service.register(
+    "worker",
+    create_worker,
+    configuration=AgentConfiguration(
+        model="provider/default-model",
+        supports_model_override=True,
+    ),
+)
+thread = await service.open_thread("worker", model="provider/selected-model")
+```
+
+This factory constructs the model specified by the thread binding. New threads
+use the explicit model or the registered default; reopening preserves the
+stored choice. A conflicting explicit model is rejected. Factories that do
+not declare support reject explicit overrides instead of silently ignoring them.
+The built-in coding factory already supports this contract.
+
+Legacy bindings with no recorded model remain readable and return `model=None`.
+Registration inspection describes defaults; the thread binding describes the
+selection saved for that conversation.

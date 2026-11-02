@@ -76,6 +76,7 @@ async def list_threads(client, args):
         {
             "thread_id": thread.thread_id,
             "agent_id": thread.agent_id,
+            "model": getattr(thread, "model", None),
             "cwd": thread.cwd,
             "interactive": thread.interactive,
             "active_runs": counts[thread.thread_id],
@@ -90,6 +91,7 @@ async def list_threads(client, args):
         (
             ("thread_id", "THREAD_ID"),
             ("agent_id", "AGENT"),
+            ("model", "MODEL"),
             ("active_runs", "ACTIVE_RUNS"),
             ("state", "STATE"),
             ("cwd", "CWD"),

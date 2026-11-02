@@ -77,6 +77,7 @@ msgflux -p "Investigate the first finding" --thread THREAD_ID --json
   "status": "completed",
   "thread_id": "...",
   "agent_id": "coding",
+  "model": "provider/model-id",
   "request_id": "...",
   "run_id": "...",
   "output": "The final answer",
@@ -130,6 +131,51 @@ sending a turn.
 is lost, the command looks up the same `request_id`; it never sends the prompt
 again. If admission cannot be confirmed, the error includes the known IDs so
 you can inspect them before deciding what to do next.
+
+## Select And Inspect The Model
+
+The coding agent's model comes from `agents.<agent-id>.model` in the backend
+TOML, falling back to `defaults.model`. Account selection supplies credentials;
+it does not choose the model.
+
+Inspect the defaults loaded by the running service:
+
+```bash
+msgflux agents inspect coding
+msgflux agents inspect builder --json
+```
+
+The first command displays the registered agent's default model and account.
+The JSON command exposes the same registration metadata for automation; it
+does not claim to inspect a thread-specific override.
+
+Choose a different model when creating a thread:
+
+```bash
+msgflux -p "Review this change" --agent builder   --model provider/model-id --account-name work --detach --json
+```
+
+`--model` uses the same `provider/model-id` syntax as the TOML model setting.
+The service binds the selected model to the new thread and returns it in the
+CLI result's `model` field. Human-readable admission identities on stderr
+include `model=...`; `msgflux threads ls --json` also exposes the binding.
+
+New coding threads preserve this selection across daemon restarts and changes
+to registration defaults. Continue without repeating the override:
+
+```bash
+msgflux -p "Now check the edge cases" --thread THREAD_ID
+```
+
+An explicit model conflicting with the existing binding is rejected; create a
+new thread to select another model. A legacy thread without a saved model
+binding reports `model: null`; its historical model is not inferred from the
+current configuration. Custom factories must explicitly declare support for
+model overrides before accepting one.
+
+The override selects the top-level agent's model. Configured tools, permissions
+and independently configured subagents keep their existing settings. The
+selected account must supply credentials for the effective model's provider.
 
 ## Select An Account
 

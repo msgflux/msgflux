@@ -28,6 +28,7 @@ class AgentConfiguration(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     prompt_file: str | None = None
     config_path: str | None = None
     config_digest: str | None = None
+    supports_model_override: bool = False
 
 
 class AgentInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -91,6 +92,7 @@ class ServiceThread(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     agent_id: str
     cwd: str | None = None
     interactive: bool = True
+    model: str | None = None
 
 
 class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

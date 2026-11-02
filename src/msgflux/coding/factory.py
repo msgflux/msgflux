@@ -8,6 +8,8 @@ from hashlib import sha256
 from pathlib import Path
 from typing import Any
 
+import msgspec
+
 from msgflux.coding.checkpoints import CodingCheckpointExtension
 from msgflux.coding.config import (
     CodingAgentCatalog,
@@ -235,7 +237,9 @@ class _CodingSessionBuilder:
         tool_resources: list[Any] = []
         try:
             agent = self._build_agent(
-                self.options,
+                msgspec.structs.replace(self.options, model=thread.model)
+                if thread.model is not None
+                else self.options,
                 name=self.options.agent_id,
                 workspace=workspace,
                 working_directory=working_directory,
