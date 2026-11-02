@@ -20,6 +20,27 @@ class ProcessOutputLimitError(RuntimeError):
     """The combined process output exceeded the requested byte budget."""
 
 
+class ProcessCleanupError(RuntimeError):
+    """An owned process group still had members after cleanup escalation."""
+
+
+def process_group_present(pid: int) -> bool:
+    """Return whether the process group ``pid`` still has any member.
+
+    Callers use this to tell a reaped leader apart from a group that still holds
+    descendants, so settlement is never claimed from the leader alone.
+    """
+    if os.name != "posix":
+        raise NotImplementedError("Process groups require POSIX")
+    try:
+        os.killpg(pid, 0)
+    except ProcessLookupError:
+        return False
+    except PermissionError:
+        return True
+    return True
+
+
 async def drain_subprocess(  # noqa: C901
     process,
     on_output: Callable[[Literal["stdout", "stderr"], bytes], Awaitable[None]],
@@ -167,3 +188,27 @@ async def _cleanup_process(process, *, owns_process_group):  # noqa: C901
         await asyncio.gather(*drains, return_exceptions=True)
         if completion.done() and not completion.cancelled():
             completion.exception()
+        # A descendant may close stdio and ignore SIGTERM while the leader and
+        # both pipes are already settled, so reap the owned group explicitly.
+        if owns_process_group:
+            await _settle_process_group(process, send)
+
+
+async def _settle_process_group(process, send) -> None:
+    """Escalate SIGKILL until no member of the owned group survives."""
+    for _ in range(2):
+        if not process_group_present(process.pid):
+            return
+        send(True)
+        if await _wait_for_group_exit(process.pid, timeout=1):
+            return
+    raise ProcessCleanupError("Owned process group still had members after cleanup")
+
+
+async def _wait_for_group_exit(pid: int, *, timeout: float) -> bool:
+    deadline = asyncio.get_running_loop().time() + timeout
+    while asyncio.get_running_loop().time() < deadline:
+        if not process_group_present(pid):
+            return True
+        await asyncio.sleep(0.05)
+    return False

@@ -16,7 +16,11 @@ from msgflux.runtime.workspace.references import WorkspaceReference
 class CommandInspection(
     msgspec.Struct, frozen=True, kw_only=True, forbid_unknown_fields=True
 ):
-    """Compact host observation of a command resource and its known outcome."""
+    """Compact host observation of a command resource and its known outcome.
+
+    ``completed`` includes nonzero and signal exit codes. The return code and
+    reasons describe the recorded outcome, including confirmed termination.
+    """
 
     version: Literal[1]
     execution_id: str
