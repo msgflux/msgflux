@@ -26,6 +26,7 @@ def manifest_agent_configuration(
     resolved = manifest.coding_catalog.agents[agent_id]
     return AgentConfiguration(
         harness="coding",
+        supports_model_override=True,
         model=resolved.model,
         reasoning_effort=resolved.reasoning_effort,
         permissions=resolved.permissions,

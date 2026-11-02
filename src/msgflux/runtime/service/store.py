@@ -23,6 +23,7 @@ from msgflux.runtime.service.records import (
 )
 from msgflux.runtime.workspace.policy import WorkspacePolicy
 from msgflux.utils.time import utc_now_isoformat
+from msgflux.utils.validation import validate_model_path
 
 
 def validate_identifier(value: str, label: str) -> None:
@@ -96,6 +97,10 @@ class SQLiteServiceStore:
                     self._connection.execute(
                         "ALTER TABLE service_threads ADD COLUMN "
                         "interactive INTEGER NOT NULL DEFAULT 1"
+                    )
+                if "model" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE service_threads ADD COLUMN model TEXT"
                     )
                 self._connection.execute(
                     """CREATE TABLE IF NOT EXISTS service_admissions (
@@ -188,6 +193,8 @@ class SQLiteServiceStore:
         validate_identifier(thread.agent_id, "agent_id")
         if type(thread.interactive) is not bool:
             raise ValueError("interactive must be a boolean")
+        if thread.model is not None:
+            validate_model_path(thread.model)
         if thread.cwd is not None:
             validate_identifier(thread.cwd, "cwd")
             if not Path(thread.cwd).is_absolute():
@@ -195,12 +202,14 @@ class SQLiteServiceStore:
         with self._lock, self._connection:
             self._connection.execute(
                 """INSERT OR IGNORE INTO service_threads
-                (thread_id, agent_id, cwd, interactive) VALUES (?, ?, ?, ?)""",
+                (thread_id, agent_id, cwd, interactive, model)
+                VALUES (?, ?, ?, ?, ?)""",
                 (
                     thread.thread_id,
                     thread.agent_id,
                     thread.cwd,
                     int(thread.interactive),
+                    thread.model,
                 ),
             )
             existing = self.thread(thread.thread_id)
@@ -218,7 +227,11 @@ class SQLiteServiceStore:
         if row is None:
             raise KeyError(thread_id)
         return ServiceThread(
-            row["thread_id"], row["agent_id"], row["cwd"], bool(row["interactive"])
+            row["thread_id"],
+            row["agent_id"],
+            row["cwd"],
+            bool(row["interactive"]),
+            row["model"],
         )
 
     def threads(self) -> tuple[ServiceThread, ...]:
@@ -228,7 +241,11 @@ class SQLiteServiceStore:
             ).fetchall()
         return tuple(
             ServiceThread(
-                row["thread_id"], row["agent_id"], row["cwd"], bool(row["interactive"])
+                row["thread_id"],
+                row["agent_id"],
+                row["cwd"],
+                bool(row["interactive"]),
+                row["model"],
             )
             for row in rows
         )

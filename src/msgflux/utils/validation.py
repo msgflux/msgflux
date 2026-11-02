@@ -47,3 +47,14 @@ def is_base64(string) -> bool:
         return True
     except Exception:
         return False
+
+
+def validate_model_path(model_path: str) -> None:
+    """Validate `provider/model-id` syntax without loading a model provider."""
+    if not isinstance(model_path, str) or any(
+        character.isspace() for character in model_path
+    ):
+        raise ValueError("model must use the form 'provider/model-id'")
+    provider, separator, model_id = model_path.partition("/")
+    if not separator or not provider or not model_id:
+        raise ValueError("model must use the form 'provider/model-id'")

@@ -319,6 +319,7 @@ class AgentServiceClient:
         thread_id: str | None = None,
         cwd: str | Path | None = None,
         interactive: bool | None = None,
+        model: str | None = None,
     ) -> ServiceThread:
         request = OpenThreadRequest(
             agent_id=agent_id,
@@ -326,7 +327,12 @@ class AgentServiceClient:
             cwd=str(cwd) if isinstance(cwd, Path) else cwd,
             interactive=interactive,
         )
-        return await self._json("POST", "/v1/threads", ServiceThread, request)
+        payload = msgspec.to_builtins(request)
+        if model is not None:
+            payload["model"] = model
+        else:
+            payload.pop("model", None)
+        return await self._json("POST", "/v1/threads", ServiceThread, payload)
 
     async def snapshot(self, thread_id: str) -> SnapshotRecord:
         return await self._json(

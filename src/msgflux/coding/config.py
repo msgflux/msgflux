@@ -11,6 +11,7 @@ import msgspec
 
 from msgflux.coding.presets import get_coding_preset
 from msgflux.runtime.permissions import PermissionSet
+from msgflux.utils.validation import validate_model_path
 
 _TOOL_SELECTORS = frozenset(
     {
@@ -178,17 +179,6 @@ class CodingAgentCatalog(msgspec.Struct, frozen=True):
     """Resolved coding-agent entries available for child dispatch."""
 
     agents: Mapping[str, CodingAgentOptions]
-
-
-def validate_model_path(model_path: str) -> None:
-    """Validate `provider/model-id` syntax without loading a model provider."""
-    if not isinstance(model_path, str) or any(
-        character.isspace() for character in model_path
-    ):
-        raise ValueError("model must use the form 'provider/model-id'")
-    provider, separator, model_id = model_path.partition("/")
-    if not separator or not provider or not model_id:
-        raise ValueError("model must use the form 'provider/model-id'")
 
 
 def _openai_tool_family(model_path: str) -> bool:
