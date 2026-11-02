@@ -304,3 +304,188 @@ def test_result_arguments_are_validated(resource, args, message):
 
     with pytest.raises(SystemExit, match=message):
         main(args, resource=resource)
+
+
+@pytest.mark.parametrize("value", ["nan", "inf", "0", "-1", "-0.5"])
+def test_wait_timeout_requires_a_finite_positive_number(value):
+    from msgflux.runtime.service.local.cli import main
+
+    with pytest.raises(
+        SystemExit, match="--wait-timeout must be a finite positive number"
+    ):
+        main(["result", "t", "--wait", "--wait-timeout", value], resource="threads")
+
+
+@pytest.mark.parametrize(
+    "resource, args, message",
+    [
+        (
+            "threads",
+            ["result", "t", "--wait-timeout", "5"],
+            "--wait-timeout is only accepted with --wait",
+        ),
+        (
+            "runs",
+            ["result", "t", "r", "--wait-timeout", "5"],
+            "--wait-timeout is only accepted with --wait",
+        ),
+        (
+            "threads",
+            ["watch", "t", "--wait", "--wait-timeout", "5"],
+            "--wait is only accepted with threads result or runs result",
+        ),
+        (
+            "runs",
+            ["inspect", "t", "r", "--wait", "--wait-timeout", "5"],
+            "--wait is only accepted with threads result or runs result",
+        ),
+    ],
+)
+def test_wait_timeout_is_only_accepted_with_wait_result(resource, args, message):
+    from msgflux.runtime.service.local.cli import main
+
+    with pytest.raises(SystemExit, match=message):
+        main(args, resource=resource)
+
+
+def _wait_client(*, receipt, result=None, status="running"):
+    """Describe the lookups a bounded wait performs, in order."""
+    client = SimpleNamespace(
+        thread_result=AsyncMock(return_value=RunResult("thread", "latest", status)),
+        inspect_run=AsyncMock(
+            return_value=SimpleNamespace(
+                receipt=AdmissionReceipt("thread", "request", "latest", status)
+            )
+        ),
+        receipt=AsyncMock(side_effect=receipt),
+        run_result=AsyncMock(),
+    )
+    if result is not None:
+        client.run_result.side_effect = result
+    return client
+
+
+def _receipts(*statuses):
+    """Report each polled status in order, repeating the last one."""
+    observed = iter(statuses)
+    return lambda *args, **kwargs: AdmissionReceipt(
+        "thread", "request", "latest", next(observed, statuses[-1])
+    )
+
+
+def _thread_args(*, as_json=True, wait_timeout=None):
+    return SimpleNamespace(
+        resource="threads",
+        thread_id="thread",
+        run_id=None,
+        json=as_json,
+        wait=True,
+        wait_timeout=wait_timeout,
+    )
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_returns_answer_when_run_settles_in_time(capsys):
+    client = _wait_client(
+        receipt=_receipts("running", "completed"),
+        result=[RunResult("thread", "latest", "completed", output="final answer")],
+    )
+    await show_result(client, _thread_args(wait_timeout=30))
+
+    assert json.loads(capsys.readouterr().out) == {
+        "thread_id": "thread",
+        "run_id": "latest",
+        "status": "completed",
+        "output": "final answer",
+        "error": None,
+    }
+    client.run_result.assert_awaited_once_with("thread", "latest")
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_keeps_last_unfinished_observation(capsys):
+    client = _wait_client(receipt=_receipts("accepted", "running"))
+    with pytest.raises(SystemExit) as caught:
+        await show_result(client, _thread_args(wait_timeout=0.2))
+    assert caught.value.code == 1
+    value = json.loads(capsys.readouterr().out)
+    assert value["status"] == "running" and value["output"] is None
+    assert value["run_id"] == "latest"
+    assert "expired after 0.2s" in value["error"]
+    assert "not interrupted" in value["error"]
+    assert "msgflux runs result thread latest" in value["error"]
+    client.run_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_never_reports_unread_answer_as_completed(capsys):
+    async def unread_result(*_args):
+        await asyncio.sleep(0.5)
+        return RunResult("thread", "latest", "completed", output="too late")
+
+    client = _wait_client(
+        receipt=_receipts("running", "completed"), result=unread_result
+    )
+    with pytest.raises(SystemExit) as caught:
+        await show_result(client, _thread_args(wait_timeout=0.1))
+    assert caught.value.code == 1
+    value = json.loads(capsys.readouterr().out)
+    assert value["status"] == "running" and value["output"] is None
+    assert "receipt already reported completed" in value["error"]
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_does_not_shadow_client_timeout():
+    client = _wait_client(receipt=TimeoutError("read timed out"))
+    with pytest.raises(TimeoutError, match="read timed out"):
+        await show_result(client, _thread_args(wait_timeout=30))
+    client.run_result.assert_not_awaited()
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_without_budget_keeps_previous_behavior(capsys):
+    client = _wait_client(
+        receipt=_receipts("running", "completed"),
+        result=[RunResult("thread", "latest", "completed", output="answer")],
+    )
+    args = _thread_args()
+    del args.wait_timeout
+    await show_result(client, args)
+    assert json.loads(capsys.readouterr().out)["output"] == "answer"
+
+
+@pytest.mark.asyncio
+async def test_wait_timeout_expiry_leaves_the_run_active(daemon_workspace):
+    project, _b, _c, runtime = daemon_workspace
+    client = await connect_local_service(FACTORY, runtime_dir=runtime, cwd=project)
+    try:
+        thread = await client.open_thread("main")
+        receipt = await client.prompt(thread.thread_id, "block", request_id="slow")
+        await _until((runtime / "model_calls").exists)
+        code, out, err = await _command(
+            runtime,
+            "runs",
+            "result",
+            thread.thread_id,
+            receipt.run_id,
+            "--wait",
+            "--wait-timeout",
+            "0.5",
+        )
+        assert code == 1 and not err
+        value = json.loads(out)
+        assert set(value) == {"thread_id", "run_id", "status", "output", "error"}
+        assert value["thread_id"] == thread.thread_id
+        assert value["run_id"] == receipt.run_id
+        assert value["status"] == "running" and value["output"] is None
+        assert "expired after 0.5s" in value["error"]
+        assert (await client.receipt(thread.thread_id, "slow")).status == "running"
+        (runtime / "release").touch()
+        completed = await _wait_completed(client, thread.thread_id, "slow")
+        assert completed.status == "completed"
+        assert (await client.run_result(thread.thread_id, receipt.run_id)).output == (
+            "daemon response: block"
+        )
+    finally:
+        (runtime / "release").touch()
+        await client.aclose()

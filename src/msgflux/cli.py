@@ -24,7 +24,8 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "Commands: msgflux init --model PROVIDER/MODEL; "
             "msgflux accounts login PROVIDER --account-name NAME; "
             "msgflux service; msgflux service status; msgflux service stop; "
-            "msgflux service inspect; msgflux runs inspect/resume THREAD_ID RUN_ID; "
+            "msgflux service inspect; "
+            "msgflux runs inspect/resume/activity THREAD_ID RUN_ID; "
             "msgflux runs ls --active; msgflux runs result THREAD_ID RUN_ID; "
             "msgflux threads result THREAD_ID [--wait]; "
             "msgflux threads interrupt/stop THREAD_ID; "
@@ -34,10 +35,18 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux config validate; msgflux config cors ls/add/remove; "
             "msgflux extensions ls; "
             "msgflux extensions inspect NAME [--options]; "
-            "msgflux extensions add/remove NAME --agent ID."
+            "msgflux extensions add/remove NAME --agent ID. "
+            "Prompt text: msgflux -p TEXT or "
+            "msgflux --prompt-file PATH (- reads stdin)."
         ),
     )
-    parser.add_argument("-p", "--prompt", required=True, help="noninteractive task")
+    prompt = parser.add_mutually_exclusive_group(required=True)
+    prompt.add_argument("-p", "--prompt", help="noninteractive task")
+    prompt.add_argument(
+        "--prompt-file",
+        metavar="PATH",
+        help="read the task from a UTF-8 file, or from stdin with -",
+    )
     parser.add_argument(
         "--json",
         action="store_true",
@@ -76,6 +85,40 @@ def _prompt_parser() -> argparse.ArgumentParser:
         help="project directory; defaults to the current directory for new threads",
     )
     return parser
+
+
+def _read_stdin_prompt() -> str:
+    """Decode stdin strictly; surrogate escapes are not acceptable task text."""
+    buffer = getattr(sys.stdin, "buffer", None)
+    if buffer is not None:
+        return buffer.read().decode("utf-8")
+    # Text-mode streams without a buffer may already hold surrogate escapes.
+    return sys.stdin.read().encode("utf-8", "strict").decode("utf-8")
+
+
+def _read_prompt_file(source: str, parser: argparse.ArgumentParser) -> str:
+    try:
+        if source == "-":
+            return _read_stdin_prompt()
+        return Path(source).expanduser().read_text(encoding="utf-8")
+    except (OSError, UnicodeError) as error:
+        parser.error(
+            f"--prompt-file {source} is not readable UTF-8 text: "
+            f"{exception_message(error)}"
+        )
+    raise AssertionError("unreachable")  # pragma: no cover - parser.error exits
+
+
+def _prompt_text(options, parser: argparse.ArgumentParser) -> str:
+    """Resolve the task text before any service or configuration is touched."""
+    if options.prompt is not None:
+        prompt, source = options.prompt, "--prompt"
+    else:
+        prompt = _read_prompt_file(options.prompt_file, parser)
+        source = f"--prompt-file {options.prompt_file}"
+    if not prompt.strip():
+        parser.error(f"{source} must not be empty")
+    return prompt
 
 
 def _write_result(result, *, as_json: bool, streaming: bool = False) -> None:
@@ -166,9 +209,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = list(sys.argv[1:] if argv is None else argv)
     if args and _dispatch_administration(args):
         return
-    options = _prompt_parser().parse_args(args)
-    if not options.prompt.strip():
-        _prompt_parser().error("--prompt must not be empty")
+    parser = _prompt_parser()
+    options = parser.parse_args(args)
+    # Resolve the task text before discovery so bad input never starts a service.
+    prompt = _prompt_text(options, parser)
     from msgflux.coding.prompt import PromptExecution  # noqa: PLC0415
 
     execution = PromptExecution()
@@ -181,7 +225,7 @@ def main(argv: Sequence[str] | None = None) -> None:
         cwd = options.cwd.expanduser().resolve() if options.cwd is not None else None
         result = asyncio.run(
             execution.run(
-                options.prompt,
+                prompt,
                 config=options.config,
                 runtime_dir=options.runtime_dir,
                 cwd=cwd,

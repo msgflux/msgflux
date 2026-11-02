@@ -43,6 +43,26 @@ daemon. Add `--json` to `service status` for machine-readable diagnostics.
 uses `defaults.agent`. Declare the Explorer preset before selecting it.
 The former `msgflux-service` console entry has been replaced by `msgflux service`.
 
+## Read The Task From A File
+
+```bash
+msgflux --prompt-file task.md
+msgflux --prompt-file - < task.md
+git diff | msgflux --prompt-file - --json
+```
+
+`--prompt-file` reads the task from a UTF-8 file, or from standard input when
+the path is `-`. It replaces `-p/--prompt` and is required in its place: exactly
+one of the two must be supplied, and passing both is a usage error. The file is
+read before the service is discovered, so an unreadable path, invalid UTF-8, or
+blank-only input exits with the normal usage message and code `2` without
+starting or contacting a daemon and without writing any configuration file.
+Standard input is decoded strictly, so invalid bytes are rejected instead of
+being replaced. Trailing newlines are kept and sent as part of the task.
+
+`-p` still takes its text literally. In particular, `msgflux -p -` sends the
+single character `-` rather than reading stdin; only `--prompt-file -` reads it.
+
 ## JSON And Continuation
 
 ```bash
@@ -203,15 +223,17 @@ interrupting execution. JSON output includes the initial snapshot and new events
 with no final `result` envelope. See [Watch An Existing Thread](service-local.md#watch-an-existing-thread)
 for discovery, reconnection, and output details.
 
-To send an additional instruction to the active run through its inbox:
+To send an instruction to a thread, whether it is currently running or idle:
 
 ```bash
 msgflux threads steer THREAD_ID -m "Focus on the failing integration test"
 ```
 
-This queues a message for the current run without creating another prompt or
-waiting for completion. See [Steer An Active Thread](service-local.md#steer-an-active-thread)
-for delivery timing and target selection.
+On a live thread this queues the message into the current run's inbox without
+starting another prompt. On an idle thread it admits the message as a new prompt
+and starts a run. The JSON reply distinguishes both cases by `status`
+(`queued` or `started`). See [Steer A Thread](service-local.md#steer-a-thread)
+for delivery timing, guards and retry advice.
 
 Successful tasks exit with code 0. A failed, paused or interrupted run exits with
 code 1. Plain-text errors go to stderr and include available execution IDs;
@@ -271,11 +293,13 @@ running background tasks should be inspected and interrupted separately.
 ```bash
 msgflux threads result THREAD_ID
 msgflux threads result THREAD_ID --wait
+msgflux threads result THREAD_ID --wait --wait-timeout 60
 msgflux runs result THREAD_ID RUN_ID --json
 ```
 
 The thread command selects the most recently admitted execution. The run command
-selects one execution explicitly. Both accept `--wait` and `--json`; see
+selects one execution explicitly. Both accept `--wait`, `--wait-timeout` and
+`--json`; see
 [Retrieve A Thread Or Run Result](service-local.md#retrieve-a-thread-or-run-result)
 for waiting, output and exit-code behavior.
 

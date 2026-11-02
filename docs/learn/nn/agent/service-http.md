@@ -374,6 +374,29 @@ supported recovery claim is available. Raw
 checkpoints, invocation arguments, task results, progress metadata, and owner IDs
 are excluded.
 
+## Poll Recent Activity
+
+```python
+activity = await client.run_activity(thread_id, run_id)
+print(activity.status, activity.local_worker)
+print(activity.last_event_type, activity.seconds_since_event)
+for event in activity.recent_events:
+    print(event.event_type, event.tool_name)
+```
+
+This example calls `GET /v1/threads/{thread_id}/runs/{run_id}/activity` to read
+bounded diagnostic metadata. It does not attach an SSE observer, load an Agent
+or reconstruct checkpoint history. It contains no prompt, tool arguments,
+outputs or token text. Up to eight recent control-event labels are retained;
+token deltas update the latest event and its age without filling that list.
+
+An explicit interrupt request is reported separately from worker completion.
+The latest observed boundary does not establish the current stack or prove a
+stall. Activity is local to the worker and disappears after settlement or
+restart; durable admission status remains available. Use `inspect_run()` for
+recovery evidence and `run_result()` for the answer. Older daemons need a
+restart after upgrading to expose this endpoint.
+
 ## Detach And Reconnect
 
 ```python
@@ -507,6 +530,33 @@ the inbox is sealed for finalization, steering returns HTTP 409 with
 `service_busy`, even while an after-run hook is still running; the service does
 not queue the message for another run. Interruption targets an explicit run and
 returns a boolean.
+
+When the caller does not know whether the thread is busy, use the thread-scoped
+route instead of listing active runs first:
+
+```python
+result = await client.steer_thread(thread_id, "Focus on integration tests")
+print(result.status, result.run_id, result.notification_id, result.request_id)
+```
+
+`POST /v1/threads/{thread_id}/steer` answers `202` with a typed
+`ThreadSteerResult`. `status` is `queued` (the live run's inbox accepted the
+content; `notification_id` is set) or `started` (the thread was idle, so the
+content was admitted as a new prompt; `request_id` is set). The decision is
+atomic on the server: concurrent calls on an idle thread start at most one run.
+Existing admission guards still apply unchanged, so a paused/failed run needing
+recovery, uncertain workspace command receipts, a run that sealed its inbox for
+finalization, a run draining an interruption request, or an in-progress
+compaction returns `409` rather than being bypassed. `service_busy` is retryable
+after the run settles; the server never claims `queued` without an accepted
+message.
+
+The client never retries this call, and the outcome is not idempotent: the server
+keeps no steering journal, so after an uncertain transport failure inspect the
+thread (`runs()`, `run_result()`, or a watcher) instead of resending. The
+run-scoped `client.steer(thread_id, run_id, content)` route is unchanged and
+still rejects a run that is not active in the service.
+
 An unfinished run already paused or failed in this service can resume through its
 normal recovery checks. The HTTP resume route does not itself approve a tool
 invocation; use the explicit review and decision operations described above.
@@ -889,6 +939,7 @@ All routes require `Authorization: Bearer <token>`.
 | POST | `/v1/threads/{thread_id}/compact` | Completed or skipped manual compaction |
 | GET | `/v1/threads/{thread_id}/requests/{request_id}` | Current receipt |
 | GET | `/v1/threads/{thread_id}/watch` | Initial snapshot and continuous SSE events |
+| POST | `/v1/threads/{thread_id}/steer` | Thread steering result (`queued` or `started`) |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/interrupt` | Interruption result |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/steer` | Published notification |
 | POST | `/v1/threads/{thread_id}/runs/{run_id}/resume` | Recovery receipt |

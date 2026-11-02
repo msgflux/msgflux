@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import io
 import json
 import os
 import sys
@@ -1044,6 +1045,118 @@ async def test_detached_admission_loss_recovers_without_watch_or_resubmission(
         if other is not None:
             await other.aclose()
         await _shutdown(runtime)
+
+
+def _capture_prompt(monkeypatch):
+    """Record the prompt reached by PromptExecution without touching a service."""
+    prompts = []
+
+    async def run(self, prompt, **kwargs):
+        prompts.append(prompt)
+        self.result.status = "completed"
+        self.result.output = "answer"
+        return self.result
+
+    monkeypatch.setattr(PromptExecution, "run", run)
+    return prompts
+
+
+def test_prompt_file_reads_utf8_text_before_admission(tmp_path, monkeypatch, capsys):
+    prompts = _capture_prompt(monkeypatch)
+    task = tmp_path / "task.md"
+    task.write_text("Revisar café\nsegunda linha\n", encoding="utf-8")
+    cli.main(["--prompt-file", str(task), "--json"])
+    assert prompts == ["Revisar café\nsegunda linha\n"]
+    assert json.loads(capsys.readouterr().out)["output"] == "answer"
+
+
+def test_prompt_file_dash_reads_stdin_bytes(monkeypatch, capsys):
+    prompts = _capture_prompt(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b"tarefa do pipe\n")))
+    cli.main(["--prompt-file", "-", "--json"])
+    assert prompts == ["tarefa do pipe\n"]
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+def test_literal_prompt_dash_is_preserved(monkeypatch, capsys):
+    prompts = _capture_prompt(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("unused stdin"))
+    cli.main(["-p", "-", "--json"])
+    assert prompts == ["-"]
+    assert json.loads(capsys.readouterr().out)["status"] == "completed"
+
+
+@pytest.mark.parametrize("payload", [b"\xff\xfe invalid", b"\xc3\x28 invalid"])
+def test_prompt_file_stdin_rejects_invalid_utf8(payload, monkeypatch, capsys):
+    prompts = _capture_prompt(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(payload)))
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["--prompt-file", "-", "--json"])
+    captured = capsys.readouterr()
+    assert exited.value.code == 2 and not captured.out
+    assert "--prompt-file - is not readable UTF-8 text" in captured.err
+    assert prompts == []
+
+
+def test_prompt_file_stdin_rejects_blank_input(monkeypatch, capsys):
+    prompts = _capture_prompt(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.TextIOWrapper(io.BytesIO(b" \n\t\n")))
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["--prompt-file", "-", "--json"])
+    captured = capsys.readouterr()
+    assert exited.value.code == 2 and not captured.out
+    assert "--prompt-file - must not be empty" in captured.err
+    assert prompts == []
+
+
+def test_prompt_file_stdin_without_buffer_rejects_surrogates(monkeypatch, capsys):
+    prompts = _capture_prompt(monkeypatch)
+    monkeypatch.setattr(sys, "stdin", io.StringIO("bad \udcff text"))
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["--prompt-file", "-"])
+    assert exited.value.code == 2
+    assert "not readable UTF-8 text" in capsys.readouterr().err
+    assert prompts == []
+
+
+@pytest.mark.parametrize("kind", ["missing", "invalid-utf8", "blank", "directory"])
+def test_prompt_file_failures_exit_before_connecting(
+    kind, tmp_path, monkeypatch, capsys
+):
+    prompts = _capture_prompt(monkeypatch)
+    source = tmp_path / "task.txt"
+    if kind == "invalid-utf8":
+        source.write_bytes(b"\xff\xfe not utf-8")
+    elif kind == "blank":
+        source.write_text("  \n\t\n", encoding="utf-8")
+    elif kind == "directory":
+        source.mkdir()
+    monkeypatch.chdir(tmp_path)
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["--prompt-file", str(source), "--json"])
+    captured = capsys.readouterr()
+    assert exited.value.code == 2 and not captured.out
+    assert captured.err.startswith("usage: msgflux")
+    assert "--prompt-file" in captured.err
+    assert prompts == []
+
+
+def test_prompt_and_prompt_file_are_a_required_exclusive_group(capsys):
+    with pytest.raises(SystemExit) as missing:
+        cli.main(["--json"])
+    assert missing.value.code == 2
+    assert "one of the arguments" in capsys.readouterr().err
+    with pytest.raises(SystemExit) as both:
+        cli.main(["-p", "hello", "--prompt-file", "task.txt"])
+    assert both.value.code == 2
+    assert "not allowed with argument" in capsys.readouterr().err
+
+
+def test_empty_prompt_is_still_rejected(capsys):
+    with pytest.raises(SystemExit) as exited:
+        cli.main(["-p", "   "])
+    assert exited.value.code == 2
+    assert "--prompt must not be empty" in capsys.readouterr().err
 
 
 def test_detach_and_stream_are_mutually_exclusive(capsys):

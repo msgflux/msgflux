@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import os
 import sys
 from pathlib import Path
@@ -29,7 +30,7 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
     )
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
-        "runs": ("inspect", "resume", "ls", "result"),
+        "runs": ("inspect", "resume", "ls", "result", "activity"),
         "threads": ("ls", "watch", "steer", "interrupt", "stop", "result"),
         "agents": ("ls", "inspect"),
     }
@@ -61,6 +62,18 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         help=_help_for(
             resource,
             "wait for the selected run to leave accepted/running state (result only)",
+            "runs",
+            "threads",
+        ),
+    )
+    parser.add_argument(
+        "--wait-timeout",
+        type=float,
+        metavar="SECONDS",
+        help=_help_for(
+            resource,
+            "bound --wait in seconds; observation then stops without aborting "
+            "the agent (result only)",
             "runs",
             "threads",
         ),
@@ -177,6 +190,7 @@ def _validate_options(args: argparse.Namespace) -> None:
         "watch",
         "steer",
         "result",
+        "activity",
         "ls",
     }:
         raise SystemExit(
@@ -185,11 +199,7 @@ def _validate_options(args: argparse.Namespace) -> None:
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
 
-    if args.wait and not (
-        args.resource in {"runs", "threads"} and args.action == "result"
-    ):
-        raise SystemExit("--wait is only accepted with threads result or runs result")
-
+    _validate_result_wait(args)
     _validate_target(args)
     _validate_message(args)
     if args.agent is not None and not (args.resource == "runs" and args.action == "ls"):
@@ -222,6 +232,18 @@ def _validate_message(args: argparse.Namespace) -> None:
             raise SystemExit("threads steer requires a non-empty --message")
     elif args.message is not None:
         raise SystemExit("--message is only accepted with threads steer")
+
+
+def _validate_result_wait(args: argparse.Namespace) -> None:
+    if args.wait and not (
+        args.resource in {"runs", "threads"} and args.action == "result"
+    ):
+        raise SystemExit("--wait is only accepted with threads result or runs result")
+    if args.wait_timeout is not None:
+        if not args.wait:
+            raise SystemExit("--wait-timeout is only accepted with --wait")
+        if not math.isfinite(args.wait_timeout) or args.wait_timeout <= 0:
+            raise SystemExit("--wait-timeout must be a finite positive number")
 
 
 def _validate_listing_target(args: argparse.Namespace) -> None:
@@ -363,7 +385,9 @@ async def _run_operation(args) -> None:
         if args.resource == "threads":
             await _thread_operation(client, args)
             return
-        if args.action == "resume":
+        if args.action == "activity":
+            result = await client.run_activity(args.thread_id, args.run_id)
+        elif args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
         else:
             result = await client.inspect_run(args.thread_id, args.run_id)
@@ -392,6 +416,9 @@ def _show_run_result(args, result) -> None:
     if args.action == "resume":
         sys.stdout.write(f"Run {result.run_id}: {result.status}\n")
         return
+    if args.action == "activity":
+        _show_activity(result)
+        return
     run_status = (
         result.receipt.status
         if result.receipt is not None
@@ -413,6 +440,27 @@ def _show_run_result(args, result) -> None:
         sys.stdout.write(f"- {reason}\n")
 
 
+def _show_activity(result) -> None:
+    sys.stdout.write(
+        f"Run {result.run_id}: {result.status}\n"
+        f"Thread: {result.thread_id}\nLocal worker: {result.local_worker}\n"
+    )
+    if result.last_event_type is not None:
+        age = (
+            f"{result.seconds_since_event:.1f}s ago"
+            if result.seconds_since_event is not None
+            else "age unavailable"
+        )
+        sys.stdout.write(f"Last observed event: {result.last_event_type} ({age})\n")
+    else:
+        sys.stdout.write("No process-local activity is available.\n")
+    if result.interrupt_requested:
+        sys.stdout.write("Interruption requested; worker settlement is pending.\n")
+    for event in result.recent_events:
+        tool = f" tool={event.tool_name}" if event.tool_name else ""
+        sys.stdout.write(f"- {event.timestamp} {event.event_type}{tool}\n")
+
+
 async def _active_thread_run(client, thread_id: str) -> str | None:
     runs = tuple(
         run for run in await client.active_runs() if run.thread_id == thread_id
@@ -425,22 +473,19 @@ async def _active_thread_run(client, thread_id: str) -> str | None:
 
 
 async def _steer_thread(client, args) -> None:
-    run_id = await _active_thread_run(client, args.thread_id)
-    if run_id is None:
-        raise RuntimeError(f"No active run for thread {args.thread_id}")
-    notice = await client.steer(args.thread_id, run_id, args.message)
-    result = {
-        "thread_id": args.thread_id,
-        "run_id": run_id,
-        "notification_id": notice["notification_id"],
-        "status": "queued",
-    }
+    # The service decides queued-or-started atomically; no status pre-consult.
+    result = await client.steer_thread(args.thread_id, args.message)
     if args.json:
         sys.stdout.write(msgspec_dumps(result) + "\n")
+    elif result.status == "queued":
+        sys.stdout.write(
+            f"Message queued for thread {args.thread_id}, run {result.run_id} "
+            f"(notification_id={result.notification_id}).\n"
+        )
     else:
         sys.stdout.write(
-            f"Message queued for thread {args.thread_id}, run {run_id} "
-            f"(notification_id={notice['notification_id']}).\n"
+            f"Thread {args.thread_id} was idle; started run {result.run_id} "
+            f"(request_id={result.request_id}).\n"
         )
 
 
@@ -481,6 +526,7 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         "watch": _run_operation,
         "steer": _run_operation,
         "result": _run_operation,
+        "activity": _run_operation,
         "ls": _run_operation,
     }
     if args.action in actions:

@@ -801,31 +801,45 @@ of missed deltas. An idle or completed thread can still be observed; its saved
 conversation is available in the JSON snapshot. A watcher does not emit a final
 CLI `result` envelope and does not send another user message.
 
-## Steer An Active Thread
+## Steer A Thread
 
 ```bash
 msgflux threads steer THREAD_ID -m "Prioritize the integration tests"
 msgflux threads steer THREAD_ID --message "Keep the public API unchanged" --json
 ```
 
-`threads steer` selects the thread's active root run and sends a user message
-through its existing AgentInbox. It does not submit another prompt or start a
-new run. Like observation and inspection, it requires an existing verified local
-daemon and accepts `--runtime-dir PATH`.
+`threads steer` sends the message to the thread and lets the durable service
+decide what that means. It does not consult the active-run list first.
 
-The response confirms that the message was queued, including `thread_id`,
-`run_id`, and `notification_id`. The agent consumes it at its normal inbox drain
-points, such as after a tool call or before the run's final checkpoint;
-confirmation does not mean the model has read it yet. Steering does not preempt
-an in-flight model request or interrupt tools. If a message arrives while the
-final model request is in flight, the same run can continue with another model
-request that includes it.
+- If the thread has a live run, the message goes through that run's existing
+  AgentInbox and the reply reports `"status": "queued"` with `run_id` and
+  `notification_id`. No new run starts.
+- If the thread is genuinely idle (no live worker), the message is admitted as a
+  new prompt and the reply reports `"status": "started"` with `run_id` and
+  `request_id`. This is the only way this command starts work.
 
-An empty message, an idle or unknown thread, or an ambiguous active-run selection
-is rejected. Once the run closes its inbox for finalization, steering is rejected
-even if an after-run hook is still executing. The CLI does not redirect the
-message to a newer run. Use
-`msgflux -p "Follow up" --thread THREAD_ID` for a new turn after completion.
+Both forms require an existing verified local daemon and accept
+`--runtime-dir PATH`. The decision is atomic, so two concurrent steers on an idle
+thread start at most one run: one reply is `started` and the other is `queued`.
+
+The agent consumes a queued message at its normal inbox drain points, such as
+after a tool call or before the run's final checkpoint; `queued` does not mean the
+model has read it yet. Steering does not preempt an in-flight model request or
+interrupt tools. If a message arrives while the final model request is in flight,
+the same run can continue with another model request that includes it.
+
+An empty message, or an unknown thread, is rejected before any run starts. A run
+that already sealed its inbox for finalization cannot accept the message and the
+command fails with a retryable busy diagnostic, even if an after-run hook is
+still executing; it does not redirect the message to another run. The same
+applies while a run drains an interruption request, while a paused or failed run
+still needs recovery, and while the thread is being compacted. Retry once the
+run settles, or use `msgflux -p "Follow up" --thread THREAD_ID` for an explicit
+new turn.
+
+Steering adds no notification journal and no deduplication: repeating the command
+publishes or admits again. After an ambiguous failure, inspect the thread with
+`threads ls`, `threads result`, or `threads watch` instead of blindly repeating.
 
 ## Validate Configuration Offline
 
@@ -1086,11 +1100,33 @@ answer. These inspection commands never start a server. Run inspection requires
 an active, authenticated daemon and reports errors on stderr with exit code `1`.
 Use `--runtime-dir PATH` to select another local service.
 
+## Read Recent Run Activity
+
+```bash
+msgflux runs activity THREAD_ID RUN_ID
+msgflux runs activity THREAD_ID RUN_ID --json
+```
+
+These commands report admission status, local worker presence, the latest
+observed event and its age, pending interruption evidence and up to eight recent
+control events. They use `GET /v1/threads/{thread_id}/runs/{run_id}/activity`,
+which reads the existing worker projection without loading its Agent or
+checkpoint. Polling does not submit input, wake an idle thread, resume a paused
+run or start an absent daemon.
+
+Activity omits prompts, tool arguments, outputs and streamed text. A long event
+age does not establish that a worker is stuck; it may be awaiting a model, tool
+or cleanup. `interrupt_requested` means the signal was requested, not that the
+worker has finished. Summaries are process-local and disappear on settlement
+or restart. For recovery decisions use `runs inspect`; for the answer use
+`runs result`.
+
 ## Retrieve A Thread Or Run Result
 
 ```bash
 msgflux threads result THREAD_ID
 msgflux threads result THREAD_ID --wait
+msgflux threads result THREAD_ID --wait --wait-timeout 60
 msgflux threads result THREAD_ID --json
 msgflux runs result THREAD_ID RUN_ID
 msgflux runs result THREAD_ID RUN_ID --wait --json
@@ -1098,8 +1134,9 @@ msgflux runs result THREAD_ID RUN_ID --wait --json
 
 `threads result` selects the most recently admitted execution in the thread.
 It does not select by checkpoint update time or fall back to an earlier completed
-answer. `runs result` selects the specified execution. A steer message stays in
-the active run; a new prompt creates another run in the same thread.
+answer. `runs result` selects the specified execution. A steer message accepted
+by a live run stays in that run; a steer on an idle thread or a new prompt
+creates another run in the same thread.
 
 Both commands return immediately unless `--wait` is supplied. JSON prints one
 `RunResult` object, including the selected IDs:
@@ -1125,6 +1162,29 @@ recovery; waiting cannot adopt it after a restart.
 If the run settles while recovery is being checked, the result retains its
 recorded failure cause. When no error is recorded, the diagnostic explains why
 the connected service cannot wait for that attempt.
+
+Add `--wait-timeout SECONDS` to cap that observation:
+
+```bash
+msgflux threads result THREAD_ID --wait --wait-timeout 60
+msgflux runs result THREAD_ID RUN_ID --wait --wait-timeout 0.5 --json
+```
+
+The budget must be a finite positive number and is only accepted together with
+`--wait`; omitting it keeps waiting until the run settles. It bounds observation
+performed by the CLI after the selected run is resolved: the run inspection,
+receipt polls and the final result lookup. It does not bound the initial run
+lookup, service connection or transport, and it is never sent to the daemon, so
+an expired budget leaves the agent running and no interruption is requested.
+
+When the budget expires, the command reports the last observed state in the same
+`RunResult` shape and exits with code `1`, like any other unfinished run. The
+status is `accepted` or `running` while the agent keeps working; a receipt that
+already settled without a readable answer keeps its unfinished status and its
+error explains that the recorded answer was not read in time. The diagnostic
+names `runs result` and `runs inspect` so the outcome can be read again. A
+client-side transport timeout raised before the budget elapses stays an error.
+Ctrl+C during a bounded wait still only affects observation.
 
 These commands require an active, authenticated service and never start one.
 Use `--runtime-dir PATH` to select another local service. For recovery diagnostics,

@@ -8,6 +8,8 @@ from msgflux.runtime.service.records import (
     AgentInspection,
     ApprovalReview,
     EventRecord,
+    RunActivity,
+    RunActivityEvent,
     RunInspection,
     RunResult,
     RunSummary,
@@ -16,6 +18,7 @@ from msgflux.runtime.service.records import (
     ServiceRecoveryRequiredError,
     ServiceThread,
     SnapshotRecord,
+    ThreadSteerResult,
 )
 from msgflux.runtime.service.session_cache import SessionLease
 from msgflux.runtime.service.store import SQLiteServiceStore
@@ -33,6 +36,9 @@ __all__ = [
     "RunSummary",
     "RunResult",
     "RunInspection",
+    "RunActivity",
+    "RunActivityEvent",
+    "ThreadSteerResult",
     "ServiceThread",
     "SnapshotRecord",
     "SQLiteServiceStore",

@@ -14,6 +14,7 @@ from msgflux.runtime.service.records import (
     RunSummary,
     ServiceThread,
     SnapshotRecord,
+    ThreadSteerResult,
 )
 
 __all__ = [
@@ -40,6 +41,7 @@ __all__ = [
     "ShutdownResponse",
     "SnapshotRecord",
     "SteerRequest",
+    "ThreadSteerResult",
     "ThreadsResponse",
     "WorkspacePolicyRequest",
 ]

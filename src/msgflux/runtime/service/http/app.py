@@ -252,6 +252,10 @@ def create_service_app(  # noqa: C901
     async def run_result(thread_id: PathValue, run_id: PathValue) -> Response:
         return _response(await service.run_result(thread_id, run_id))
 
+    @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/activity")
+    async def run_activity(thread_id: PathValue, run_id: PathValue) -> Response:
+        return _response(await service.run_activity(thread_id, run_id))
+
     @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/inspection")
     async def inspect_run(thread_id: PathValue, run_id: PathValue) -> Response:
         return _response(await service.inspect_run(thread_id, run_id))
@@ -285,6 +289,11 @@ def create_service_app(  # noqa: C901
         return _response(
             InterruptResponse(interrupted=await service.interrupt(thread_id, run_id))
         )
+
+    @post("/v1/threads/{thread_id:str}/steer")
+    async def steer_thread(thread_id: PathValue, data: SteerRequest) -> Response:
+        # A live run queues into its inbox; an idle thread admits a new prompt.
+        return _response(await service.steer_thread(thread_id, data.content), 202)
 
     @post("/v1/threads/{thread_id:str}/runs/{run_id:str}/steer")
     async def steer(
@@ -400,6 +409,7 @@ def create_service_app(  # noqa: C901
         update_workspace_policy,
         get_snapshot,
         list_runs,
+        run_activity,
         inspect_run,
         thread_result,
         run_result,
@@ -407,6 +417,7 @@ def create_service_app(  # noqa: C901
         get_receipt,
         interrupt,
         steer,
+        steer_thread,
         compact,
         resume,
         approval_reviews,
