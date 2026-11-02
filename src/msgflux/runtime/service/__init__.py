@@ -16,6 +16,7 @@ from msgflux.runtime.service.records import (
     ServiceRecoveryRequiredError,
     ServiceThread,
     SnapshotRecord,
+    ThreadSteerResult,
 )
 from msgflux.runtime.service.session_cache import SessionLease
 from msgflux.runtime.service.store import SQLiteServiceStore
@@ -35,6 +36,7 @@ __all__ = [
     "RunInspection",
     "ServiceThread",
     "SnapshotRecord",
+    "ThreadSteerResult",
     "SQLiteServiceStore",
     "ServiceBusyError",
     "ServiceConflictError",

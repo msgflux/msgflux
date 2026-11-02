@@ -286,6 +286,11 @@ def create_service_app(  # noqa: C901
             InterruptResponse(interrupted=await service.interrupt(thread_id, run_id))
         )
 
+    @post("/v1/threads/{thread_id:str}/steer")
+    async def steer_thread(thread_id: PathValue, data: SteerRequest) -> Response:
+        # A live run queues into its inbox; an idle thread admits a new prompt.
+        return _response(await service.steer_thread(thread_id, data.content), 202)
+
     @post("/v1/threads/{thread_id:str}/runs/{run_id:str}/steer")
     async def steer(
         thread_id: PathValue, run_id: PathValue, data: SteerRequest
@@ -407,6 +412,7 @@ def create_service_app(  # noqa: C901
         get_receipt,
         interrupt,
         steer,
+        steer_thread,
         compact,
         resume,
         approval_reviews,

@@ -425,22 +425,19 @@ async def _active_thread_run(client, thread_id: str) -> str | None:
 
 
 async def _steer_thread(client, args) -> None:
-    run_id = await _active_thread_run(client, args.thread_id)
-    if run_id is None:
-        raise RuntimeError(f"No active run for thread {args.thread_id}")
-    notice = await client.steer(args.thread_id, run_id, args.message)
-    result = {
-        "thread_id": args.thread_id,
-        "run_id": run_id,
-        "notification_id": notice["notification_id"],
-        "status": "queued",
-    }
+    # The service decides queued-or-started atomically; no status pre-consult.
+    result = await client.steer_thread(args.thread_id, args.message)
     if args.json:
         sys.stdout.write(msgspec_dumps(result) + "\n")
+    elif result.status == "queued":
+        sys.stdout.write(
+            f"Message queued for thread {args.thread_id}, run {result.run_id} "
+            f"(notification_id={result.notification_id}).\n"
+        )
     else:
         sys.stdout.write(
-            f"Message queued for thread {args.thread_id}, run {run_id} "
-            f"(notification_id={notice['notification_id']}).\n"
+            f"Thread {args.thread_id} was idle; started run {result.run_id} "
+            f"(request_id={result.request_id}).\n"
         )
 
 

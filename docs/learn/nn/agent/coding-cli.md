@@ -203,15 +203,17 @@ interrupting execution. JSON output includes the initial snapshot and new events
 with no final `result` envelope. See [Watch An Existing Thread](service-local.md#watch-an-existing-thread)
 for discovery, reconnection, and output details.
 
-To send an additional instruction to the active run through its inbox:
+To send an instruction to a thread, whether it is currently running or idle:
 
 ```bash
 msgflux threads steer THREAD_ID -m "Focus on the failing integration test"
 ```
 
-This queues a message for the current run without creating another prompt or
-waiting for completion. See [Steer An Active Thread](service-local.md#steer-an-active-thread)
-for delivery timing and target selection.
+On a live thread this queues the message into the current run's inbox without
+starting another prompt. On an idle thread it admits the message as a new prompt
+and starts a run. The JSON reply distinguishes both cases by `status`
+(`queued` or `started`). See [Steer A Thread](service-local.md#steer-a-thread)
+for delivery timing, guards and retry advice.
 
 Successful tasks exit with code 0. A failed, paused or interrupted run exits with
 code 1. Plain-text errors go to stderr and include available execution IDs;

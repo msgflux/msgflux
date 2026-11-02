@@ -801,31 +801,45 @@ of missed deltas. An idle or completed thread can still be observed; its saved
 conversation is available in the JSON snapshot. A watcher does not emit a final
 CLI `result` envelope and does not send another user message.
 
-## Steer An Active Thread
+## Steer A Thread
 
 ```bash
 msgflux threads steer THREAD_ID -m "Prioritize the integration tests"
 msgflux threads steer THREAD_ID --message "Keep the public API unchanged" --json
 ```
 
-`threads steer` selects the thread's active root run and sends a user message
-through its existing AgentInbox. It does not submit another prompt or start a
-new run. Like observation and inspection, it requires an existing verified local
-daemon and accepts `--runtime-dir PATH`.
+`threads steer` sends the message to the thread and lets the durable service
+decide what that means. It does not consult the active-run list first.
 
-The response confirms that the message was queued, including `thread_id`,
-`run_id`, and `notification_id`. The agent consumes it at its normal inbox drain
-points, such as after a tool call or before the run's final checkpoint;
-confirmation does not mean the model has read it yet. Steering does not preempt
-an in-flight model request or interrupt tools. If a message arrives while the
-final model request is in flight, the same run can continue with another model
-request that includes it.
+- If the thread has a live run, the message goes through that run's existing
+  AgentInbox and the reply reports `"status": "queued"` with `run_id` and
+  `notification_id`. No new run starts.
+- If the thread is genuinely idle (no live worker), the message is admitted as a
+  new prompt and the reply reports `"status": "started"` with `run_id` and
+  `request_id`. This is the only way this command starts work.
 
-An empty message, an idle or unknown thread, or an ambiguous active-run selection
-is rejected. Once the run closes its inbox for finalization, steering is rejected
-even if an after-run hook is still executing. The CLI does not redirect the
-message to a newer run. Use
-`msgflux -p "Follow up" --thread THREAD_ID` for a new turn after completion.
+Both forms require an existing verified local daemon and accept
+`--runtime-dir PATH`. The decision is atomic, so two concurrent steers on an idle
+thread start at most one run: one reply is `started` and the other is `queued`.
+
+The agent consumes a queued message at its normal inbox drain points, such as
+after a tool call or before the run's final checkpoint; `queued` does not mean the
+model has read it yet. Steering does not preempt an in-flight model request or
+interrupt tools. If a message arrives while the final model request is in flight,
+the same run can continue with another model request that includes it.
+
+An empty message, or an unknown thread, is rejected before any run starts. A run
+that already sealed its inbox for finalization cannot accept the message and the
+command fails with a retryable busy diagnostic, even if an after-run hook is
+still executing; it does not redirect the message to another run. The same
+applies while a run drains an interruption request, while a paused or failed run
+still needs recovery, and while the thread is being compacted. Retry once the
+run settles, or use `msgflux -p "Follow up" --thread THREAD_ID` for an explicit
+new turn.
+
+Steering adds no notification journal and no deduplication: repeating the command
+publishes or admits again. After an ambiguous failure, inspect the thread with
+`threads ls`, `threads result`, or `threads watch` instead of blindly repeating.
 
 ## Validate Configuration Offline
 
@@ -1098,8 +1112,9 @@ msgflux runs result THREAD_ID RUN_ID --wait --json
 
 `threads result` selects the most recently admitted execution in the thread.
 It does not select by checkpoint update time or fall back to an earlier completed
-answer. `runs result` selects the specified execution. A steer message stays in
-the active run; a new prompt creates another run in the same thread.
+answer. `runs result` selects the specified execution. A steer message accepted
+by a live run stays in that run; a steer on an idle thread or a new prompt
+creates another run in the same thread.
 
 Both commands return immediately unless `--wait` is supplied. JSON prints one
 `RunResult` object, including the selected IDs:

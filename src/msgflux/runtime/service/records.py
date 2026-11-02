@@ -39,6 +39,21 @@ class AgentInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     configuration: AgentConfiguration | None = None
 
 
+class ThreadSteerResult(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Outcome of one thread-scoped steering attempt, without promising retries.
+
+    ``queued`` published the content to the live run's existing AgentInbox;
+    ``started`` admitted the content as a new prompt on an idle thread. Neither
+    outcome is idempotent: a repeated call publishes or admits again.
+    """
+
+    thread_id: str
+    run_id: str
+    status: Literal["queued", "started"]
+    notification_id: str | None = None
+    request_id: str | None = None
+
+
 class RunSummary(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Public metadata for a saved execution, without checkpoint state."""
 

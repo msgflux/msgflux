@@ -54,6 +54,7 @@ from msgflux.runtime.service.records import (
     ServiceConflictError,
     ServiceRecoveryRequiredError,
     ServiceThread,
+    ThreadSteerResult,
 )
 from msgflux.runtime.service.session_cache import (
     SessionLease,
@@ -828,33 +829,48 @@ class AgentService:
             account_name = self._validate_account_name(account_name)
         async with self._use_session(thread_id) as session:
             async with self._lock:
-                self._require_no_maintenance(thread_id)
-                self._require_open()
-                self._notify_before_write()
-                existing = self.store.get(thread_id, request_id)
-                if existing is None:
-                    self._validate_new_input(session, thread_id)
-                    session.bind_resources(thread_id, create=True)
-                    state = session.workspace_policy_state
-                    if (
-                        state is not None
-                        and self.store.workspace_policy(thread_id) is None
-                    ):
-                        saved = self.store.update_workspace_policy(
-                            state.current, expected_revision=0
-                        )
-                        state.current = saved
-                record = self.store.admit(
-                    thread_id,
-                    request_id,
-                    prompt,
-                    session.namespace,
-                    account_name=account_name or self.default_account,
-                    check_account=account_name is not None,
+                return self._admit_prompt_locked(
+                    session, thread_id, prompt, request_id, account_name=account_name
                 )
-                if record.receipt.status == "accepted":
-                    self._schedule(record, session)
-                return record.receipt
+
+    def _admit_prompt_locked(
+        self,
+        session: AgentSession,
+        thread_id: str,
+        prompt: str,
+        request_id: str,
+        *,
+        account_name: str | None = None,
+    ) -> AdmissionReceipt:
+        """Admit and schedule one prompt while the caller holds ``self._lock``.
+
+        Callers must not await another admission from inside this helper; the
+        lock is not re-entrant and the whole decision must stay atomic.
+        """
+        self._require_no_maintenance(thread_id)
+        self._require_open()
+        self._notify_before_write()
+        existing = self.store.get(thread_id, request_id)
+        if existing is None:
+            self._validate_new_input(session, thread_id)
+            session.bind_resources(thread_id, create=True)
+            state = session.workspace_policy_state
+            if state is not None and self.store.workspace_policy(thread_id) is None:
+                saved = self.store.update_workspace_policy(
+                    state.current, expected_revision=0
+                )
+                state.current = saved
+        record = self.store.admit(
+            thread_id,
+            request_id,
+            prompt,
+            session.namespace,
+            account_name=account_name or self.default_account,
+            check_account=account_name is not None,
+        )
+        if record.receipt.status == "accepted":
+            self._schedule(record, session)
+        return record.receipt
 
     def _require_no_maintenance(self, thread_id):
         if thread_id in self._maintenance_tasks:
@@ -1162,24 +1178,129 @@ class AgentService:
             None,
         )
 
+    def _active_worker_for_thread(self, thread_id: str) -> _Worker | None:
+        """Return the thread's single live root worker, or refuse ambiguity.
+
+        At most one worker per thread is expected. Choosing silently between
+        two would steer the wrong run, so ambiguity is a retryable busy state.
+        """
+        workers = [
+            worker
+            for worker in self._workers.values()
+            if worker.receipt.thread_id == thread_id
+            and worker.task is not None
+            and not worker.task.done()
+        ]
+        if len(workers) > 1:
+            raise ServiceBusyError(
+                "The thread has more than one active run; retry after they settle"
+            )
+        return workers[0] if workers else None
+
+    def _publish_user_message_locked(
+        self,
+        worker: _Worker,
+        content: str,
+        *,
+        aborted_message: str,
+        closed_message: str,
+    ):
+        """Publish user content through the worker's existing AgentInbox.
+
+        Callers hold ``self._lock``. The run keeps its own inbox gate and
+        interruption state; this helper never reopens a sealed run, never
+        admits another run, and never redirects content to a different one.
+        """
+        receipt = worker.receipt
+        if worker.scope.abort_signal.aborted:
+            raise ServiceBusyError(aborted_message)
+        inbox = worker.session.agent_inbox or worker.session.agent.agent_inbox
+        try:
+            return inbox.fork(
+                namespace=worker.session.namespace,
+                thread_id=receipt.thread_id,
+                run_id=receipt.run_id,
+            ).user_message(content)
+        except AgentInboxClosedError as error:
+            raise ServiceBusyError(closed_message) from error
+
+    async def steer_thread(self, thread_id: str, content: str) -> ThreadSteerResult:
+        """Queue into a live run or admit a new prompt on a genuinely idle thread.
+
+        The activity decision and, when idle, the admission happen under the
+        same lock, so two concurrent steers cannot start two workers. A live
+        run keeps the strict inbox boundary: once it seals its inbox for
+        finalization, or while it drains an interruption request, the call
+        raises a retryable :class:`ServiceBusyError` instead of admitting a
+        second run or reporting a message as queued.
+
+        This entry point adds no notification journal and no idempotency: a
+        repeated call publishes or admits again. Callers must not resend after
+        an uncertain transport failure.
+        """
+        if not isinstance(content, str):
+            raise TypeError("content must be a string")
+        if not content.strip():
+            raise ValueError("`content` must be a non-empty string")
+        validate_identifier(thread_id, "thread_id")
+        async with self._lock:
+            self._require_open()
+            self._require_no_maintenance(thread_id)
+            worker = self._active_worker_for_thread(thread_id)
+            if worker is not None:
+                return self._steer_running_locked(worker, content)
+        # Only the idle path needs a live Agent. Loading it may await, so it runs
+        # outside the lock and re-checks activity before admitting.
+        async with self._use_session(thread_id) as session:
+            async with self._lock:
+                self._require_open()
+                self._require_no_maintenance(thread_id)
+                worker = self._active_worker_for_thread(thread_id)
+                if worker is not None:
+                    return self._steer_running_locked(worker, content)
+                receipt = self._admit_prompt_locked(
+                    session, thread_id, content, uuid4().hex
+                )
+                return ThreadSteerResult(
+                    thread_id=thread_id,
+                    run_id=receipt.run_id,
+                    status="started",
+                    request_id=receipt.request_id,
+                )
+
+    def _steer_running_locked(self, worker: _Worker, content: str) -> ThreadSteerResult:
+        """Queue content into a live run while the caller holds the lock."""
+        notice = self._publish_user_message_locked(
+            worker,
+            content,
+            aborted_message=(
+                "The run is draining an interruption request; retry after it settles"
+            ),
+            closed_message=(
+                "The target run no longer accepts steering; retry as a new prompt "
+                "after it settles"
+            ),
+        )
+        return ThreadSteerResult(
+            thread_id=worker.receipt.thread_id,
+            run_id=worker.receipt.run_id,
+            status="queued",
+            notification_id=notice.notification_id,
+        )
+
     async def steer(self, thread_id: str, run_id: str, content: str):
         """Publish a user message through the run's existing AgentInbox."""
         async with self._lock:
             self._require_open()
             worker = self._worker_for_run(thread_id, run_id)
-            if worker is None or worker.scope.abort_signal.aborted:
+            if worker is None:
                 raise ServiceBusyError("The target run is not active in this service")
-            inbox = worker.session.agent_inbox or worker.session.agent.agent_inbox
-            try:
-                return inbox.fork(
-                    namespace=worker.session.namespace,
-                    thread_id=thread_id,
-                    run_id=run_id,
-                ).user_message(content)
-            except AgentInboxClosedError as error:
-                raise ServiceBusyError(
-                    "The target run no longer accepts steering"
-                ) from error
+            return self._publish_user_message_locked(
+                worker,
+                content,
+                aborted_message="The target run is not active in this service",
+                closed_message="The target run no longer accepts steering",
+            )
 
     def _recover_approval_owner(self, session, record):
         """Use local host evidence to adopt only an unexecuted approval batch."""

@@ -24,6 +24,7 @@ from msgflux.runtime.service import (
     ServiceConflictError,
     ServiceRecoveryRequiredError,
     ServiceThread,
+    ThreadSteerResult,
 )
 from msgflux.runtime.service.http.records import (
     ActiveRunsResponse,
@@ -404,6 +405,23 @@ class AgentServiceClient:
         path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/interrupt"
         result = await self._json("POST", path, InterruptResponse)
         return result.interrupted
+
+    async def steer_thread(self, thread_id: str, content: str) -> ThreadSteerResult:
+        """Queue into a live run or admit a new prompt on an idle thread.
+
+        The server decides atomically. Nothing is retried here: after an
+        uncertain transport failure, inspect the thread instead of resending.
+        """
+        if not isinstance(content, str):
+            raise TypeError("content must be a string")
+        if not content.strip():
+            raise ValueError("`content` must be a non-empty string")
+        return await self._json(
+            "POST",
+            self._thread_path(thread_id) + "/steer",
+            ThreadSteerResult,
+            SteerRequest(content),
+        )
 
     async def steer(self, thread_id: str, run_id: str, content: str) -> dict[str, Any]:
         path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/steer"

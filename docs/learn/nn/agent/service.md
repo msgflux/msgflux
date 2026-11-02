@@ -298,6 +298,41 @@ Steering publishes to the selected execution's existing AgentInbox. The Agent
 places the message at its normal model-request boundary. This API does not
 implement a follow-up queue or dedupe retries of steering messages.
 
+Use `steer_thread()` when the caller does not already know whether the thread is
+busy:
+
+```python
+result = await service.steer_thread(thread_id, "Focus on integration tests")
+if result.status == "queued":
+    print("delivered to run", result.run_id, result.notification_id)
+else:
+    print("started run", result.run_id, result.request_id)
+```
+
+The service decides between two outcomes while holding its admission lock:
+
+| `status` | Meaning | Identity returned |
+| --- | --- | --- |
+| `queued` | The thread's live run accepted the content in its AgentInbox | `run_id`, `notification_id` |
+| `started` | The thread was idle and the content became a new prompt | `run_id`, `request_id` |
+
+A genuinely idle thread (no live worker) admits a new prompt, so this call can
+start a run. Existing admission guards still apply: a paused or failed run that
+requires recovery, unresolved workspace command receipts, an unowned worker, a
+run draining an interruption request, a run that already sealed its inbox for
+finalization, and a thread being compacted all raise an error instead of being
+bypassed. `queued` is never reported unless the run's inbox actually accepted
+the message; the caller may retry a `ServiceBusyError` after the run settles.
+Two concurrent steers on one idle thread start at most one worker: the winner
+gets `started` and the other gets `queued`, or a retryable busy error if the
+inbox already closed during finalization.
+
+Neither outcome is idempotent. This entry point writes no notification journal
+and deduplicates nothing, so do not resend after an uncertain transport failure:
+inspect the thread (`runs()` or an observer) and decide explicitly. Contrast this
+with `prompt(..., request_id=...)`, whose durable request identity makes a
+repeated call return the same run.
+
 For a workspace, create one binding in the host factory and reuse it in the
 scope factory:
 
