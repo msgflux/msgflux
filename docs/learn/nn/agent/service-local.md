@@ -1100,6 +1100,27 @@ answer. These inspection commands never start a server. Run inspection requires
 an active, authenticated daemon and reports errors on stderr with exit code `1`.
 Use `--runtime-dir PATH` to select another local service.
 
+## Read Recent Run Activity
+
+```bash
+msgflux runs activity THREAD_ID RUN_ID
+msgflux runs activity THREAD_ID RUN_ID --json
+```
+
+These commands report admission status, local worker presence, the latest
+observed event and its age, pending interruption evidence and up to eight recent
+control events. They use `GET /v1/threads/{thread_id}/runs/{run_id}/activity`,
+which reads the existing worker projection without loading its Agent or
+checkpoint. Polling does not submit input, wake an idle thread, resume a paused
+run or start an absent daemon.
+
+Activity omits prompts, tool arguments, outputs and streamed text. A long event
+age does not establish that a worker is stuck; it may be awaiting a model, tool
+or cleanup. `interrupt_requested` means the signal was requested, not that the
+worker has finished. Summaries are process-local and disappear on settlement
+or restart. For recovery decisions use `runs inspect`; for the answer use
+`runs result`.
+
 ## Retrieve A Thread Or Run Result
 
 ```bash

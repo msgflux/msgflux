@@ -73,6 +73,39 @@ not a claim that those tasks are currently executing. Use the task store and
 [background task recovery workflow](tools/background-tasks.md#inspecting-and-coordinating-recovery)
 for durable task inspection and recovery.
 
+## Read Recent Local Activity
+
+For lightweight monitoring, use the activity projection instead of reconstructing
+the checkpoint used by recovery inspection:
+
+```python
+activity = await service.run_activity(thread_id, receipt.run_id)
+print(activity.status, activity.local_worker)
+print(activity.last_event_type, activity.seconds_since_event)
+print(activity.interrupt_requested, activity.seconds_since_interrupt)
+```
+
+This example reads the admission status, the latest event observed by this
+service and the age of an interruption request. `AgentServiceClient.run_activity()`
+returns the same `RunActivity` record over HTTP. Neither path loads the Agent,
+hydrates conversation history, submits input, or resumes the run.
+
+`recent_events` contains at most eight control-event summaries. Deltas update
+the latest event and its age without replacing those summaries. The summaries
+contain event type, timestamp, bounded source labels and a tool name when
+available; they omit prompts, tool arguments, outputs and token text. Diagnostic
+labels may be shortened to keep the projection bounded.
+
+An event's age describes the last observed boundary, not the current stack or
+proof of a stalled execution. An interruption request can remain pending while
+cooperative cleanup finishes. Live activity is process-local: after the worker
+settles or the service restarts, the projection returns durable admission status
+with `local_worker=False`, empty summaries and no invented activity timestamps.
+The interruption state is then `None`, since this process has no live signal
+to inspect. Absence of a local worker does not establish another owner's
+quiescence.
+Use `inspect_run()` for recovery evidence and the result endpoints for answers.
+
 ## Prompt And Observe
 
 The host registers a factory that creates a separate Agent for each thread.

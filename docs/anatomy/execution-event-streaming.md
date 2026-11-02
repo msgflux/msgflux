@@ -262,6 +262,20 @@ message, and tool events through that sink. The task projection remains active
 after the root Agent reaches `run.end`, allowing a later watcher to reconnect
 and continue observing it.
 
+## Bounded Service Activity
+
+The service reduces the stream it already consumes into a small worker-owned
+activity projection. It keeps at most eight control-event labels and updates
+the latest observed timestamp for deltas without retaining their payloads.
+An explicit interruption request records its first request time separately.
+This adds no subscriber queue, checkpoint history or durable event journal.
+
+The activity endpoint reads admission identity and this projection without
+acquiring a session or loading checkpoint state. Ages use a monotonic clock;
+event timestamps retain the original event clock. The projection disappears
+with its worker. It is diagnostic evidence about observed boundaries rather
+than a stack trace, proof of quiescence or a replacement for recovery inspection.
+
 ## Durability Boundary
 
 Execution events are presentation and observability data. They are deliberately

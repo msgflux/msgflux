@@ -29,7 +29,7 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
     )
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
-        "runs": ("inspect", "resume", "ls", "result"),
+        "runs": ("inspect", "resume", "ls", "result", "activity"),
         "threads": ("ls", "watch", "steer", "interrupt", "stop", "result"),
         "agents": ("ls", "inspect"),
     }
@@ -177,6 +177,7 @@ def _validate_options(args: argparse.Namespace) -> None:
         "watch",
         "steer",
         "result",
+        "activity",
         "ls",
     }:
         raise SystemExit(
@@ -189,7 +190,6 @@ def _validate_options(args: argparse.Namespace) -> None:
         args.resource in {"runs", "threads"} and args.action == "result"
     ):
         raise SystemExit("--wait is only accepted with threads result or runs result")
-
     _validate_target(args)
     _validate_message(args)
     if args.agent is not None and not (args.resource == "runs" and args.action == "ls"):
@@ -363,7 +363,9 @@ async def _run_operation(args) -> None:
         if args.resource == "threads":
             await _thread_operation(client, args)
             return
-        if args.action == "resume":
+        if args.action == "activity":
+            result = await client.run_activity(args.thread_id, args.run_id)
+        elif args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
         else:
             result = await client.inspect_run(args.thread_id, args.run_id)
@@ -392,6 +394,9 @@ def _show_run_result(args, result) -> None:
     if args.action == "resume":
         sys.stdout.write(f"Run {result.run_id}: {result.status}\n")
         return
+    if args.action == "activity":
+        _show_activity(result)
+        return
     run_status = (
         result.receipt.status
         if result.receipt is not None
@@ -411,6 +416,27 @@ def _show_run_result(args, result) -> None:
         )
     for reason in result.reasons:
         sys.stdout.write(f"- {reason}\n")
+
+
+def _show_activity(result) -> None:
+    sys.stdout.write(
+        f"Run {result.run_id}: {result.status}\n"
+        f"Thread: {result.thread_id}\nLocal worker: {result.local_worker}\n"
+    )
+    if result.last_event_type is not None:
+        age = (
+            f"{result.seconds_since_event:.1f}s ago"
+            if result.seconds_since_event is not None
+            else "age unavailable"
+        )
+        sys.stdout.write(f"Last observed event: {result.last_event_type} ({age})\n")
+    else:
+        sys.stdout.write("No process-local activity is available.\n")
+    if result.interrupt_requested:
+        sys.stdout.write("Interruption requested; worker settlement is pending.\n")
+    for event in result.recent_events:
+        tool = f" tool={event.tool_name}" if event.tool_name else ""
+        sys.stdout.write(f"- {event.timestamp} {event.event_type}{tool}\n")
 
 
 async def _active_thread_run(client, thread_id: str) -> str | None:
@@ -478,6 +504,7 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         "watch": _run_operation,
         "steer": _run_operation,
         "result": _run_operation,
+        "activity": _run_operation,
         "ls": _run_operation,
     }
     if args.action in actions:

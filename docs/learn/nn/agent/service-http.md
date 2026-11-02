@@ -374,6 +374,29 @@ supported recovery claim is available. Raw
 checkpoints, invocation arguments, task results, progress metadata, and owner IDs
 are excluded.
 
+## Poll Recent Activity
+
+```python
+activity = await client.run_activity(thread_id, run_id)
+print(activity.status, activity.local_worker)
+print(activity.last_event_type, activity.seconds_since_event)
+for event in activity.recent_events:
+    print(event.event_type, event.tool_name)
+```
+
+This example calls `GET /v1/threads/{thread_id}/runs/{run_id}/activity` to read
+bounded diagnostic metadata. It does not attach an SSE observer, load an Agent
+or reconstruct checkpoint history. It contains no prompt, tool arguments,
+outputs or token text. Up to eight recent control-event labels are retained;
+token deltas update the latest event and its age without filling that list.
+
+An explicit interrupt request is reported separately from worker completion.
+The latest observed boundary does not establish the current stack or prove a
+stall. Activity is local to the worker and disappears after settlement or
+restart; durable admission status remains available. Use `inspect_run()` for
+recovery evidence and `run_result()` for the answer. Older daemons need a
+restart after upgrading to expose this endpoint.
+
 ## Detach And Reconnect
 
 ```python

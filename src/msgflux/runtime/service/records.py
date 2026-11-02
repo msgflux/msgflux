@@ -113,6 +113,31 @@ class RunResult(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     error: str | None = None
 
 
+class RunActivityEvent(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Bounded diagnostic labels; never tool arguments or event payloads."""
+
+    event_type: str
+    timestamp: str
+    source_path: tuple[str, ...] = ()
+    tool_name: str | None = None
+
+
+class RunActivity(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Locally observed execution activity, separate from recovery evidence."""
+
+    thread_id: str
+    run_id: str
+    status: AdmissionStatus
+    local_worker: bool = False
+    last_event_type: str | None = None
+    last_event_at: str | None = None
+    seconds_since_event: float | None = None
+    interrupt_requested: bool | None = None
+    interrupt_requested_at: str | None = None
+    seconds_since_interrupt: float | None = None
+    recent_events: tuple[RunActivityEvent, ...] = ()
+
+
 class RunInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Read-only recovery evidence for one foreground service run."""
 

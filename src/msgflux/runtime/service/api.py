@@ -26,6 +26,7 @@ from msgflux.runtime.agent_inbox.base import AgentInboxClosedError
 from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
+from msgflux.runtime.service.activity import RunActivityTracker
 from msgflux.runtime.service.approvals import project, review_record
 from msgflux.runtime.service.cache_policy import SessionCachePolicy
 from msgflux.runtime.service.inspection import (
@@ -47,6 +48,7 @@ from msgflux.runtime.service.records import (
     AgentConfiguration,
     AgentInspection,
     ApprovalReview,
+    RunActivity,
     RunInspection,
     RunResult,
     RunSummary,
@@ -206,6 +208,7 @@ class _Worker(msgspec.Struct):
     scope: ExecutionScope
     task: asyncio.Task | None = None
     trace_trigger: SpanContext | None = None
+    activity: RunActivityTracker = msgspec.field(default_factory=RunActivityTracker)
 
 
 class AgentService:
@@ -1048,6 +1051,7 @@ class AgentService:
                 worker.session.agent.stream_events(record.prompt, scope=worker.scope)
             ) as events:
                 async for event in events:
+                    worker.activity.observe(event)
                     if (
                         event.run_id == worker.receipt.run_id
                         and len(event.source_path) == 1
@@ -1070,6 +1074,30 @@ class AgentService:
         if record is None:
             raise KeyError(run_id)
         return record.receipt
+
+    async def run_activity(self, thread_id: str, run_id: str) -> RunActivity:
+        """Read bounded local activity without loading a session or checkpoint.
+
+        Event ages describe what this service last observed, not the worker's
+        current stack or a determination that it is stuck. Live labels disappear
+        when their worker settles; admission status remains durable.
+        """
+        async with self._lock:
+            self._require_open()
+            receipt = self.receipt_for_run(thread_id, run_id)
+            worker = self._workers.get((thread_id, receipt.request_id))
+            if (
+                worker is None
+                or worker.receipt.run_id != run_id
+                or worker.task is None
+                or worker.task.done()
+            ):
+                return RunActivity(
+                    thread_id=thread_id, run_id=run_id, status=receipt.status
+                )
+            return worker.activity.snapshot(
+                receipt, interrupted=worker.scope.abort_signal.aborted
+            )
 
     def _wait_receipt(self, thread_id: str, request_id: str) -> AdmissionReceipt:
         """Read a receipt only when this service can wait for its live attempt."""
@@ -1164,6 +1192,7 @@ class AgentService:
             worker = self._worker_for_run(thread_id, run_id)
             if worker is None:
                 return False
+            worker.activity.request_interrupt()
             worker.scope.abort_signal.abort("Service run interrupted")
             return True
 

@@ -17,6 +17,7 @@ from msgflux.runtime.service import (
     AdmissionReceipt,
     AgentInspection,
     ApprovalReview,
+    RunActivity,
     RunInspection,
     RunResult,
     RunSummary,
@@ -360,6 +361,11 @@ class AgentServiceClient:
         """Fetch only the status and final answer for a recorded run."""
         path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/result"
         return await self._json("GET", path, RunResult)
+
+    async def run_activity(self, thread_id: str, run_id: str) -> RunActivity:
+        """Read process-local activity without reconstructing conversation state."""
+        path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/activity"
+        return await self._json("GET", path, RunActivity)
 
     async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
         """Read execution diagnostics without admitting or resuming work."""
