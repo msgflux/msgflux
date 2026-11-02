@@ -156,12 +156,26 @@ class ThreadWatcher:
         self._event_buffer_limit = event_buffer_limit
         self._closed = False
         self._snapshot: ThreadSnapshot | None = None
+        self._snapshot_released = False
 
     @property
     def snapshot(self) -> ThreadSnapshot:
         if self._snapshot is None:
+            if self._snapshot_released:
+                raise RuntimeError("The initial watcher snapshot has been released.")
             raise RuntimeError("Enter the watcher context before reading its snapshot.")
         return self._snapshot
+
+    def release_snapshot(self) -> None:
+        """Release the initial snapshot without detaching the event subscription.
+
+        Consumers that have rendered or serialized the history can relinquish
+        this watcher's ownership of it. Caller-owned snapshots remain valid.
+        Repeated calls are harmless; ``snapshot`` is unavailable after release.
+        """
+        if self._snapshot is not None:
+            self._snapshot = None
+            self._snapshot_released = True
 
     async def __aenter__(self) -> ThreadWatcher:
         if self._buffer is not None or self._closed:

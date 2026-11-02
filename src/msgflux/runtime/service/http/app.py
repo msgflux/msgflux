@@ -45,8 +45,8 @@ from msgflux.runtime.service.http.records import (
 )
 from msgflux.runtime.service.http.serialization import (
     encode_json,
+    encode_snapshot,
     event_record,
-    snapshot_record,
 )
 from msgflux.runtime.service.http.telemetry import (
     annotate_http_response,
@@ -63,10 +63,12 @@ from msgflux.runtime.workspace.errors import WorkspaceIdentityError
 PathValue = FromPath[str]
 
 
-def _response(value: object, status_code: int = 200) -> Response:
+def _response(
+    value: object, status_code: int = 200, *, encoder=encode_json
+) -> Response:
     annotate_http_result(value)
     return Response(
-        content=encode_json(value),
+        content=encoder(value),
         status_code=status_code,
         media_type="application/json",
     )
@@ -236,7 +238,7 @@ def create_service_app(  # noqa: C901
 
     @get("/v1/threads/{thread_id:str}/snapshot")
     async def get_snapshot(thread_id: PathValue) -> Response:
-        return _response(snapshot_record(await service.snapshot(thread_id)))
+        return _response(await service.snapshot(thread_id), encoder=encode_snapshot)
 
     @get("/v1/threads/{thread_id:str}/runs")
     async def list_runs(thread_id: PathValue) -> Response:
@@ -349,10 +351,13 @@ def create_service_app(  # noqa: C901
             ) as watcher:
                 # AgentService.watch attaches the observer and captures its
                 # initial snapshot atomically, avoiding a gap before event 1.
-                yield ServerSentEventMessage(
+                initial = ServerSentEventMessage(
                     event="snapshot",
-                    data=encode_json(snapshot_record(watcher.snapshot)).decode(),
+                    data=encode_snapshot(watcher.snapshot).decode(),
                 )
+                watcher.release_snapshot()
+                yield initial
+                del initial
                 try:
                     async for event in watcher:
                         yield ServerSentEventMessage(

@@ -148,6 +148,7 @@ async def main() -> None:
 
     async with agent.watch(thread_id) as watcher:
         render_snapshot(watcher.snapshot)
+        watcher.release_snapshot()
 
         async for event in watcher:
             update_ui(event)
@@ -159,6 +160,15 @@ async def main() -> None:
 
 asyncio.run(main())
 ```
+
+The in-process watcher keeps its initial snapshot until it is released or the
+watcher object is discarded. After rendering it, `release_snapshot()` drops the
+watcher's reference to that history while keeping the event subscription open.
+It is safe to call repeatedly. Accessing `watcher.snapshot` after release raises
+`RuntimeError`; any snapshot reference already held by your application remains
+valid. Omit the release if your application needs to read the property later.
+The HTTP service releases its server-side snapshot after serializing the first
+SSE frame.
 
 Entering the async context atomically captures a `ThreadSnapshot` and subscribes
 to later events. Events produced after the capture are buffered until iteration
