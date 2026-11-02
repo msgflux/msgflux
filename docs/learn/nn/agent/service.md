@@ -226,6 +226,14 @@ trusted workspace host, then retry admission or recovery. An approval request
 raised during a run is different: the run settles as `paused` and can be reviewed
 and resumed through the approval flow.
 
+A local command that reaches its deadline or output limit can record a
+`terminated` receipt when the executor confirms the leader's exit status,
+closed output pipes and an empty owned process group. The tool reports the
+timeout or capture error, and the Agent can issue a subsequent command.
+Missing termination evidence or a failure to persist the terminal receipt
+leaves an uncertain outcome requiring reconciliation. Interrupted commands
+are never retried automatically.
+
 Set `AgentService(default_agent="main", ...)` to let `open_thread()` create a
 thread without an explicit agent ID. The selected default must be registered.
 A service with no configured default requires an explicit ID for a new thread;

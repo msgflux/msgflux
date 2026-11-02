@@ -24,11 +24,15 @@ from msgflux.runtime.workspace.environment import (
     ProcessResult,
 )
 from msgflux.runtime.workspace.local import LocalWorkspace
-from msgflux.runtime.workspace.process_capture import drain_subprocess
+from msgflux.runtime.workspace.process_capture import (
+    drain_subprocess,
+    process_group_present,
+)
 from msgflux.runtime.workspace.receipts import (
     MAX_RECEIPT_OUTPUT_BYTES,
     get_command_execution,
 )
+from msgflux.utils.errors import exception_message
 
 
 class LocalProcessExecutor(ProcessExecutor):
@@ -113,6 +117,7 @@ class LocalProcessExecutor(ProcessExecutor):
             await on_output(channel, data)
 
         draining = False
+        drain_completed = False
         try:
             if execution is not None:
                 await execution.update("launched", resource=resource)
@@ -125,6 +130,7 @@ class LocalProcessExecutor(ProcessExecutor):
                 abort_signal=abort_signal,
                 owns_process_group=True,
             )
+            drain_completed = True
             if execution is not None:
                 await execution.update(
                     "completed",
@@ -154,10 +160,31 @@ class LocalProcessExecutor(ProcessExecutor):
                 except BaseException as cleanup_error:
                     error.add_note(f"Local process cleanup failed: {cleanup_error}")
             if execution is not None:
+                # A local deadline, abort or output bound is settled by killing
+                # this executor's own process group. The receipt records
+                # ``terminated`` only when the drain failed from that cleanup,
+                # the leader was reaped with a known status, both pipes reached
+                # EOF and no member of the owned group survives. A custom
+                # executor, a failed completion persistence, an unconfirmed
+                # descendant or a crash stays ``unknown`` and keeps blocking.
+                settled = None
+                if not drain_completed:
+                    try:
+                        settled = _confirmed_local_termination(
+                            process,
+                            launched=execution.receipt.state == "launched",
+                        )
+                    except BaseException as settlement_error:
+                        settled = None
+                        error.add_note(
+                            "Local termination could not be confirmed: "
+                            f"{exception_message(settlement_error)}"
+                        )
                 try:
                     await execution.update(
-                        "unknown",
+                        "terminated" if settled is not None else "unknown",
                         resource=resource,
+                        returncode=settled,
                         stdout=bytes(stdout),
                         stderr=bytes(stderr),
                     )
@@ -177,11 +204,17 @@ class LocalProcessExecutor(ProcessExecutor):
         except OSError as error:
             return command_inspection(receipt, "blocked", "unavailable", str(error))
         record = receipt_mapping(receipt)
-        if record["state"] == "completed" and record.get("returncode") is not None:
+        if (
+            record["state"] in {"completed", "terminated"}
+            and record.get("returncode") is not None
+        ):
             return command_inspection(
                 receipt,
                 "completed",
                 "unchecked",
+                "Recorded local termination"
+                if record["state"] == "terminated"
+                else None,
                 stdout=record.get("stdout"),
                 stderr=record.get("stderr"),
                 returncode=record["returncode"],
@@ -282,6 +315,27 @@ class LocalProcessExecutor(ProcessExecutor):
             )
         finally:
             os.close(pidfd)
+
+
+def _confirmed_local_termination(process, *, launched: bool) -> int | None:
+    """Return the reaped leader status only for a fully settled local group.
+
+    ``terminated`` needs four pieces of evidence: this executor launched the
+    process, its leader was reaped with a known status, both captured pipes
+    reached EOF, and no member of the owned process group survives. A missing
+    piece keeps the receipt ``unknown`` instead of certifying the cleanup.
+    """
+    if not launched:
+        return None
+    returncode = process.returncode
+    if type(returncode) is not int:
+        return None
+    for stream in (process.stdout, process.stderr):
+        if stream is None or not stream.at_eof():
+            return None
+    if process_group_present(process.pid):
+        return None
+    return returncode
 
 
 async def _wait_for_local_exit(resource, *, timeout):
