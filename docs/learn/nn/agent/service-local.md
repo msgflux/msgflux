@@ -1126,6 +1126,7 @@ or restart. For recovery decisions use `runs inspect`; for the answer use
 ```bash
 msgflux threads result THREAD_ID
 msgflux threads result THREAD_ID --wait
+msgflux threads result THREAD_ID --wait --wait-timeout 60
 msgflux threads result THREAD_ID --json
 msgflux runs result THREAD_ID RUN_ID
 msgflux runs result THREAD_ID RUN_ID --wait --json
@@ -1161,6 +1162,29 @@ recovery; waiting cannot adopt it after a restart.
 If the run settles while recovery is being checked, the result retains its
 recorded failure cause. When no error is recorded, the diagnostic explains why
 the connected service cannot wait for that attempt.
+
+Add `--wait-timeout SECONDS` to cap that observation:
+
+```bash
+msgflux threads result THREAD_ID --wait --wait-timeout 60
+msgflux runs result THREAD_ID RUN_ID --wait --wait-timeout 0.5 --json
+```
+
+The budget must be a finite positive number and is only accepted together with
+`--wait`; omitting it keeps waiting until the run settles. It bounds observation
+performed by the CLI after the selected run is resolved: the run inspection,
+receipt polls and the final result lookup. It does not bound the initial run
+lookup, service connection or transport, and it is never sent to the daemon, so
+an expired budget leaves the agent running and no interruption is requested.
+
+When the budget expires, the command reports the last observed state in the same
+`RunResult` shape and exits with code `1`, like any other unfinished run. The
+status is `accepted` or `running` while the agent keeps working; a receipt that
+already settled without a readable answer keeps its unfinished status and its
+error explains that the recorded answer was not read in time. The diagnostic
+names `runs result` and `runs inspect` so the outcome can be read again. A
+client-side transport timeout raised before the budget elapses stays an error.
+Ctrl+C during a bounded wait still only affects observation.
 
 These commands require an active, authenticated service and never start one.
 Use `--runtime-dir PATH` to select another local service. For recovery diagnostics,

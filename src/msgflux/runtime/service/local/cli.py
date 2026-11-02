@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import math
 import os
 import sys
 from pathlib import Path
@@ -61,6 +62,18 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         help=_help_for(
             resource,
             "wait for the selected run to leave accepted/running state (result only)",
+            "runs",
+            "threads",
+        ),
+    )
+    parser.add_argument(
+        "--wait-timeout",
+        type=float,
+        metavar="SECONDS",
+        help=_help_for(
+            resource,
+            "bound --wait in seconds; observation then stops without aborting "
+            "the agent (result only)",
             "runs",
             "threads",
         ),
@@ -186,10 +199,7 @@ def _validate_options(args: argparse.Namespace) -> None:
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
 
-    if args.wait and not (
-        args.resource in {"runs", "threads"} and args.action == "result"
-    ):
-        raise SystemExit("--wait is only accepted with threads result or runs result")
+    _validate_result_wait(args)
     _validate_target(args)
     _validate_message(args)
     if args.agent is not None and not (args.resource == "runs" and args.action == "ls"):
@@ -222,6 +232,18 @@ def _validate_message(args: argparse.Namespace) -> None:
             raise SystemExit("threads steer requires a non-empty --message")
     elif args.message is not None:
         raise SystemExit("--message is only accepted with threads steer")
+
+
+def _validate_result_wait(args: argparse.Namespace) -> None:
+    if args.wait and not (
+        args.resource in {"runs", "threads"} and args.action == "result"
+    ):
+        raise SystemExit("--wait is only accepted with threads result or runs result")
+    if args.wait_timeout is not None:
+        if not args.wait:
+            raise SystemExit("--wait-timeout is only accepted with --wait")
+        if not math.isfinite(args.wait_timeout) or args.wait_timeout <= 0:
+            raise SystemExit("--wait-timeout must be a finite positive number")
 
 
 def _validate_listing_target(args: argparse.Namespace) -> None:
