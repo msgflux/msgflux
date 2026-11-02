@@ -147,6 +147,7 @@ async def test_thread_workspace_binding_is_exposed_and_immutable(tmp_path):
                 "cwd": str(first),
                 "interactive": True,
                 "model": None,
+                "parent_thread_id": None,
             }
             opened = await client.post("/v1/threads", json=body)
             assert opened.status_code == 201
@@ -437,6 +438,7 @@ async def test_http_uses_default_agent_for_new_threads_and_keeps_existing_bindin
                 "cwd": None,
                 "interactive": True,
                 "model": None,
+                "parent_thread_id": None,
             }
 
             reopened = await client.post(

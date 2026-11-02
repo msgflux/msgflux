@@ -467,3 +467,54 @@ explicitly when the repository is configured only through those mechanisms.
 The installer still uses uv's normal configuration for additional package
 sources; the explicit default index passed by msgflux takes precedence over
 uv's configured default.
+
+## Track Child Threads
+
+Create independent CLI threads linked to an existing parent on the same service:
+
+```bash
+msgflux -p "Inspect the tests" --agent explorer --parent PARENT_THREAD_ID --detach --json
+msgflux -p "Implement the fix" --agent builder --parent PARENT_THREAD_ID --detach --json
+msgflux threads children PARENT_THREAD_ID --json
+```
+
+A profile can be launched repeatedly: two commands with `--agent builder`
+and the same `--parent` create two children with distinct thread and run IDs.
+The children command lists both. Address an individual child using its returned
+IDs with `runs result` or `threads steer`. Use `--thread` only when continuing
+an existing child.
+
+The service persists the parent relationship and rejects a missing parent,
+self-parenting or a conflicting relationship on reopen. Omitting `--parent`
+when continuing a child preserves its existing binding. Listing reads only
+bindings and admission metadata; it does not load sessions, conversation
+history or final answers. Receipt status describes persisted execution state,
+not proof that a worker is alive.
+
+Wait for any run in the selected child page to settle:
+
+```bash
+msgflux threads children PARENT_THREAD_ID --wait --wait-timeout 30 --json
+msgflux threads children PARENT_THREAD_ID --wait --exclude-run HANDLED_RUN_ID --json
+```
+
+The first command returns a compact child identity and status, including failed,
+paused or interrupted outcomes. Exit code 0 means observation succeeded; inspect
+the child's status to determine whether its work succeeded. Already settled runs are eligible, so a fast
+child cannot be missed between launch and observation. Repeat `--exclude-run`
+to skip outcomes already handled. An empty eligible batch returns `empty`.
+Retrieve an answer explicitly with `msgflux runs result THREAD_ID RUN_ID`.
+
+Waiting pins the run identities visible in the initial page. Later children
+and later turns do not silently join that batch. The deadline covers HTTP
+requests and polling; on expiry the command returns `timeout`, exits with code
+1 and leaves execution running. It does not resume paused work or recover
+uncertain workers.
+
+Pages contain at most 100 children by default. Use `--limit N` (maximum 1000)
+and `--after-child CURSOR` with the returned `next_cursor` to observe another
+page. The cursor orders child insertion and survives service restart.
+
+This relationship records delegation metadata. Delivery through
+`send_parent_message`, automatic parent wakeup and inherited delegation
+credentials are separate capabilities; this step does not enable them.

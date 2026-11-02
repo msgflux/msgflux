@@ -93,6 +93,7 @@ class ServiceThread(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     cwd: str | None = None
     interactive: bool = True
     model: str | None = None
+    parent_thread_id: str | None = None
 
 
 class AdmissionReceipt(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -185,3 +186,17 @@ class EventRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     run_id: str | None = None
     source_path: tuple[str, ...] = ()
     version: Literal[1] = 1
+
+
+class ChildThread(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Binding and latest admission, without conversation or final output."""
+
+    thread: ServiceThread
+    cursor: int
+    receipt: AdmissionReceipt | None = None
+
+
+class ChildThreadsPage(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    parent_thread_id: str
+    children: tuple[ChildThread, ...] = ()
+    next_cursor: int | None = None

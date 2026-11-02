@@ -55,6 +55,7 @@ class OpenThreadRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True)
     cwd: str | None = None
     interactive: bool | None = None
     model: str | None = None
+    parent_thread_id: Identifier | None = None
 
 
 class PromptRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

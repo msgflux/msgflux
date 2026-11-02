@@ -353,6 +353,7 @@ class AgentService:
         cwd: str | Path | None = None,
         interactive: bool | None = None,
         model: str | None = None,
+        parent_thread_id: str | None = None,
     ) -> ServiceThread:
         """Bind a conversation and optional absolute workspace root lazily.
 
@@ -368,6 +369,13 @@ class AgentService:
                 validate_identifier(thread_id, "thread_id")
             interactive = msgspec.convert(interactive, type=bool | None, strict=True)
             selected_agent, existing = self._select_thread_agent(agent_id, thread_id)
+            selected_parent = (
+                parent_thread_id
+                if parent_thread_id is not None
+                else existing.parent_thread_id
+                if existing is not None
+                else None
+            )
             selected_model = self._thread_model(selected_agent, existing, model)
             selected_interactive = (
                 interactive
@@ -403,8 +411,13 @@ class AgentService:
                     canonical_cwd,
                     selected_interactive,
                     selected_model,
+                    selected_parent,
                 )
             )
+
+    def child_threads(self, parent_thread_id: str, *, limit: int = 100, after: int = 0):
+        self._require_open()
+        return self.store.child_threads(parent_thread_id, limit=limit, after=after)
 
     def _thread_model(self, agent_id, existing, model):
         if model is not None:
