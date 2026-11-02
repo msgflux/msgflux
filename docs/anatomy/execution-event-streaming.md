@@ -218,6 +218,29 @@ or resume the observed execution, and the watcher does not terminate
 automatically at `run.end` because another run or background task may continue
 on the same thread.
 
+## HTTP Snapshot Encoding
+
+The HTTP snapshot endpoint and the first SSE frame share `encode_snapshot()`.
+It converts the runtime snapshot with `msgspec.to_builtins()`, including the
+supported `ChatMessages` hook, then validates the `SnapshotRecord` schema before
+the final JSON encoding. The schema supplies the wire version and retains the
+same fields and nested JSON representations as the portable projection.
+
+This path avoids encoding the full history into temporary JSON and decoding
+another copy of its strings before sending it. The `snapshot_record()` helper
+remains available to consumers that need an independent portable record.
+
+Each observation still receives a complete snapshot. Snapshot capture,
+subscription ordering, bounded event queues, and detach behavior are unchanged.
+HTTP compression runs after serialization; it reduces transferred bytes while
+the decoded snapshot still occupies memory proportional to its contents.
+
+An HTTP observer calls `ThreadWatcher.release_snapshot()` once the initial
+frame has been serialized. The watcher can then continue consuming events
+without retaining that history. This explicit ownership release keeps the
+in-process `watcher.snapshot` behavior unchanged for other callers, including
+snapshots already retained by application code.
+
 ## Nested Agents And Background Tasks
 
 Nested modules inherit the active event sink through `contextvars`.

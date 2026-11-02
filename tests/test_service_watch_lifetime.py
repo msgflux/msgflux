@@ -14,6 +14,35 @@ from msgflux.runtime.service import AgentService, AgentSession, SQLiteServiceSto
 
 
 @pytest.mark.asyncio
+async def test_releasing_initial_snapshot_keeps_subscription_and_caller_ownership():
+    hub = EventHub()
+    watcher = hub.watch("released-snapshot", load_messages=lambda: ["history"])
+    async with watcher:
+        snapshot = watcher.snapshot
+        watcher.release_snapshot()
+        watcher.release_snapshot()
+        assert snapshot.messages == ["history"]
+        with pytest.raises(RuntimeError, match="snapshot has been released"):
+            _ = watcher.snapshot
+        event = ExecutionEvent(
+            type="message.delta", timestamp="now", data={"delta": "next"}
+        )
+        hub.publish("released-snapshot", event)
+        assert await anext(watcher) is event
+
+
+@pytest.mark.asyncio
+async def test_default_watcher_snapshot_remains_available_after_close():
+    watcher = EventHub().watch("retained-snapshot", load_messages=lambda: ["history"])
+    async with watcher:
+        snapshot = watcher.snapshot
+    assert watcher.snapshot is snapshot
+    watcher.release_snapshot()
+    with pytest.raises(RuntimeError, match="snapshot has been released"):
+        _ = watcher.snapshot
+
+
+@pytest.mark.asyncio
 async def test_cancelled_attach_disposes_observer_while_lease_release_continues():
     service = AgentService(store=SQLiteServiceStore())
     service.register(

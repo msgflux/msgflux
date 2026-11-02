@@ -39,6 +39,20 @@ def snapshot_record(snapshot: ThreadSnapshot) -> SnapshotRecord:
     )
 
 
+def encode_snapshot(snapshot: ThreadSnapshot) -> bytes:
+    """Encode a snapshot without materializing an intermediate JSON copy.
+
+    The schema still supplies the wire version and validates the portable
+    record. Container conversion preserves JSON representations while sharing
+    immutable strings instead of decoding a second full history into memory.
+    """
+    record = msgspec.convert(
+        msgspec.to_builtins(snapshot, str_keys=True, enc_hook=_encode_custom),
+        type=SnapshotRecord,
+    )
+    return encode_json(record)
+
+
 def event_record(event: ExecutionEvent) -> EventRecord:
     """Project an in-process execution event into its portable record."""
     return EventRecord(
@@ -50,7 +64,7 @@ def event_record(event: ExecutionEvent) -> EventRecord:
     )
 
 
-__all__ = ["encode_json", "event_record", "snapshot_record"]
+__all__ = ["encode_json", "encode_snapshot", "event_record", "snapshot_record"]
 
 
 def checkpoint_answer(checkpoint: dict) -> str | None:
