@@ -49,6 +49,7 @@ from msgflux.runtime.service.http.records import (
     ThreadsResponse,
     WorkspacePolicyRequest,
 )
+from msgflux.runtime.service.records import ChildThreadsPage
 from msgflux.runtime.workspace.policy import WorkspacePolicy
 
 
@@ -312,6 +313,16 @@ class AgentServiceClient:
         result = await self._json("GET", "/v1/threads", ThreadsResponse)
         return result.threads
 
+    async def child_threads(
+        self, parent_thread_id: str, *, limit: int = 100, after: int = 0
+    ) -> ChildThreadsPage:
+        return await self._json(
+            "GET",
+            self._thread_path(parent_thread_id)
+            + f"/children?limit={limit}&after={after}",
+            ChildThreadsPage,
+        )
+
     async def open_thread(
         self,
         agent_id: str | None = None,
@@ -320,6 +331,7 @@ class AgentServiceClient:
         cwd: str | Path | None = None,
         interactive: bool | None = None,
         model: str | None = None,
+        parent_thread_id: str | None = None,
     ) -> ServiceThread:
         request = OpenThreadRequest(
             agent_id=agent_id,
@@ -332,6 +344,10 @@ class AgentServiceClient:
             payload["model"] = model
         else:
             payload.pop("model", None)
+        if parent_thread_id is not None:
+            payload["parent_thread_id"] = parent_thread_id
+        else:
+            payload.pop("parent_thread_id", None)
         return await self._json("POST", "/v1/threads", ServiceThread, payload)
 
     async def snapshot(self, thread_id: str) -> SnapshotRecord:

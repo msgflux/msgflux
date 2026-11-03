@@ -83,6 +83,7 @@ def _prompt_parser() -> argparse.ArgumentParser:
         metavar="PROVIDER/MODEL",
         help="bind a model to a new thread; defaults to the selected agent's model",
     )
+    parser.add_argument("--parent", help="bind a new child to this parent thread")
     parser.add_argument("--thread", help="continue an existing noninteractive thread")
     parser.add_argument("--config", type=Path, help="backend TOML configuration")
     parser.add_argument(
@@ -257,6 +258,7 @@ def main(argv: Sequence[str] | None = None) -> None:
                 cwd=cwd,
                 agent_id=options.agent,
                 model=model,
+                parent_thread_id=options.parent,
                 account_name=options.account_name,
                 thread_id=options.thread,
                 observer=observe if options.stream else None,

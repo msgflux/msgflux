@@ -54,6 +54,7 @@ class PromptExecution:
         cwd: Path | None = None,
         agent_id: str | None = None,
         model: str | None = None,
+        parent_thread_id: str | None = None,
         account_name: str | None = None,
         thread_id: str | None = None,
         observer: ObservationCallback | None = None,
@@ -75,6 +76,7 @@ class PromptExecution:
                 cwd=cwd if thread_id else cwd or Path.cwd(),
                 interactive=False,
                 model=model,
+                parent_thread_id=parent_thread_id,
             )
             self.result.thread_id = thread.thread_id
             self.result.agent_id = thread.agent_id

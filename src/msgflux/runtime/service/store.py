@@ -17,6 +17,8 @@ from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
+    ChildThread,
+    ChildThreadsPage,
     ServiceBusyError,
     ServiceConflictError,
     ServiceThread,
@@ -102,6 +104,14 @@ class SQLiteServiceStore:
                     self._connection.execute(
                         "ALTER TABLE service_threads ADD COLUMN model TEXT"
                     )
+                if "parent_thread_id" not in columns:
+                    self._connection.execute(
+                        "ALTER TABLE service_threads ADD COLUMN parent_thread_id TEXT"
+                    )
+                self._connection.execute(
+                    "CREATE INDEX IF NOT EXISTS service_thread_parent "
+                    "ON service_threads(parent_thread_id)"
+                )
                 self._connection.execute(
                     """CREATE TABLE IF NOT EXISTS service_admissions (
                     thread_id TEXT NOT NULL REFERENCES service_threads(thread_id),
@@ -124,6 +134,10 @@ class SQLiteServiceStore:
                     self._connection.execute(
                         "ALTER TABLE service_admissions ADD COLUMN account_name TEXT"
                     )
+                self._connection.execute(
+                    "CREATE INDEX IF NOT EXISTS service_admission_thread "
+                    "ON service_admissions(thread_id)"
+                )
                 self._connection.execute(
                     """CREATE UNIQUE INDEX IF NOT EXISTS service_active_thread
                     ON service_admissions(thread_id)
@@ -184,6 +198,17 @@ class SQLiteServiceStore:
         with self._lock:
             self._connection.close()
 
+    @staticmethod
+    def _thread_record(row: sqlite3.Row) -> ServiceThread:
+        return ServiceThread(
+            row["thread_id"],
+            row["agent_id"],
+            row["cwd"],
+            bool(row["interactive"]),
+            row["model"],
+            row["parent_thread_id"],
+        )
+
     def bind_thread(self, thread: ServiceThread) -> ServiceThread:
         try:
             thread = msgspec.convert(thread, type=ServiceThread, strict=True)
@@ -200,16 +225,22 @@ class SQLiteServiceStore:
             if not Path(thread.cwd).is_absolute():
                 raise ValueError("`cwd` must be an absolute path")
         with self._lock, self._connection:
+            if thread.parent_thread_id is not None:
+                validate_identifier(thread.parent_thread_id, "parent_thread_id")
+                if thread.parent_thread_id == thread.thread_id:
+                    raise ValueError("A thread cannot be its own parent")
+                self.thread(thread.parent_thread_id)
             self._connection.execute(
                 """INSERT OR IGNORE INTO service_threads
-                (thread_id, agent_id, cwd, interactive, model)
-                VALUES (?, ?, ?, ?, ?)""",
+                (thread_id, agent_id, cwd, interactive, model, parent_thread_id)
+                VALUES (?, ?, ?, ?, ?, ?)""",
                 (
                     thread.thread_id,
                     thread.agent_id,
                     thread.cwd,
                     int(thread.interactive),
                     thread.model,
+                    thread.parent_thread_id,
                 ),
             )
             existing = self.thread(thread.thread_id)
@@ -226,28 +257,59 @@ class SQLiteServiceStore:
             ).fetchone()
         if row is None:
             raise KeyError(thread_id)
-        return ServiceThread(
-            row["thread_id"],
-            row["agent_id"],
-            row["cwd"],
-            bool(row["interactive"]),
-            row["model"],
-        )
+        return self._thread_record(row)
 
     def threads(self) -> tuple[ServiceThread, ...]:
         with self._lock:
             rows = self._connection.execute(
                 "SELECT * FROM service_threads ORDER BY thread_id"
             ).fetchall()
-        return tuple(
-            ServiceThread(
-                row["thread_id"],
-                row["agent_id"],
-                row["cwd"],
-                bool(row["interactive"]),
-                row["model"],
+        return tuple(self._thread_record(row) for row in rows)
+
+    def child_threads(
+        self, parent_thread_id: str, *, limit: int = 100, after: int = 0
+    ) -> ChildThreadsPage:
+        if type(limit) is not int or not 1 <= limit <= 1000:
+            raise ValueError("limit must be between 1 and 1000")
+        if type(after) is not int or after < 0:
+            raise ValueError("after must be a non-negative cursor")
+        self.thread(parent_thread_id)
+        with self._lock:
+            rows = self._connection.execute(
+                """
+                SELECT t.*, t.rowid AS child_cursor,
+                       a.request_id, a.run_id, a.status, a.error, a.revision
+                FROM service_threads t LEFT JOIN service_admissions a
+                ON a.rowid = (
+                    SELECT MAX(rowid) FROM service_admissions
+                    WHERE thread_id = t.thread_id
+                )
+                WHERE t.parent_thread_id = ? AND t.rowid > ?
+                ORDER BY t.rowid LIMIT ?
+                """,
+                (parent_thread_id, after, limit + 1),
+            ).fetchall()
+        children = tuple(
+            ChildThread(
+                thread=self._thread_record(row),
+                cursor=row["child_cursor"],
+                receipt=AdmissionReceipt(
+                    row["thread_id"],
+                    row["request_id"],
+                    row["run_id"],
+                    row["status"],
+                    error=row["error"],
+                    revision=row["revision"],
+                )
+                if row["run_id"] is not None
+                else None,
             )
-            for row in rows
+            for row in rows[:limit]
+        )
+        return ChildThreadsPage(
+            parent_thread_id,
+            children,
+            children[-1].cursor if len(rows) > limit else None,
         )
 
     @staticmethod

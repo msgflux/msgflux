@@ -188,6 +188,12 @@ def create_service_app(  # noqa: C901
     async def list_threads() -> Response:
         return _response(ThreadsResponse(threads=service.threads()))
 
+    @get("/v1/threads/{thread_id:str}/children")
+    async def child_threads(
+        thread_id: str, limit: int = 100, after: int = 0
+    ) -> Response:
+        return _response(service.child_threads(thread_id, limit=limit, after=after))
+
     @post("/v1/threads")
     async def open_thread(data: OpenThreadRequest) -> Response:
         thread = await service.open_thread(
@@ -196,6 +202,7 @@ def create_service_app(  # noqa: C901
             cwd=data.cwd,
             interactive=data.interactive,
             model=data.model,
+            parent_thread_id=data.parent_thread_id,
         )
         return _response(thread, 201)
 
@@ -405,6 +412,7 @@ def create_service_app(  # noqa: C901
         inspect_agent,
         active_runs,
         list_threads,
+        child_threads,
         open_thread,
         get_workspace_policy,
         update_workspace_policy,

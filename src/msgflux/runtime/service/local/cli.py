@@ -31,7 +31,7 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
     actions = {
         "service": ("serve", "restart", "status", "stop", "down", "inspect", "init"),
         "runs": ("inspect", "resume", "ls", "result", "activity"),
-        "threads": ("ls", "watch", "steer", "interrupt", "stop", "result"),
+        "threads": ("ls", "watch", "steer", "interrupt", "stop", "result", "children"),
         "agents": ("ls", "inspect"),
     }
     parser.add_argument(
@@ -61,7 +61,7 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         action="store_true",
         help=_help_for(
             resource,
-            "wait for the selected run to leave accepted/running state (result only)",
+            "wait for a result or any selected child run to settle",
             "runs",
             "threads",
         ),
@@ -73,10 +73,15 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
         help=_help_for(
             resource,
             "bound --wait in seconds; observation then stops without aborting "
-            "the agent (result only)",
+            "the agent (result or children)",
             "runs",
             "threads",
         ),
+    )
+    parser.add_argument("--limit", type=int, help="child page size, at most 1000")
+    parser.add_argument("--after-child", type=int, help="child insertion cursor")
+    parser.add_argument(
+        "--exclude-run", action="append", help="skip a handled child run"
     )
     parser.add_argument(
         "--active",
@@ -191,6 +196,7 @@ def _validate_options(args: argparse.Namespace) -> None:
         "steer",
         "result",
         "activity",
+        "children",
         "ls",
     }:
         raise SystemExit(
@@ -199,6 +205,7 @@ def _validate_options(args: argparse.Namespace) -> None:
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
 
+    _validate_child_options(args)
     _validate_result_wait(args)
     _validate_target(args)
     _validate_message(args)
@@ -234,9 +241,22 @@ def _validate_message(args: argparse.Namespace) -> None:
         raise SystemExit("--message is only accepted with threads steer")
 
 
+def _validate_child_options(args) -> None:
+    if any(
+        value is not None for value in (args.limit, args.after_child, args.exclude_run)
+    ):
+        if args.resource != "threads" or args.action != "children":
+            raise SystemExit("child options are only accepted with threads children")
+    if args.limit is not None and not 1 <= args.limit <= 1000:
+        raise SystemExit("--limit must be between 1 and 1000")
+    if args.after_child is not None and args.after_child < 0:
+        raise SystemExit("--after-child must be non-negative")
+
+
 def _validate_result_wait(args: argparse.Namespace) -> None:
     if args.wait and not (
-        args.resource in {"runs", "threads"} and args.action == "result"
+        (args.resource in {"runs", "threads"} and args.action == "result")
+        or (args.resource == "threads" and args.action == "children")
     ):
         raise SystemExit("--wait is only accepted with threads result or runs result")
     if args.wait_timeout is not None:
@@ -403,6 +423,12 @@ async def _thread_operation(client, args) -> None:
         )
 
         await watch_thread(client, args.thread_id, as_json=args.json)
+    elif args.action == "children":
+        from msgflux.runtime.service.local.children import (  # noqa: PLC0415
+            show_children,
+        )
+
+        await show_children(client, args)
     elif args.action == "steer":
         await _steer_thread(client, args)
     else:
@@ -527,6 +553,7 @@ def _main(argv: Sequence[str] | None = None, *, resource: str = "service") -> No
         "steer": _run_operation,
         "result": _run_operation,
         "activity": _run_operation,
+        "children": _run_operation,
         "ls": _run_operation,
     }
     if args.action in actions:
