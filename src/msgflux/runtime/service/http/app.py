@@ -257,6 +257,14 @@ def create_service_app(  # noqa: C901
     async def run_activity(thread_id: PathValue, run_id: PathValue) -> Response:
         return _response(await service.run_activity(thread_id, run_id))
 
+    @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/tool-calls")
+    async def run_tool_calls(
+        thread_id: PathValue,
+        run_id: PathValue,
+        limit: int | None = None,
+    ) -> Response:
+        return _response(await service.run_tool_calls(thread_id, run_id, limit=limit))
+
     @get("/v1/threads/{thread_id:str}/runs/{run_id:str}/inspection")
     async def inspect_run(thread_id: PathValue, run_id: PathValue) -> Response:
         return _response(await service.inspect_run(thread_id, run_id))
@@ -411,6 +419,7 @@ def create_service_app(  # noqa: C901
         get_snapshot,
         list_runs,
         run_activity,
+        run_tool_calls,
         inspect_run,
         thread_result,
         run_result,

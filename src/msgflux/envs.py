@@ -31,6 +31,11 @@ class EnvironmentVariables(BaseSettings):
         env_prefix="MSGFLUX_",
     )
 
+    # Process-local AgentService tool-call observation (captured at service start).
+    service_activity_tool_call_capacity: int = 50
+    service_activity_tool_call_limit: int = 10
+    service_activity_argument_preview_bytes: int = 1024
+
     # Max objects in cache to functions
     # max_lru_cache: int = 16
 

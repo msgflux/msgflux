@@ -26,7 +26,10 @@ from msgflux.runtime.agent_inbox.base import AgentInboxClosedError
 from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
-from msgflux.runtime.service.activity import RunActivityTracker
+from msgflux.runtime.service.activity import (
+    RunActivityTracker,
+    _ActivitySettings,
+)
 from msgflux.runtime.service.approvals import project, review_record
 from msgflux.runtime.service.cache_policy import SessionCachePolicy
 from msgflux.runtime.service.inspection import (
@@ -52,6 +55,7 @@ from msgflux.runtime.service.records import (
     RunInspection,
     RunResult,
     RunSummary,
+    RunToolCalls,
     ServiceBusyError,
     ServiceConflictError,
     ServiceRecoveryRequiredError,
@@ -235,6 +239,7 @@ class AgentService:
             raise TypeError("cache_policy must be SessionCachePolicy or None")
         if default_agent is not None:
             validate_identifier(default_agent, "default_agent")
+        self._activity_settings = _ActivitySettings.from_environment()
         self.default_account = self._validate_account_name(default_account)
         self.store = store
         self.default_agent = default_agent
@@ -920,7 +925,11 @@ class AgentService:
             account_name=record.account_name,
         )
         worker = _Worker(
-            record.receipt, session, scope, trace_trigger=execution_trigger()
+            record.receipt,
+            session,
+            scope,
+            trace_trigger=execution_trigger(),
+            activity=RunActivityTracker(self._activity_settings),
         )
         self._workers[key] = worker
         # Clients may be observing another thread or a nested Agent. Never adopt
@@ -1103,20 +1112,46 @@ class AgentService:
         when their worker settles; admission status remains durable.
         """
         async with self._lock:
-            self._require_open()
-            receipt = self.receipt_for_run(thread_id, run_id)
-            worker = self._workers.get((thread_id, receipt.request_id))
-            if (
-                worker is None
-                or worker.receipt.run_id != run_id
-                or worker.task is None
-                or worker.task.done()
-            ):
+            receipt, worker = self._activity_worker(thread_id, run_id)
+            if worker is None:
                 return RunActivity(
                     thread_id=thread_id, run_id=run_id, status=receipt.status
                 )
             return worker.activity.snapshot(
                 receipt, interrupted=worker.scope.abort_signal.aborted
+            )
+
+    def _activity_worker(self, thread_id, run_id):
+        """Resolve local ownership while the caller holds the service lock."""
+        self._require_open()
+        receipt = self.receipt_for_run(thread_id, run_id)
+        worker = self._workers.get((thread_id, receipt.request_id))
+        if (
+            worker is None
+            or worker.receipt.run_id != run_id
+            or worker.task is None
+            or worker.task.done()
+        ):
+            worker = None
+        return receipt, worker
+
+    async def run_tool_calls(
+        self,
+        thread_id: str,
+        run_id: str,
+        *,
+        limit: int | None = None,
+    ) -> RunToolCalls:
+        """Read bounded call previews without loading history or live sessions."""
+        limit = self._activity_settings.limit(limit)
+        async with self._lock:
+            receipt, worker = self._activity_worker(thread_id, run_id)
+            return RunToolCalls(
+                thread_id=thread_id,
+                run_id=run_id,
+                status=receipt.status,
+                local_worker=worker is not None,
+                tool_calls=worker.activity.tool_calls(limit) if worker else (),
             )
 
     def _wait_receipt(self, thread_id: str, request_id: str) -> AdmissionReceipt:

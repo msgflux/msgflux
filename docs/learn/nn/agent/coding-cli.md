@@ -255,6 +255,35 @@ event log. A snapshot can contain earlier conversation history. Consumers should
 reconcile snapshots rather than treating them as additional model messages. The
 final result remains authoritative even if intermediate events were missed.
 
+### Observe Calls Without Receiving Tokens Or Tool Outputs
+
+```bash
+msgflux -p "Inspect the parser implementation" --agent explorer --detach --json
+msgflux runs activity THREAD_ID RUN_ID --tools --json
+msgflux runs activity THREAD_ID RUN_ID --tools --limit 3
+msgflux runs result THREAD_ID RUN_ID
+```
+
+Use the IDs returned by the detached launch in the following commands. Activity
+polls only a bounded set of started calls and argument previews; the result query
+retrieves the selected run's final answer. This avoids opening a conversation
+snapshot or receiving token deltas in the observing CLI. The default query
+returns the last ten calls; retention and preview sizes are configurable through
+[server environment settings](service-local.md#inspect-recent-tool-calls).
+Details exist only while the worker is live and are discarded on settlement.
+
+There are separate execution and observation settings. AgentService always
+consumes `Agent.stream_events()` internally for lifecycle/tool supervision.
+That event interface does not force provider token streaming: an Agent with
+`config={"stream": False}` can return a final model response while still emitting
+lifecycle and tool events. The coding factory enables provider streaming for its
+root Agent; embedded coding children use non-streaming responses.
+
+`--stream` controls CLI presentation, not the provider's streaming setting.
+A normal foreground prompt currently consumes the watch/SSE channel even when
+it prints only the final result. `--detach` skips that channel; use the compact
+activity and result queries above when supervising delegated CLI tasks.
+
 ## Errors, Approvals And Disconnection
 
 To observe an existing thread without sending another prompt, use:

@@ -21,11 +21,15 @@ from msgflux.runtime.service import (
     RunInspection,
     RunResult,
     RunSummary,
+    RunToolCalls,
     ServiceBusyError,
     ServiceConflictError,
     ServiceRecoveryRequiredError,
     ServiceThread,
     ThreadSteerResult,
+)
+from msgflux.runtime.service.activity import (
+    validate_tool_call_limit,
 )
 from msgflux.runtime.service.http.records import (
     ActiveRunsResponse,
@@ -372,6 +376,38 @@ class AgentServiceClient:
         """Read process-local activity without reconstructing conversation state."""
         path = self._thread_path(thread_id) + "/runs/" + _segment(run_id) + "/activity"
         return await self._json("GET", path, RunActivity)
+
+    async def run_tool_calls(
+        self,
+        thread_id: str,
+        run_id: str,
+        *,
+        limit: int | None = None,
+    ) -> RunToolCalls:
+        """Read recent started calls without tool outputs or conversation state."""
+        if limit is not None:
+            validate_tool_call_limit(limit)
+        path = (
+            self._thread_path(thread_id)
+            + "/runs/"
+            + _segment(run_id)
+            + "/tool-calls"
+            + (f"?limit={limit}" if limit is not None else "")
+        )
+        try:
+            return await self._json("GET", path, RunToolCalls)
+        except AgentServiceHTTPError as error:
+            if error.status_code == 404:
+                # Unknown runs also return404: retain that distinction instead
+                # of incorrectly diagnosing every missing run as an old daemon.
+                await self.run_activity(thread_id, run_id)
+                raise AgentServiceHTTPError(
+                    "The running service does not support recent tool calls. "
+                    "Restart or upgrade the server.",
+                    code=error.code,
+                    status_code=404,
+                ) from error
+            raise
 
     async def inspect_run(self, thread_id: str, run_id: str) -> RunInspection:
         """Read execution diagnostics without admitting or resuming work."""

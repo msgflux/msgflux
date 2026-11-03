@@ -1121,6 +1121,56 @@ worker has finished. Summaries are process-local and disappear on settlement
 or restart. For recovery decisions use `runs inspect`; for the answer use
 `runs result`.
 
+### Inspect Recent Tool Calls
+
+```bash
+msgflux runs activity THREAD_ID RUN_ID --tools
+msgflux runs activity THREAD_ID RUN_ID --tools --limit 5 --json
+```
+
+`--tools` selects a separate compact projection of started tool calls, including
+name, timestamp, call/run identities, source path and a bounded argument preview.
+It returns the most recent ten calls by default, ordered oldest to newest within
+that selection. `--limit` overrides the count for this query and must not exceed
+the server's configured retention capacity. Tool outputs, model tokens and the
+conversation snapshot are not included. The ordinary `activity` response stays
+unchanged.
+
+The server keeps a circular buffer per live worker. Reading does not consume it;
+unread calls are replaced when the buffer fills. Worker settlement or a server
+restart discards it. A settled or unowned run returns `local_worker: false` with
+an empty `tool_calls` list; this is not a historical assertion that no tools ran.
+Only started calls (`tool.start`) are tracked, not proposed or blocked intents.
+
+Arguments are previews rather than replayable invocation data. They have a UTF-8
+byte budget and structural limits; `arguments_truncated` marks omitted content.
+Common sensitive field names such as `api_key`, `password`, `authorization` and
+`token` are masked. Free-form text can still contain workspace content or secrets
+that do not use recognizable field names. No output payload is retained by this
+projection.
+
+Configure the server process through environment variables:
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `MSGFLUX_SERVICE_ACTIVITY_TOOL_CALL_CAPACITY` | `50` | Maximum recent calls retained per live worker; positive integer. |
+| `MSGFLUX_SERVICE_ACTIVITY_TOOL_CALL_LIMIT` | `10` | Default query count; positive integer, capped by retention capacity. |
+| `MSGFLUX_SERVICE_ACTIVITY_ARGUMENT_PREVIEW_BYTES` | `1024` | Maximum UTF-8 bytes per argument preview; `0` disables argument previews. |
+
+```bash
+export MSGFLUX_SERVICE_ACTIVITY_TOOL_CALL_CAPACITY=20
+export MSGFLUX_SERVICE_ACTIVITY_TOOL_CALL_LIMIT=5
+export MSGFLUX_SERVICE_ACTIVITY_ARGUMENT_PREVIEW_BYTES=512
+msgflux service restart
+```
+
+The example lowers retained call count and preview size for the restarted daemon.
+Larger values retain and return more data. Settings are validated and captured
+when the service starts; changing the observing client's environment does not
+change an already running server. A query without `--limit` uses the **server's**
+default, including for remote clients. Project `.env` files are not loaded
+automatically. Older daemons require an upgrade/restart for this endpoint.
+
 ## Retrieve A Thread Or Run Result
 
 ```bash
