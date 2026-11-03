@@ -10,6 +10,9 @@ import sys
 from pathlib import Path
 from typing import Sequence
 
+from msgflux.runtime.service.activity import (
+    validate_tool_call_limit,
+)
 from msgflux.utils.errors import exception_message
 from msgflux.utils.msgspec import msgspec_dumps
 
@@ -76,6 +79,24 @@ def _parser(resource: str = "service") -> argparse.ArgumentParser:
             "the agent (result only)",
             "runs",
             "threads",
+        ),
+    )
+    parser.add_argument(
+        "--tools",
+        action="store_true",
+        help=_help_for(
+            resource,
+            "show recent tool calls and bounded argument previews (activity)",
+            "runs",
+        ),
+    )
+    parser.add_argument(
+        "--limit",
+        type=int,
+        help=_help_for(
+            resource,
+            "recent tool calls to show with --tools (defaults to server setting: 10)",
+            "runs",
         ),
     )
     parser.add_argument(
@@ -199,6 +220,7 @@ def _validate_options(args: argparse.Namespace) -> None:
     if args.model is not None and args.action != "init":
         raise SystemExit("--model is only accepted with the init action")
 
+    _validate_activity_options(args)
     _validate_result_wait(args)
     _validate_target(args)
     _validate_message(args)
@@ -224,6 +246,18 @@ def _validate_options(args: argparse.Namespace) -> None:
         raise SystemExit(
             f"{args.action} does not accept factory, config, cwd or restart timeout"
         )
+
+
+def _validate_activity_options(args):
+    if args.tools and not (args.resource == "runs" and args.action == "activity"):
+        raise SystemExit("--tools is only accepted with runs activity")
+    if args.limit is not None:
+        if not args.tools:
+            raise SystemExit("--limit requires runs activity --tools")
+        try:
+            validate_tool_call_limit(args.limit)
+        except ValueError as error:
+            raise SystemExit(str(error)) from error
 
 
 def _validate_message(args: argparse.Namespace) -> None:
@@ -386,7 +420,7 @@ async def _run_operation(args) -> None:
             await _thread_operation(client, args)
             return
         if args.action == "activity":
-            result = await client.run_activity(args.thread_id, args.run_id)
+            result = await _read_activity(client, args)
         elif args.action == "resume":
             result = await client.resume_checkpoint(args.thread_id, args.run_id)
         else:
@@ -394,6 +428,16 @@ async def _run_operation(args) -> None:
     finally:
         await client.aclose()
     _show_run_result(args, result)
+
+
+async def _read_activity(client, args):
+    if args.tools:
+        return await client.run_tool_calls(
+            args.thread_id,
+            args.run_id,
+            limit=args.limit,
+        )
+    return await client.run_activity(args.thread_id, args.run_id)
 
 
 async def _thread_operation(client, args) -> None:
@@ -417,7 +461,10 @@ def _show_run_result(args, result) -> None:
         sys.stdout.write(f"Run {result.run_id}: {result.status}\n")
         return
     if args.action == "activity":
-        _show_activity(result)
+        if getattr(args, "tools", False):
+            _show_tool_calls(result)
+        else:
+            _show_activity(result)
         return
     run_status = (
         result.receipt.status
@@ -438,6 +485,23 @@ def _show_run_result(args, result) -> None:
         )
     for reason in result.reasons:
         sys.stdout.write(f"- {reason}\n")
+
+
+def _show_tool_calls(result) -> None:
+    sys.stdout.write(
+        f"Run {result.run_id}: {result.status}\n"
+        f"Thread: {result.thread_id}\nLocal worker: {result.local_worker}\n"
+        f"Recent tool calls: {len(result.tool_calls)} (oldest first)\n"
+    )
+    for call in result.tool_calls:
+        label = msgspec_dumps(call.tool_name)
+        sys.stdout.write(f"{call.timestamp} {label}\n")
+        if call.source_path:
+            sys.stdout.write(f"  Source: {msgspec_dumps(call.source_path)}\n")
+        suffix = " [truncated]" if call.arguments_truncated else ""
+        sys.stdout.write(f"  Arguments: {call.arguments_preview}{suffix}\n")
+    if not result.local_worker:
+        sys.stdout.write("No process-local tool calls are retained for this run.\n")
 
 
 def _show_activity(result) -> None:

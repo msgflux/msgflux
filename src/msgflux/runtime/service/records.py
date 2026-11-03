@@ -140,6 +140,28 @@ class RunActivity(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     recent_events: tuple[RunActivityEvent, ...] = ()
 
 
+class RunToolCall(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """One started call with a bounded argument preview, never its output."""
+
+    tool_name: str
+    timestamp: str
+    tool_call_id: str | None = None
+    run_id: str | None = None
+    source_path: tuple[str, ...] = ()
+    arguments_preview: str = ""
+    arguments_truncated: bool = False
+
+
+class RunToolCalls(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Recent process-local calls; an inactive worker has no retained timeline."""
+
+    thread_id: str
+    run_id: str
+    status: AdmissionStatus
+    local_worker: bool = False
+    tool_calls: tuple[RunToolCall, ...] = ()
+
+
 class RunInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Read-only recovery evidence for one foreground service run."""
 

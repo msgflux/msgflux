@@ -397,6 +397,40 @@ restart; durable admission status remains available. Use `inspect_run()` for
 recovery evidence and `run_result()` for the answer. Older daemons need a
 restart after upgrading to expose this endpoint.
 
+### Read Tool Calls Without Their Outputs
+
+```python
+calls = await client.run_tool_calls(thread_id, run_id)
+for call in calls.tool_calls:
+    print(call.tool_name, call.arguments_preview)
+
+last_three = await client.run_tool_calls(thread_id, run_id, limit=3)
+```
+
+This example polls `GET /v1/threads/{thread_id}/runs/{run_id}/tool-calls`, with an
+optional `limit` query parameter. It uses the same bearer authentication and
+admission ownership lookup as activity, without loading a session, checkpoint,
+conversation snapshot or SSE stream. The response is `RunToolCalls`; each
+`RunToolCall` contains timestamp, tool/call/run identities, source path,
+`arguments_preview` and `arguments_truncated`. It never includes tool outputs.
+The existing `RunActivity` wire contract is unchanged.
+
+Calls are ordered oldest to newest within the selected recent tail. An omitted
+limit uses the server default (ten initially), capped by its configured retention
+capacity (fifty initially). Explicit counts must be positive and no larger than
+that capacity. Client-side environment settings do not override a remote server's
+default or capacity. Unknown runs remain errors; older servers without this
+endpoint report that an upgrade/restart is needed.
+
+Retention is a bounded, process-local circular buffer owned by the live worker.
+It does not grow with elapsed execution time and is independent of whether any
+client reads it. Settlement or restart discards it. `local_worker: false` with
+an empty list means no live projection is available, not that the historical run
+made no calls. Previews are size/structure limited, mask commonly sensitive keys,
+and may still contain other user-supplied content; they are not replay payloads.
+See [Inspect Recent Tool Calls](service-local.md#inspect-recent-tool-calls) for
+server environment settings and CLI examples.
+
 ## Detach And Reconnect
 
 ```python
