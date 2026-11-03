@@ -1,5 +1,83 @@
 # Changelog
 
+## [1.0.0rc4] - 2026-11-02
+
+Fourth release candidate, focused on durable long-running agents, memory and
+checkpoint efficiency, native providers, and CLI coordination.
+
+### Coding CLI And AgentService
+- Bind an explicit --model or the resolved model default to each new coding
+  thread; preserve the selection on restart and report it in admission and
+  thread listings (#360).
+- Atomically route thread steering to a live worker or admit a new prompt for an
+  idle thread, while preserving recovery and ownership guards (#359).
+- Read prompts from UTF-8 files or stdin with --prompt-file; bound result
+  observation with --wait-timeout without interrupting execution (#359).
+- Inspect bounded process-local run activity and pending interruption evidence
+  without loading the Agent or checkpoint history (#359).
+- Use native httpx2 SSE and negotiated response compression by default with the
+  service extra; reduce snapshot copies and watcher retention (#356, #358).
+- Reconcile proven local command termination and background recovery without
+  treating uncertain external effects as safe to replay (#357).
+
+### Providers And Workspace Tools
+- Add native Anthropic Messages support, tool search, checkpoint-backed
+  continuation, and streamed tool-call deduplication (#339, #342).
+- Add the native Gemini Interactions provider (#340).
+- Add OpenCode Go Chat Completions, Responses and Anthropic routing, plus the
+  separate OpenCode Zen provider (#343, #344).
+- Support multiple exact edits to one file, explicit replace-all, and PEP 604
+  union types in tool schemas (#338, #341).
+
+### Agents, Retrievers And Configuration
+- Add explorer and builder coding presets with separate tool/permission sets;
+  use direct HTTP integrations for web search and web fetch retrievers (#351).
+- Simplify builtin agent configuration to one preset selector and standardize
+  usage_guidance (#352, #354).
+- Send concise parent messages through ordinary in-process subagent tool
+  composition (#353). CLI-linked parent/child threads remain a separate change.
+- Support MCP 2026-07-28 with legacy fallback, coordinated client lifecycle and
+  authentication refresh, and bounded unused stderr (#194, #294, #295, #298).
+
+### Durability, Long Threads And Memory
+- Reduce long-thread history copies and checkpoint serialization costs; share
+  manifest segments across retained runs and recover checkpoint suffixes
+  (#345, #346, #347).
+- Append checkpoints incrementally within a run, simplify garbage collection,
+  and share SQLite resources across durable Agents (#348, #349, #350).
+- Preserve durable outcomes, failure causes, collected tool results, and
+  cancellation evidence across stream and cleanup failures.
+- Strengthen SQLite snapshot/transaction boundaries, nested extension isolation,
+  tool-filter enforcement, task-control thread visibility, late control delivery,
+  and accepted steering continuation.
+- Preserve falsy and structured task/tool results, native command receipts, and
+  model reasoning configuration across durable history and recovery.
+
+### Dependencies And Migration
+- Remove the obsolete openai installation extra; provider HTTP clients no longer
+  require the OpenAI SDK (#355). Use the coding and service extras for the harness.
+- Require the host to load project dotenv files explicitly; automatic project
+  dotenv loading is no longer assumed. Honor documented uppercase settings and
+  keep service bearer credentials off ambient proxies (#277, #287, #304).
+- Create SQLite files privately, escape terminal controls in listings, and
+  harden parser/skill/MCP resource handling.
+- Remove database integrations and relocate private root internals (#289, #290).
+  Applications using removed database integrations must supply their own clients.
+
+### Validation And Installation
+- CI covers Python 3.11 through 3.14, including independent-process durability,
+  recovery, and deterministic CLI/service tests.
+- Install the published pre-release with:
+
+~~~bash
+uv tool install --force --python 3.13 'msgflux[coding,service]==1.0.0rc4'
+~~~
+
+Cancellation remains cooperative: an interruption request is not confirmation
+that a worker or external command has stopped. Recovery of uncertain effects
+continues to require an explicit trusted-host decision.
+
+
 ## [1.0.0rc3] - 2026-10-17
 
 Third release candidate for Coding and AgentService.
