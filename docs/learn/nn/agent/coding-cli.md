@@ -372,3 +372,98 @@ have no output, and failed or paused receipts preserve their concrete cause.
 The selected run never falls back to text from another run. This requires
 checkpoint-backed agents; the coding factory configures them automatically.
 A missing final checkpoint is still reported as a recovery error.
+
+## Check Versions And Update
+
+```bash
+msgflux --version
+msgflux version --check
+msgflux version --check --json
+msgflux update
+```
+
+`--version` (or `msgflux version`) prints the installed version without accessing
+networks, configuration, or the service. `version --check` makes a fresh request
+to the selected package index on every invocation, without a local cache, and
+reports the installed and
+latest eligible versions. A failed request exits with an error; it does not claim
+the installation is up to date. JSON output includes `installed`, `latest`, and
+`update_available`.
+
+Stable installations check stable releases. Prerelease installations also check
+prereleases; add `--pre` to a check or update to include prereleases from a stable
+installation. Yanked releases, development releases, and distributions incompatible
+with the running Python version are excluded. Updates never automatically
+downgrade the package.
+
+`msgflux update` supports packages installed through `uv tool` from a package
+index. It selects the latest eligible version from that index and invokes
+`uv tool install --force --upgrade msgflux[EXTRAS]==VERSION`, preserving the
+tool's installed extras, additional index-based requirements, and Python
+interpreter. This also updates installations pinned to a previous version.
+Git, URL, editable, source-checkout, and other environment installations are
+refused: update those using their original installation method. A single default
+Simple index and recorded `find-links` settings are supported. Multiple or named
+indexes, custom index authentication policies, other installer settings, or
+additional exported tool executables require a manual update. No update occurs
+when the installed version is already current.
+Configuration files and managed accounts are preserved.
+
+!!! warning "Updating restarts the service"
+
+    When a local AgentService is running, update stops it **before replacing the
+    package**, then starts it with the updated executable and its recorded
+    configuration or factory and launch directory. Restart may interrupt active
+    generations. **Automatic resumption of those generations is not guaranteed.**
+    The command refuses an update when it detects active generations, unless
+    `--force` is supplied. An unreachable service also blocks the update.
+
+```bash
+msgflux update --force
+msgflux update --runtime-dir /path/to/runtime --timeout 60
+```
+
+`--force` permits interruption of active generations; it does not bypass service
+identity checks. `--runtime-dir` selects the local runtime to inspect and restart;
+`--timeout` bounds each service stop and restart operation in seconds. A stopped
+service stays stopped after installation. Avoid submitting new work during the
+update: inspection and shutdown are separate operations. If you run additional
+service processes or runtime directories using the same installation, stop them
+before updating; this command manages only the selected runtime.
+
+If installation fails after stopping the service, the command attempts to start
+it again and exits with an error. Package installation is not transactional and
+this attempt does not guarantee rollback. If installation succeeds but restart
+fails, the error explicitly reports that the package was updated. Correct the
+reported startup problem and run `msgflux service restart` with the same
+`--runtime-dir` (and configuration or factory, if needed).
+
+### Use A Custom Package Index
+
+```bash
+msgflux version --check --index-url https://packages.example.com/team/simple/
+msgflux update --index-url https://packages.example.com/team/simple/
+```
+
+Pass the **base URL** of an HTTP(S) Simple repository, without the package name.
+The check requests `BASE_URL/msgflux/` and supports both JSON (PEP 691) and HTML
+(PEP 503) responses, with the same Python-version and yanked-release filtering.
+The update passes that same base URL to uv as `--default-index`, so release
+selection and installation use the same default index. The selected release and
+its dependencies must be available through the installer's package sources.
+Requests are fresh even when using a mirror; the remote mirror controls how
+quickly it synchronizes its own content.
+
+An explicit `--index-url` overrides the default index recorded in the current
+uv tool receipt. Without the flag, both commands reuse that recorded default
+index when available and otherwise use `https://pypi.org/simple/`. uv records the
+selected index on installation, so subsequent updates can reuse it. Local
+`--version` and `version` do not read index settings or make network requests;
+`version --index-url` requires `--check`.
+
+This discovery path does not resolve uv configuration files, index environment
+variables, keyring providers, or named-index authentication. Use `--index-url`
+explicitly when the repository is configured only through those mechanisms.
+The installer still uses uv's normal configuration for additional package
+sources; the explicit default index passed by msgflux takes precedence over
+uv's configured default.

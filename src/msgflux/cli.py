@@ -21,7 +21,8 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "'msgflux service', 'msgflux init', and 'msgflux accounts'."
         ),
         epilog=(
-            "Commands: msgflux init --model PROVIDER/MODEL; "
+            "Commands: msgflux --version; msgflux version --check; msgflux update; "
+            "msgflux init --model PROVIDER/MODEL; "
             "msgflux accounts login PROVIDER --account-name NAME; "
             "msgflux service; msgflux service status; msgflux service stop; "
             "msgflux service inspect; "
@@ -40,6 +41,9 @@ def _prompt_parser() -> argparse.ArgumentParser:
             "msgflux --prompt-file PATH (- reads stdin)."
         ),
     )
+    from msgflux.version import __version__  # noqa: PLC0415
+
+    parser.add_argument("--version", action="version", version=f"msgflux {__version__}")
     prompt = parser.add_mutually_exclusive_group(required=True)
     prompt.add_argument("-p", "--prompt", help="noninteractive task")
     prompt.add_argument(
@@ -185,6 +189,11 @@ class _PromptOutput:
 
 
 def _dispatch_administration(args: list[str]) -> bool:
+    if args and args[0] in {"version", "update"}:
+        from msgflux._private.updates import main as updates_main  # noqa: PLC0415
+
+        updates_main(args[1:], command=args[0])
+        return True
     if args and args[0] == "accounts":
         from msgflux.accounts.cli import main as accounts_main  # noqa: PLC0415
 
