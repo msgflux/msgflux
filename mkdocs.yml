@@ -119,19 +119,49 @@ markdown_extensions:
       custom_checkbox: true
   - pymdownx.tilde
 
+# Keep earlier tutorials in the repository while their v1 replacements are written.
+# Exclusion also removes them from the generated site and search index.
+exclude_docs: |
+  /tutorials/
+
 nav:
   - Home: 
     - index.md
-  - Anatomy:
-    - anatomy/agent-inbox.md
-    - anatomy/background-inbox-routing-plan.md
-    - anatomy/agent.md
-    - anatomy/checkpoints-and-replay.md
-    - anatomy/compaction-and-context-views.md
-    - anatomy/execution-event-streaming.md
-    - anatomy/index.md
-    - anatomy/tool-library.md
+  - Quickstart: quickstart.md
+  - CLI:
+    - learn/nn/agent/coding-cli.md
+    - learn/nn/agent/accounts.md
+    - learn/nn/agent/coding-session.md
   - Learn:
+    - learn/index.md
+    - Agent:
+      - learn/nn/agent/index.md
+      - Agent Definitions: learn/nn/agent/quickstart.md
+      - learn/nn/agent/async.md
+      - learn/nn/agent/streaming.md
+      - learn/nn/agent/event-streaming.md
+      - learn/nn/agent/reasoning.md
+      - learn/nn/agent/system-prompt.md
+      - learn/nn/agent/generation-schemas.md
+      - learn/nn/agent/task-and-context.md
+      - learn/nn/agent/vars.md
+      - Tools:
+        - Intro: learn/nn/agent/tools/index.md
+        - learn/nn/agent/tools/builtin.md
+        - learn/nn/agent/tools/config.md
+        - learn/nn/agent/tools/tool-bucket.md
+        - learn/nn/agent/tools/tool-library-extensions.md
+        - learn/nn/agent/tools/tool-search.md
+        - learn/nn/agent/tools/background-tasks.md
+        - learn/nn/agent/tools/agent-tool.md
+        - learn/nn/agent/tools/mcp.md
+      - learn/nn/agent/skills.md
+      - learn/nn/agent/extensions.md
+      - learn/nn/agent/extension-packages.md
+      - learn/nn/agent/signatures.md
+      - learn/nn/agent/hooks.md
+      - learn/nn/agent/model-gateway.md
+      - learn/nn/agent/prefilling.md
     - ✧ Models:
       - learn/models/model.md
       - learn/models/model_gateway.md
@@ -167,45 +197,6 @@ nav:
         - learn/nn/module/sequential.md
         - learn/nn/module/visualization.md
       - Message: learn/nn/message.md
-      - Agent:
-        - learn/nn/agent/index.md
-        - learn/nn/agent/quickstart.md
-        - learn/nn/agent/async.md
-        - learn/nn/agent/streaming.md
-        - learn/nn/agent/event-streaming.md
-        - learn/nn/agent/service.md
-        - learn/nn/agent/service-http.md
-        - learn/nn/agent/service-local.md
-        - learn/nn/agent/coding-cli.md
-        - learn/nn/agent/accounts.md
-        - learn/nn/agent/coding-session.md
-        - learn/nn/agent/prompt-cache.md
-        - learn/nn/agent/reasoning.md
-        - learn/nn/agent/debug.md
-        - learn/nn/agent/system-prompt.md
-        - learn/nn/agent/generation-schemas.md
-        - learn/nn/agent/task-and-context.md
-        - learn/nn/agent/runtime.md
-        - learn/nn/agent/resources.md
-        - learn/nn/agent/compaction.md
-        - learn/nn/agent/vars.md
-        - Tools:
-          - Intro: learn/nn/agent/tools/index.md
-          - learn/nn/agent/tools/builtin.md
-          - learn/nn/agent/tools/config.md
-          - learn/nn/agent/tools/tool-bucket.md
-          - learn/nn/agent/tools/tool-library-extensions.md
-          - learn/nn/agent/tools/tool-search.md
-          - learn/nn/agent/tools/background-tasks.md
-          - learn/nn/agent/tools/agent-tool.md
-          - learn/nn/agent/tools/mcp.md
-        - learn/nn/agent/skills.md
-        - learn/nn/agent/extensions.md
-        - learn/nn/agent/extension-packages.md
-        - learn/nn/agent/signatures.md
-        - learn/nn/agent/hooks.md
-        - learn/nn/agent/model-gateway.md
-        - learn/nn/agent/prefilling.md
       - Functional: learn/nn/functional.md
       - Transcriber: learn/nn/transcriber.md
       - Searcher: learn/nn/searcher.md
@@ -213,46 +204,36 @@ nav:
       - MediaMaker: learn/nn/mediamaker.md
       - Predictor: learn/nn/predictor.md
     - ◎ Telemetry: learn/telemetry.md
-    - API Reference:
-      - Models:
-          - api-reference/models/model.md
-          - api-reference/models/model_gateway.md
-          - Types:
-              - ChatCompletion: api-reference/models/types/chat_completion.md
-      - nn:
-          - api-reference/nn/functional.md
-          - api-reference/nn/modules/agent.md       
-  - Tutorials:
-    - tutorials/index.md
-    - Agent Runtime:
-      - Durable Operations Coordinator: tutorials/durable-operations-agent.md
-    - Payments & Commerce:
-      - PIX Assistant: tutorials/pix-assistant.md
-      - Food Delivery Assistant: tutorials/food-delivery-assistant.md
-      - Restaurant Supply Assistant: tutorials/restaurant-supply-assistant.md
-    - Sales:
-      - Lead Scoring: tutorials/lead-scoring.md
-      - Deal Briefing Generator: tutorials/deal-briefing-generator.md
-      - Visit Report Assistant: tutorials/visit-report.md
-    - Customer Service:
-      - Support Ticket Router: tutorials/support-ticket-router.md
-      - Email Auto Responder: tutorials/email-auto-responder.md
-      - Call Transcript Analysis: tutorials/call-transcript-analysis.md
-      - Streaming Support Triage: tutorials/streaming-support-triage.md
-    - Meetings & Productivity:
-      - Meeting Assistant: tutorials/meeting-assistant.md
-      - Meeting Action Items Tracker: tutorials/meeting-action-items.md
-      - YouTube Video Cut Detector: tutorials/youtube-cut-detector.md
-    - Marketing & Creative:
-      - Product Poster Generator: tutorials/product-poster.md
-      - Ad Focus Group Simulator: tutorials/ad-focus-group.md
-    - Routing & Classification:
-      - Intent Router: tutorials/intent-router.md
-      - Query Router with Signatures: tutorials/signature-router.md
-      - Advisor Specialist Tool: tutorials/advisor-specialist-tool.md
-      - Plan Tool with Root Context: tutorials/plan-tool-with-root-context.md
-  - Dependency Management: dependency-management.md
-  - Changelog: CHANGELOG.md
+  - Guides:
+    - guides/index.md
+    - learn/nn/agent/service.md
+    - learn/nn/agent/service-http.md
+    - learn/nn/agent/service-local.md
+    - learn/nn/agent/runtime.md
+    - learn/nn/agent/resources.md
+    - learn/nn/agent/compaction.md
+    - learn/nn/agent/prompt-cache.md
+    - learn/nn/agent/debug.md
+  - Reference:
+    - Models:
+        - api-reference/models/model.md
+        - api-reference/models/model_gateway.md
+        - Types:
+            - ChatCompletion: api-reference/models/types/chat_completion.md
+    - nn:
+        - api-reference/nn/functional.md
+        - api-reference/nn/modules/agent.md
+    - Anatomy:
+      - anatomy/agent-inbox.md
+      - anatomy/background-inbox-routing-plan.md
+      - anatomy/agent.md
+      - anatomy/checkpoints-and-replay.md
+      - anatomy/compaction-and-context-views.md
+      - anatomy/execution-event-streaming.md
+      - anatomy/index.md
+      - anatomy/tool-library.md
+    - Dependency Management: dependency-management.md
+    - Changelog: CHANGELOG.md
   - Blog:
     - blog/index.md
 
