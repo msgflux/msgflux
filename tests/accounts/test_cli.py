@@ -268,7 +268,7 @@ def test_known_oauth_without_adapter_returns_actionable_redacted_error(
     monkeypatch.setattr(
         accounts_cli,
         "get_provider_auth",
-        lambda _provider: ProviderAuthSpec("future-oauth", "oauth"),
+        lambda _provider, **_kwargs: ProviderAuthSpec("future-oauth", "oauth"),
     )
 
     async def login(self, provider, account_name="default"):

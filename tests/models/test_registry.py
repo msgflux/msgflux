@@ -119,7 +119,7 @@ class TestRegisterModel:
             register_model(InvalidModelNoProvider)
 
     def test_register_model_overwrites_existing(self):
-        """Test that re-registering a model overwrites the previous registration."""
+        """A different class requires explicit replacement."""
 
         class OriginalModel(BaseModel):
             model_type = "overwrite_test"
@@ -143,9 +143,46 @@ class TestRegisterModel:
 
         register_model(OriginalModel)
         assert model_registry["overwrite_test"]["test_provider"] == OriginalModel
+        # Re-registering the same class remains idempotent.
+        assert register_model(OriginalModel) is OriginalModel
 
-        register_model(NewModel)
+        with pytest.raises(ValueError, match="already registered"):
+            register_model(NewModel)
+        assert model_registry["overwrite_test"]["test_provider"] == OriginalModel
+
+        register_model(NewModel, replace=True)
         assert model_registry["overwrite_test"]["test_provider"] == NewModel
+
+    def test_register_model_with_empty_parens_and_catalog(self):
+        from msgflux.models.catalog import ProviderCatalog
+
+        catalog = ProviderCatalog()
+
+        @register_model()
+        class ParsModel(BaseModel):
+            model_type = "parens_type"
+            provider = "parens_provider"
+
+            def _initialize(self):
+                pass
+
+            def __call__(self):
+                return "parens"
+
+        @register_model(catalog=catalog)
+        class ScopedModel(BaseModel):
+            model_type = "scoped_type"
+            provider = "scoped_provider"
+
+            def _initialize(self):
+                pass
+
+            def __call__(self):
+                return "scoped"
+
+        assert model_registry["parens_type"]["parens_provider"] is ParsModel
+        assert "scoped_type" not in model_registry
+        assert catalog.get_model_class("scoped_type", "scoped_provider") is ScopedModel
 
     def test_register_as_decorator(self):
         """Test using register_model as a decorator."""

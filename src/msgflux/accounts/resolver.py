@@ -7,6 +7,8 @@ import asyncio
 from msgflux.accounts.providers import get_provider_auth
 from msgflux.accounts.store import AccountError, Accounts
 from msgflux.models.model_credentials import (
+    APIKeyCredentialResolver,
+    BearerTokenCredentialResolver,
     ModelCredentialResolver,
     ResolvedModelCredentials,
 )
@@ -17,10 +19,24 @@ class AccountCredentialResolver(ModelCredentialResolver):
     """Resolve one provider from the immutable account selection of the run."""
 
     def __init__(
-        self, accounts: Accounts, provider: str, *, account_name: str | None = None
+        self,
+        accounts: Accounts,
+        provider: str,
+        *,
+        account_name: str | None = None,
+        provider_catalog=None,
     ) -> None:
         self.accounts = accounts
-        self.provider = get_provider_auth(provider).provider
+        catalog = (
+            provider_catalog
+            if provider_catalog is not None
+            else getattr(accounts, "provider_catalog", None)
+        )
+        self.provider_catalog = catalog
+        # Catalog-aware: dynamic aliases resolve through the Accounts catalog
+        # (or the active catalog); builtins are unchanged.
+        self.auth = get_provider_auth(provider, provider_catalog=catalog)
+        self.provider = self.auth.provider
         if account_name is not None:
             Accounts._validate_name(account_name, "account")
         self.account_name = account_name
@@ -53,15 +69,42 @@ class AccountCredentialResolver(ModelCredentialResolver):
         if getattr(owner, "provider", self.provider) != self.provider:
             raise AccountError("The account resolver provider does not match the model")
 
+    def _api_key_headers(self, owner, value: str) -> dict[str, str]:
+        """Emit the managed key in the model class's native auth header.
+
+        The owner's class-level credential resolver is the base provider's
+        native resolver (e.g. Anthropic's ``x-api-key``); the injected
+        account resolver shadows it on the instance. Reuse that native
+        resolver's ``resolve_api_key`` for the managed key, falling back to
+        the legacy Bearer format for resolvers without it.
+        """
+        native = getattr(type(owner), "credential_resolver", None)
+        if isinstance(native, APIKeyCredentialResolver):
+            return native.resolve_api_key(value).headers
+        return BearerTokenCredentialResolver().resolve_api_key(value).headers
+
+    def _is_oauth(self) -> bool:
+        return self.auth.method == "oauth"
+
+    def _check_oauth_adapter(self) -> None:
+        if self.auth.oauth_adapter != "codex":
+            raise AccountError(
+                f"OAuth account resolution is not implemented for provider "
+                f"{self.provider!r}"
+            )
+
     def resolve(self, owner) -> ResolvedModelCredentials:
         self._validate_owner(owner)
         selected = self._selected_account()
-        if self.provider == "openai-codex":
+        if self._is_oauth():
+            self._check_oauth_adapter()
             from msgflux.accounts.oauth import (  # noqa: PLC0415
                 resolve_codex_credentials,
             )
 
-            credential = resolve_codex_credentials(self.accounts, account_name=selected)
+            credential = resolve_codex_credentials(
+                self.accounts, account_name=selected, provider=self.provider
+            )
             return ResolvedModelCredentials(
                 headers={
                     "Authorization": f"Bearer {credential.access_token}",
@@ -70,19 +113,20 @@ class AccountCredentialResolver(ModelCredentialResolver):
             )
         credential = self.accounts.get(self.provider, account_name=selected)
         return ResolvedModelCredentials(
-            headers={"Authorization": f"Bearer {credential.value}"}
+            headers=self._api_key_headers(owner, credential.value)
         )
 
     async def aresolve(self, owner) -> ResolvedModelCredentials:
         self._validate_owner(owner)
         selected = self._selected_account()
-        if self.provider == "openai-codex":
+        if self._is_oauth():
+            self._check_oauth_adapter()
             from msgflux.accounts.oauth import (  # noqa: PLC0415
                 aresolve_codex_credentials,
             )
 
             credential = await aresolve_codex_credentials(
-                self.accounts, account_name=selected
+                self.accounts, account_name=selected, provider=self.provider
             )
             return ResolvedModelCredentials(
                 headers={
@@ -94,5 +138,5 @@ class AccountCredentialResolver(ModelCredentialResolver):
             self.accounts.get, self.provider, account_name=selected
         )
         return ResolvedModelCredentials(
-            headers={"Authorization": f"Bearer {credential.value}"}
+            headers=self._api_key_headers(owner, credential.value)
         )

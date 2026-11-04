@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Any
 from uuid import uuid4
 
+from msgflux.models.catalog import ProviderCatalog
 from msgflux.runtime.service import AgentService, SQLiteServiceStore
 from msgflux.runtime.service.local.agent_inspection import manifest_agent_configuration
 from msgflux.runtime.service.local.extension_factories import with_extensions
@@ -38,11 +39,14 @@ def _load_factory(path: str, cwd: Path) -> Callable[[Path], Any]:
 
 
 def _with_factory_import_root(
-    factory: Callable[..., Any], cwd: Path
+    factory: Callable[..., Any], cwd: Path, provider_catalog: ProviderCatalog
 ) -> Callable[..., Any]:
-    def invoke(*args: Any, **kwargs: Any) -> Any:
-        with _factory_import_root(cwd):
-            return factory(*args, **kwargs)
+    async def invoke(*args: Any, **kwargs: Any) -> Any:
+        with _factory_import_root(cwd), provider_catalog.use():
+            session = factory(*args, **kwargs)
+            if inspect.isawaitable(session):
+                session = await session
+            return session
 
     return invoke
 
@@ -87,7 +91,9 @@ def _make_manifest_service(
         )
         from msgflux.accounts.store import Accounts  # noqa: PLC0415
 
-        accounts = Accounts(manifest.defaults.accounts_dir)
+        accounts = Accounts(
+            manifest.defaults.accounts_dir, provider_catalog=manifest.provider_catalog
+        )
         coding_builder = create_coding_session_factory
     factories = {}
     for agent_id, config in manifest.agents.items():
@@ -103,17 +109,22 @@ def _make_manifest_service(
                     agent_dir=agent_dir,
                     accounts=accounts,
                     extension_catalog=manifest.extension_catalog,
+                    provider_catalog=manifest.provider_catalog,
                 )
             else:
                 if config.factory is None:
                     raise ValueError(
                         f"Agent {agent_id!r} has no coding harness or factory"
                     )
-                factories[agent_id] = with_extensions(
-                    _with_factory_import_root(_load_factory(config.factory, cwd), cwd),
-                    config.extensions,
-                    manifest.extension_catalog,
-                    import_root=cwd,
+                factories[agent_id] = _with_factory_import_root(
+                    with_extensions(
+                        _load_factory(config.factory, cwd),
+                        config.extensions,
+                        manifest.extension_catalog,
+                        import_root=cwd,
+                    ),
+                    cwd,
+                    manifest.provider_catalog,
                 )
         except (ValueError, TypeError, ImportError, AttributeError) as exc:
             raise ValueError(f"Invalid agent factory for {agent_id!r}: {exc}") from exc
