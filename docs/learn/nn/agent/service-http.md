@@ -692,20 +692,21 @@ This includes opaque browser origins such as `null`. The wildcard cannot be mixe
 with other entries. Actual API requests still require the bearer token, and
 cookie credentials remain disabled.
 
-The CLI can update an existing service file without starting a daemon:
+Use the generic config commands to update an existing service file offline:
 
 ```bash
-msgflux config cors ls --config ./service.toml
-msgflux config cors add http://localhost:3000 --config ./service.toml
-msgflux config cors remove http://localhost:3000 --config ./service.toml
-msgflux config cors add '*' --config ./service.toml --json
+msgflux config set http.cors_allow_origins '["http://localhost:3000"]' --config ./service.toml
+msgflux config get http.cors_allow_origins --config ./service.toml
+msgflux config set http.cors_allow_origins '["*"]' --config ./service.toml --json
+msgflux config unset http.cors_allow_origins --config ./service.toml
 ```
 
-The final command requires an empty origin list; it never silently replaces
-existing explicit origins. Add/remove are idempotent and report whether restart
-is required. Omit `--config` to use the default service file. These commands
-preserve unrelated sections, comments and file permissions; they never import
-extensions or construct agents.
+`set` assigns the complete origin list, including an intentional replacement
+with the wildcard. Combining the wildcard with explicit origins is rejected.
+`unset` removes the override and restores disabled CORS. Mutations are
+idempotent and report whether restart is required. Omit `--config` to use the
+default service file. These commands preserve unrelated sections, comments, and
+file permissions; they never import extensions or construct agents.
 
 Restart the daemon after editing its policy. `msgflux config validate` validates
 origins offline, without importing agent factories or constructing models.

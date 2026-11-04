@@ -43,6 +43,25 @@ daemon. Add `--json` to `service status` for machine-readable diagnostics.
 uses `defaults.agent`. Declare the Explorer preset before selecting it.
 The former `msgflux-service` console entry has been replaced by `msgflux service`.
 
+## Edit Configuration
+
+Read or change stored settings without opening the TOML manually:
+
+```bash
+msgflux config get defaults.model
+msgflux config set agents.coding.permissions '["read", "execute"]'
+msgflux config unset agents.coding.permissions
+```
+
+`set` accepts TOML values and validates the full configuration before writing.
+`unset` removes an override so normal defaults apply again. Add `--config PATH`
+for another file or `--json` for structured output. Edits preserve comments and
+do not restart the daemon; run `msgflux service restart` when ready to apply
+them. Restarting can interrupt active generations.
+
+See [Read And Edit Configuration](service-local.md#read-and-edit-configuration)
+for quoted keys, tables, validation, and stored versus loaded values.
+
 ## Read The Task From A File
 
 ```bash

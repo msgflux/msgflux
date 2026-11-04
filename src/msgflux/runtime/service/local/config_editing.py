@@ -23,12 +23,33 @@ def toml_parser():
     return tomlkit
 
 
-def edit_service_config(path: Path, mutate, *, validate=None) -> tuple[Path, bool]:
+def same_config_value(left, right):
+    left = left.unwrap() if hasattr(left, "unwrap") else left
+    right = right.unwrap() if hasattr(right, "unwrap") else right
+    if type(left) is not type(right):
+        return False
+    if isinstance(left, dict):
+        return left.keys() == right.keys() and all(
+            same_config_value(value, right[key]) for key, value in left.items()
+        )
+    if isinstance(left, (list, tuple)):
+        return len(left) == len(right) and all(
+            same_config_value(a, b) for a, b in zip(left, right, strict=True)
+        )
+    return left == right
+
+
+def edit_service_config(
+    path: Path, mutate, *, validate=None, validate_original: bool = True
+) -> tuple[Path, bool]:
     """Lock, edit and publish one document; validators may inspect a temporary file.
 
     ``mutate`` receives the parsed TOML document. ``validate`` optionally receives
     the candidate's path before publication, including for unchanged documents.
-    Neither callback is allowed to publish the target itself.
+    Neither callback is allowed to publish the target itself. ``validate_original``
+    controls schema validation of the pre-edit document; the candidate is always
+    schema-validated, so callers opting out can repair a syntactically valid but
+    schema-invalid original only when the candidate is valid.
     """
     target = Path(path).expanduser().resolve(strict=True)
     parser = toml_parser()
@@ -38,7 +59,8 @@ def edit_service_config(path: Path, mutate, *, validate=None) -> tuple[Path, boo
             document = parser.parse(original.decode("utf-8"))
         except (UnicodeDecodeError, parser.exceptions.ParseError) as error:
             raise ValueError(f"Invalid service config {target}: {error}") from error
-        _validate_document(document, target)
+        if validate_original:
+            _validate_document(document, target)
         mutate(document)
         _validate_document(document, target)
         candidate = parser.dumps(document).encode("utf-8")

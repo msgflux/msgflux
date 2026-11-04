@@ -4,7 +4,6 @@ from __future__ import annotations
 
 import argparse
 import sys
-import tomllib
 from pathlib import Path
 from typing import Sequence
 
@@ -60,6 +59,10 @@ def _validate_arguments(parser, args):
 
 
 def _parse_options(values):
+    from msgflux.runtime.service.local.config_values import (  # noqa: PLC0415
+        parse_config_value,
+    )
+
     options = {}
     for item in values:
         key, separator, raw = item.partition("=")
@@ -67,17 +70,7 @@ def _parse_options(values):
             raise ValueError("--option must use a flat keyword KEY=VALUE")
         if key in options:
             raise ValueError(f"Duplicate --option {key!r}")
-        try:
-            document = tomllib.loads(f"value = {raw}")
-            if set(document) != {"value"}:
-                raise ValueError(f"--option {key!r} must contain a single value")
-            value = document["value"]
-        except tomllib.TOMLDecodeError as error:
-            if raw.lstrip().startswith(("[", "{", '"', "'")):
-                raise ValueError(
-                    f"Invalid TOML literal for --option {key!r}: {error}"
-                ) from error
-            value = raw
+        value = parse_config_value(raw, label=f"--option {key!r}")
         options[key] = value
     return options
 

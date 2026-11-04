@@ -12,6 +12,9 @@ from msgflux.runtime.service.local.config_editing import (
     edit_service_config,
     toml_parser,
 )
+from msgflux.runtime.service.local.config_editing import (
+    same_config_value as _same_value,
+)
 from msgflux.runtime.service.local.manifest import (
     load_extension_catalog,
     load_service_manifest,
@@ -145,19 +148,3 @@ def _write_options(document, name, options, factory):
 def _options(config):
     values = config.get("options", {})
     return values.unwrap() if hasattr(values, "unwrap") else dict(values)
-
-
-def _same_value(left, right):
-    left = left.unwrap() if hasattr(left, "unwrap") else left
-    right = right.unwrap() if hasattr(right, "unwrap") else right
-    if type(left) is not type(right):
-        return False
-    if isinstance(left, dict):
-        return left.keys() == right.keys() and all(
-            _same_value(value, right[key]) for key, value in left.items()
-        )
-    if isinstance(left, (list, tuple)):
-        return len(left) == len(right) and all(
-            _same_value(a, b) for a, b in zip(left, right, strict=True)
-        )
-    return left == right

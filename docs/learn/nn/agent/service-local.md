@@ -184,26 +184,24 @@ CORS is disabled when the list is empty or omitted. Use exact HTTP(S) origins,
 or `["*"]` alone to allow every browser origin. The API still requires the
 daemon's bearer token; cookie credentials remain disabled.
 
-Manage the existing configuration offline:
+Use the generic configuration commands to update the complete origin list:
 
 ```bash
-msgflux config cors ls
-msgflux config cors add http://localhost:3000
-msgflux config cors remove http://localhost:3000
-msgflux config cors add '*' --config ./service.toml --json
+msgflux config set http.cors_allow_origins '["http://localhost:3000"]'
+msgflux config get http.cors_allow_origins
+msgflux config set http.cors_allow_origins '["*"]' --config ./service.toml --json
+msgflux config unset http.cors_allow_origins
 ```
 
-These commands list, add or remove exact origins without starting the daemon,
-loading credentials, importing extensions or constructing agents. `--config`
-selects an existing service TOML; missing files are not created. Add/remove are
-idempotent and preserve comments, other sections and file permissions. JSON
-mutation output includes `changed` and `restart_required`. The wildcard must be
-the only entry: remove existing origins before adding `'*'`, or remove `'*'`
-before adding explicit origins. Quote the wildcard to prevent shell expansion.
+`set` replaces the complete list; `unset` removes the stored override and returns
+to disabled CORS. The wildcard must be the only entry. Invalid combinations are
+rejected before the file is changed. These commands preserve unrelated sections,
+comments, and file permissions and do not start the daemon or read credentials.
 
-Run `msgflux config validate`, then `msgflux service restart` to apply changes.
-`config cors ls` reads the file; `service inspect` reports the policy loaded by
-the running daemon. Editing the file does not change that running snapshot.
+Restart the service to apply changes. `config get` reads stored values;
+`service inspect` reports the policy loaded by the running daemon. An omitted
+key has no stored value to read. Editing the file does not change the running
+snapshot.
 See [Browser Clients And CORS](service-http.md#browser-clients-and-cors) for
 embedded configuration and streaming browser clients.
 
@@ -844,6 +842,71 @@ new turn.
 Steering adds no notification journal and no deduplication: repeating the command
 publishes or admits again. After an ambiguous failure, inspect the thread with
 `threads ls`, `threads result`, or `threads watch` instead of blindly repeating.
+
+## Read And Edit Configuration
+
+Use `config get`, `config set`, and `config unset` to manage an existing service
+TOML without starting a daemon:
+
+```bash
+msgflux config get
+msgflux config get defaults.model
+msgflux config get agents.coding --json
+msgflux config set defaults.model opencode-go/deepseek-v4.1-flash
+msgflux config set agents.coding.permissions '["read", "execute"]'
+msgflux config unset agents.coding.permissions
+```
+
+`get` returns the stored value at a dotted key; omit the key to read the full
+document. Strings are printed directly, other values as JSON. `--json` returns
+an object with `config_path`, `key`, and the typed `value`. An absent key is an
+error: inherited or preset defaults are not written into the file or invented
+by `get`. Use [agents inspect](#inspect-an-agents-loaded-defaults) for loaded
+registration defaults.
+
+`set` accepts TOML literals: arrays, booleans, numbers, quoted strings, and inline
+tables. Unquoted text such as a provider/model-id is accepted as a string.
+Use a TOML string literal when numeric or boolean-looking text must stay a
+string, for example `'"123"'`. Quote arrays for the shell so their inner quotes
+reach the TOML parser.
+
+Dotted keys follow TOML syntax. Quote a segment when the name itself contains a
+dot:
+
+```bash
+msgflux config set 'agents."my.builder"' '{preset = "builder", permissions = ["read", "execute"]}'
+msgflux config get 'agents."my.builder".permissions'
+```
+
+This creates a complete agent entry in one edit. Setting a table replaces that
+stored table; use a deeper key to update only one field. Array indexing is not
+part of key syntax; assign the complete list. `unset` removes a stored key and
+allows normal defaults to apply again. Unsetting an absent key is a no-op.
+
+Every edit validates the complete candidate configuration before atomic
+publication. Invalid permissions, unknown fields, and broken agent references
+leave the original file unchanged. A syntactically valid file with a wrong
+field type can be repaired if the resulting configuration is valid. Malformed
+TOML syntax must first be corrected in an editor. The commands preserve comments,
+file permissions, and unrelated settings; identical assignments do not rewrite
+the file. They validate the manifest schema and static references without
+constructing agents, importing their factories or extensions, or loading
+credentials. `config validate` additionally imports selected extension
+definitions to check their constructor arguments without constructing them.
+
+Both `set` and `unset` report `changed` and `restart_required` with `--json`.
+Mutation output does not echo assigned values. These are offline file edits;
+restart explicitly when ready to apply them:
+
+```bash
+msgflux config set agents.coding.permissions '["read", "execute"]' --config ./service.toml --json
+msgflux config validate --config ./service.toml
+msgflux service restart --config ./service.toml
+```
+
+A restart replaces the daemon and can interrupt active generations. Choose its
+timing accordingly. `--config` and `--json` can appear before or after the
+`get`, `set`, or `unset` action.
 
 ## Validate Configuration Offline
 
