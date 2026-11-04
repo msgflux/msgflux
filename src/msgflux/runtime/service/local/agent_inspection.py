@@ -5,7 +5,7 @@ from __future__ import annotations
 import sys
 from typing import TYPE_CHECKING
 
-from msgflux.runtime.service.records import AgentConfiguration
+from msgflux.runtime.service.records import AgentConfiguration, AgentModelDeployment
 from msgflux.utils.msgspec import msgspec_dumps
 
 if TYPE_CHECKING:
@@ -29,6 +29,18 @@ def manifest_agent_configuration(
         supports_model_override=True,
         model=resolved.model,
         reasoning_effort=resolved.reasoning_effort,
+        models=tuple(
+            AgentModelDeployment(
+                model_name=deployment.model_name,
+                model=deployment.model,
+                description=deployment.description,
+                reasoning_effort=deployment.reasoning_effort,
+                account_name=deployment.account_name,
+                is_default=index == 0,
+            )
+            for index, deployment in enumerate(resolved.models)
+        ),
+        model_fallback=resolved.model_fallback,
         permissions=resolved.permissions,
         tools_active=resolved.tools_active,
         tools_deferred=resolved.tools_deferred,
@@ -81,6 +93,26 @@ async def inspect_registered_agent(client, args) -> None:
         if value is not None:
             text = ", ".join(value) or "none" if isinstance(value, tuple) else value
             sys.stdout.write(f"{label}: {text}\n")
+    if config.models:
+        fallback = config.model_fallback if config.model_fallback is not None else False
+        sys.stdout.write(f"Model fallback: {'yes' if fallback else 'no'}\n")
+        sys.stdout.write("Models:\n")
+        for deployment in config.models:
+            default = " (default)" if deployment.is_default else ""
+            reasoning = (
+                f"; reasoning={deployment.reasoning_effort}"
+                if deployment.reasoning_effort is not None
+                else ""
+            )
+            account = (
+                f"; account={deployment.account_name}"
+                if deployment.account_name is not None
+                else "; account=inherited execution account"
+            )
+            sys.stdout.write(
+                f"  - {deployment.model_name}: {deployment.model}{default}; "
+                f"{deployment.description}{reasoning}{account}\n"
+            )
     if config.harness == "coding":
         sys.stdout.write(
             "Runtime tools and thread/run overrides depend on the session.\n"

@@ -424,9 +424,14 @@ class AgentService:
         supported = configuration is not None and configuration.supports_model_override
         if model is not None and not supported:
             raise ValueError("The registered factory does not support model overrides")
-        return (
-            model if model is not None else configuration.model if supported else None
-        )
+        if model is not None:
+            return model
+        # A configured gateway is resolved by its factory. Binding its first
+        # deployment as a scalar would turn a later catalog edit into a model
+        # override and bypass the gateway's durable selection policy.
+        if supported and configuration.models:
+            return None
+        return configuration.model if supported else None
 
     def _require_open(self) -> None:
         if self._closed:

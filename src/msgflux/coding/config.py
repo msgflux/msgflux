@@ -11,7 +11,7 @@ import msgspec
 
 from msgflux.coding.presets import get_coding_preset
 from msgflux.runtime.permissions import PermissionSet
-from msgflux.utils.validation import validate_model_path
+from msgflux.utils.validation import is_valid_account_name, validate_model_path
 
 _TOOL_SELECTORS = frozenset(
     {
@@ -109,6 +109,22 @@ def coding_tool_allowed(name: str, permissions: tuple[CodingPermission, ...]) ->
     return _TOOL_PERMISSIONS.get(name, set()).issubset(permissions)
 
 
+class CodingModelDeployment(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """One named model deployment available to a coding agent.
+
+    ``model_name`` is the configuration alias; ``model`` is the provider/model-id
+    path. ``account_name`` is ``None`` when the deployment inherits the
+    execution account. Validation is offline only: it never constructs a
+    provider or loads credentials.
+    """
+
+    model_name: str
+    model: str
+    description: str
+    reasoning_effort: str | None = None
+    account_name: str | None = None
+
+
 class CodingAgentOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Resolved, immutable settings for one manifest coding agent."""
 
@@ -124,11 +140,82 @@ class CodingAgentOptions(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     instructions: str | None = None
     extensions: tuple[str, ...] = ()
     preset: str | None = None
+    models: tuple[CodingModelDeployment, ...] = ()
+    model_fallback: bool = False
+    # Original tool selectors for gateway agents, preserved so the selected
+    # deployment's tools can be projected per request. ``None`` for ordinary
+    # single-model agents, whose tools are resolved from ``tools_active`` /
+    # ``tools_deferred`` directly.
+    tools_active_selectors: tuple[str, ...] | None = None
+    tools_deferred_selectors: tuple[str, ...] | None = None
+
+
+def _validate_deployments(options: CodingAgentOptions) -> None:
+    """Validate model deployments offline, without provider or credential use."""
+    if not isinstance(options.model_fallback, bool):
+        raise TypeError("model_fallback must be a bool")
+    if not isinstance(options.models, (tuple, list)):
+        raise TypeError("models must be a tuple of CodingModelDeployment")
+    if options.model_fallback and not options.models:
+        raise ValueError(f"Agent {options.agent_id!r} model_fallback requires models")
+    seen: set[str] = set()
+    for deployment in options.models:
+        _validate_deployment(deployment, options.agent_id)
+        if deployment.model_name in seen:
+            raise ValueError(
+                f"Agent {options.agent_id!r} has duplicate model alias "
+                f"{deployment.model_name!r}"
+            )
+        seen.add(deployment.model_name)
+
+
+def _validate_deployment(deployment: CodingModelDeployment, agent_id: str) -> None:
+    if not isinstance(deployment, CodingModelDeployment):
+        raise TypeError(
+            f"Agent {agent_id!r} models must be CodingModelDeployment entries"
+        )
+    if (
+        not isinstance(deployment.model_name, str)
+        or not deployment.model_name.strip()
+        or any(character.isspace() for character in deployment.model_name)
+    ):
+        raise ValueError(
+            f"Agent {agent_id!r} model alias must be a non-empty "
+            "string without whitespace"
+        )
+    try:
+        validate_model_path(deployment.model)
+    except ValueError as exc:
+        raise ValueError(
+            f"Agent {agent_id!r} model {deployment.model_name!r}: {exc}"
+        ) from exc
+    if not isinstance(deployment.description, str) or not (
+        deployment.description.strip()
+    ):
+        raise ValueError(
+            f"Agent {agent_id!r} model {deployment.model_name!r} "
+            "description must be non-empty"
+        )
+    if deployment.reasoning_effort is not None and (
+        not isinstance(deployment.reasoning_effort, str)
+        or not deployment.reasoning_effort.strip()
+    ):
+        raise ValueError(
+            f"Agent {agent_id!r} model {deployment.model_name!r} "
+            "reasoning_effort must be non-empty when provided"
+        )
+    if deployment.account_name is not None and not is_valid_account_name(
+        deployment.account_name
+    ):
+        raise ValueError(
+            f"Agent {agent_id!r} model {deployment.model_name!r} "
+            "account_name is invalid"
+        )
 
 
 def coding_agent_options(
     agent_id: str,
-    model: str,
+    model: str | None = None,
     *,
     reasoning_effort: str = "medium",
     preset: str | None = None,
@@ -139,12 +226,44 @@ def coding_agent_options(
     prompt_file: Path | None = None,
     subagents: tuple[str, ...] = (),
     extensions: tuple[str, ...] = (),
+    models: tuple[CodingModelDeployment, ...]
+    | list[CodingModelDeployment]
+    | None = None,
+    model_fallback: bool = False,
 ) -> CodingAgentOptions:
-    """Resolve explicit settings over builtin defaults for Python or TOML callers."""
+    """Resolve explicit settings over builtin defaults for Python or TOML callers.
+
+    ``models`` and an explicit scalar ``model`` are mutually exclusive. With
+    ``models``, the first deployment is the default and ``options.model`` is
+    its provider/model-id path for backwards compatibility.
+    """
+    if models is not None:
+        if not isinstance(models, (tuple, list)):
+            raise TypeError("models must be a tuple of CodingModelDeployment")
+        if not models:
+            raise ValueError("models must not be empty when provided")
+        if model is not None:
+            raise ValueError(
+                "model and models are mutually exclusive; pass either an "
+                "explicit model or agent models, not both"
+            )
+        deployments = tuple(models)
+        for deployment in deployments:
+            _validate_deployment(deployment, agent_id)
+        resolved_model = deployments[0].model
+    else:
+        if model is None:
+            raise ValueError("model is required when models are not provided")
+        if model_fallback:
+            raise ValueError("model_fallback requires models")
+        deployments = ()
+        resolved_model = model
     defaults = get_coding_preset(preset) if preset is not None else None
     options = CodingAgentOptions(
         agent_id=agent_id,
-        model=model,
+        model=resolved_model,
+        models=deployments,
+        model_fallback=model_fallback,
         preset=preset,
         reasoning_effort=reasoning_effort,
         tools_active=active
@@ -231,31 +350,92 @@ def resolve_coding_tools(
     validate_model_path(options.model)
     _validate_preset(options)
     _validate_extensions(options)
+    _validate_deployments(options)
     validate_coding_permissions(options.permissions)
-    active = _expand_selection(
-        options.tools_active,
-        model_path=options.model,
-        option_name="active",
-        permissions=options.permissions,
+    if not options.models:
+        active = _expand_selection(
+            options.tools_active,
+            model_path=options.model,
+            option_name="active",
+            permissions=options.permissions,
+        )
+        deferred = _expand_selection(
+            options.tools_deferred,
+            model_path=options.model,
+            option_name="deferred",
+            permissions=options.permissions,
+        )
+        return active, deferred
+    # Gateway: expand the original selectors per deployment and take the
+    # union in first-occurrence order across deployments.
+    active_selectors = (
+        options.tools_active_selectors
+        if options.tools_active_selectors is not None
+        else options.tools_active
     )
-    deferred = _expand_selection(
-        options.tools_deferred,
-        model_path=options.model,
-        option_name="deferred",
-        permissions=options.permissions,
+    deferred_selectors = (
+        options.tools_deferred_selectors
+        if options.tools_deferred_selectors is not None
+        else options.tools_deferred
     )
-    return active, deferred
+    active_union: list[str] = []
+    deferred_union: list[str] = []
+    for deployment in options.models:
+        for tool_name in _expand_selection(
+            active_selectors,
+            model_path=deployment.model,
+            option_name="active",
+            permissions=options.permissions,
+        ):
+            if tool_name not in active_union:
+                active_union.append(tool_name)
+        for tool_name in _expand_selection(
+            deferred_selectors,
+            model_path=deployment.model,
+            option_name="deferred",
+            permissions=options.permissions,
+        ):
+            if tool_name not in deferred_union:
+                deferred_union.append(tool_name)
+    overlap = set(active_union) & set(deferred_union)
+    if overlap:
+        raise ValueError(
+            f"Tools for {options.agent_id!r} cannot be both active and "
+            f"deferred: {', '.join(sorted(overlap))}"
+        )
+    return tuple(active_union), tuple(deferred_union)
 
 
 def resolve_coding_agent_options(
     options: CodingAgentOptions,
 ) -> CodingAgentOptions:
-    """Return a copy with workspace groups replaced by concrete tool names."""
+    """Return a copy with workspace groups replaced by concrete tool names.
+
+    Gateway agents keep their original selectors in
+    ``tools_active_selectors`` / ``tools_deferred_selectors`` while
+    ``tools_active`` / ``tools_deferred`` hold the union across deployments.
+    """
     active, deferred = resolve_coding_tools(options)
+    if not options.models:
+        return msgspec.structs.replace(
+            options,
+            tools_active=active,
+            tools_deferred=deferred,
+        )
     return msgspec.structs.replace(
         options,
         tools_active=active,
         tools_deferred=deferred,
+        tools_active_selectors=(
+            options.tools_active_selectors
+            if options.tools_active_selectors is not None
+            else tuple(options.tools_active)
+        ),
+        tools_deferred_selectors=(
+            options.tools_deferred_selectors
+            if options.tools_deferred_selectors is not None
+            else tuple(options.tools_deferred)
+        ),
     )
 
 
@@ -306,7 +486,9 @@ def _validate_coding_agent(
         )
     _validate_extensions(options)
     _validate_preset(options)
+    _validate_deployments(options)
     validate_model_path(options.model)
+    _validate_original_selectors(options)
     valid_ids = _TOOL_SELECTORS - {"workspace"}
     for category, names in (
         ("active", options.tools_active),
@@ -335,6 +517,22 @@ def _validate_coding_agent(
             )
 
 
+def _validate_original_selectors(options: CodingAgentOptions) -> None:
+    agent_id = options.agent_id
+    for category, selectors in (
+        ("active", options.tools_active_selectors),
+        ("deferred", options.tools_deferred_selectors),
+    ):
+        if selectors is None:
+            continue
+        unknown_selectors = set(selectors) - _TOOL_SELECTORS
+        if unknown_selectors:
+            raise ValueError(
+                f"{category.capitalize()} tool selectors for {agent_id!r} are "
+                f"invalid: {sorted(unknown_selectors)}"
+            )
+
+
 def _validate_subagent_graph(catalog: CodingAgentCatalog) -> None:
     visiting: set[str] = set()
     visited: set[str] = set()
@@ -357,6 +555,7 @@ def _validate_subagent_graph(catalog: CodingAgentCatalog) -> None:
 __all__ = [
     "CodingAgentCatalog",
     "CodingAgentOptions",
+    "CodingModelDeployment",
     "coding_agent_options",
     "resolve_coding_agent_options",
     "resolve_coding_tools",

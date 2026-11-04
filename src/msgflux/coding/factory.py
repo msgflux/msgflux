@@ -18,11 +18,14 @@ from msgflux.coding.config import (
     _resolve_coding_agent_dir,
     coding_permission_set,
     coding_tool_allowed,
+    resolve_coding_agent_options,
     validate_coding_catalog,
     workspace_coding_permissions,
 )
+from msgflux.coding.model_selection import CodingModelSelection
 from msgflux.coding.presets import get_coding_preset
 from msgflux.coding.prompts import system_prompt
+from msgflux.models.gateway import ModelGateway
 from msgflux.nn.extensions.discovery import AgentExtensionCatalog
 from msgflux.nn.extensions.installation import AgentExtensionInstallation
 from msgflux.nn.modules.agent import Agent
@@ -237,8 +240,24 @@ class _CodingSessionBuilder:
         tool_resources: list[Any] = []
         try:
             agent = self._build_agent(
-                msgspec.structs.replace(self.options, model=thread.model)
+                resolve_coding_agent_options(
+                    msgspec.structs.replace(
+                        self.options,
+                        model=thread.model,
+                        models=(),
+                        model_fallback=False,
+                        tools_active=self.options.tools_active_selectors
+                        if self.options.tools_active_selectors is not None
+                        else self.options.tools_active,
+                        tools_deferred=self.options.tools_deferred_selectors
+                        if self.options.tools_deferred_selectors is not None
+                        else self.options.tools_deferred,
+                        tools_active_selectors=None,
+                        tools_deferred_selectors=None,
+                    )
+                )
                 if thread.model is not None
+                and (self.options.models or thread.model != self.options.model)
                 else self.options,
                 name=self.options.agent_id,
                 workspace=workspace,
@@ -289,18 +308,15 @@ class _CodingSessionBuilder:
             for name in selected.tools_deferred
             if coding_tool_allowed(name, permissions)
         )
-        model = (
-            _create_model(selected, accounts=self.accounts)
-            if self.accounts is not None
-            else _create_model(selected)
-        )
-        models.append(model)
+        model, selection = self._build_model(selected, models)
         tools = _tool_instances(
             active,
             deferred,
             owned_resources=tool_resources,
             supports_vision=_model_supports_vision(model),
         )
+        if selection is not None:
+            tools = selection.adapt_tools(tools)
         if parent is not None:
             tools.append(SendParentMessageTool(parent))
         if interactive and not _model_has_native_commentary(model):
@@ -342,11 +358,7 @@ class _CodingSessionBuilder:
             parent=agent.tool_library.get_handle(),
         ):
             agent.tool_library.add(child)
-        agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
-        if selected.extensions:
-            installation = AgentExtensionInstallation(self.extension_catalog, agent)
-            tool_resources.append(installation)
-            installation.install(selected.extensions)
+        self._install_extensions(agent, selected, selection, tool_resources)
         agent.tool_library.extensions["background_tasks"].enable_grouping()
         agent.tool_library.apply_default_usage_guidance()
         if selected.preset is not None:
@@ -357,6 +369,58 @@ class _CodingSessionBuilder:
                 tool_config.setdefault("usage_guidance", guidance)
                 agent.tool_config = tool_config
         return agent
+
+    def _install_extensions(self, agent, selected, selection, tool_resources):
+        if selection is not None:
+            agent.register_extension("coding_models", selection)
+        agent.register_extension("coding_checkpoints", CodingCheckpointExtension())
+        if selected.extensions:
+            installation = AgentExtensionInstallation(self.extension_catalog, agent)
+            tool_resources.append(installation)
+            installation.install(selected.extensions)
+
+    def _build_model(self, selected: CodingAgentOptions, models: list[Any]):
+        selection = None
+        if selected.models:
+            deployments = []
+            for deployment in selected.models:
+                options = msgspec.structs.replace(
+                    selected,
+                    model=deployment.model,
+                    reasoning_effort=deployment.reasoning_effort
+                    or selected.reasoning_effort,
+                    models=(),
+                    model_fallback=False,
+                )
+                instance = _create_model(
+                    options,
+                    accounts=self.accounts,
+                    account_name=deployment.account_name,
+                )
+                models.append(instance)
+                deployments.append(
+                    {
+                        "model_name": deployment.model_name,
+                        "model": instance,
+                        "description": deployment.description,
+                    }
+                )
+            model = ModelGateway(deployments, fallback=selected.model_fallback)
+            selection = CodingModelSelection(
+                selected,
+                model.models,
+                accounts_root=str(self.accounts.root)
+                if self.accounts is not None and hasattr(self.accounts, "root")
+                else None,
+            )
+        else:
+            model = (
+                _create_model(selected, accounts=self.accounts)
+                if self.accounts is not None
+                else _create_model(selected)
+            )
+            models.append(model)
+        return model, selection
 
     def _build_children(
         self,
@@ -400,6 +464,8 @@ def _model_supports_vision(model: Any) -> bool:
 
 
 def _model_has_native_commentary(model: Any) -> bool:
+    if isinstance(model, ModelGateway):
+        return all(_model_has_native_commentary(item) for item in model.models)
     capabilities = getattr(model, "api_mode_capabilities", None)
     if getattr(capabilities, "assistant_commentary", False):
         return True
@@ -407,13 +473,21 @@ def _model_has_native_commentary(model: Any) -> bool:
     return bool(callable(supports_unphased) and supports_unphased())
 
 
-def _create_model(options: CodingAgentOptions, *, accounts=None):
+def _create_model(options: CodingAgentOptions, *, accounts=None, account_name=None):
     from msgflux.models.model import Model  # noqa: PLC0415
 
     kwargs = {"reasoning_effort": options.reasoning_effort}
     if accounts is not None:
         provider = options.model.split("/", 1)[0]
-        kwargs["credential_resolver"] = accounts.resolver(provider)
+        kwargs["credential_resolver"] = (
+            accounts.resolver(
+                provider, account_name=account_name, allow_account_override=True
+            )
+            if account_name is not None
+            else accounts.resolver(provider)
+        )
+    elif account_name is not None:
+        raise ValueError("A deployment account_name requires managed Accounts")
     return Model.chat_completion(options.model, **kwargs)
 
 
