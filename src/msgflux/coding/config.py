@@ -5,13 +5,17 @@ from __future__ import annotations
 import os
 from collections.abc import Mapping
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
 import msgspec
 
 from msgflux.coding.presets import get_coding_preset
 from msgflux.runtime.permissions import PermissionSet
 from msgflux.utils.validation import validate_model_path
+
+if TYPE_CHECKING:
+    from msgflux.models.catalog import ProviderCatalog
+
 
 _TOOL_SELECTORS = frozenset(
     {
@@ -139,6 +143,7 @@ def coding_agent_options(
     prompt_file: Path | None = None,
     subagents: tuple[str, ...] = (),
     extensions: tuple[str, ...] = (),
+    provider_catalog: ProviderCatalog | None = None,
 ) -> CodingAgentOptions:
     """Resolve explicit settings over builtin defaults for Python or TOML callers."""
     defaults = get_coding_preset(preset) if preset is not None else None
@@ -172,7 +177,7 @@ def coding_agent_options(
         subagents=subagents,
         extensions=extensions,
     )
-    return resolve_coding_agent_options(options)
+    return resolve_coding_agent_options(options, provider_catalog=provider_catalog)
 
 
 class CodingAgentCatalog(msgspec.Struct, frozen=True):
@@ -181,9 +186,21 @@ class CodingAgentCatalog(msgspec.Struct, frozen=True):
     agents: Mapping[str, CodingAgentOptions]
 
 
-def _openai_tool_family(model_path: str) -> bool:
+def _openai_tool_family(
+    model_path: str, *, provider_catalog: ProviderCatalog | None = None
+) -> bool:
     validate_model_path(model_path)
     provider, _, model_id = model_path.partition("/")
+    # Config-derived aliases retain the base provider's workspace tool defaults.
+    # Factory imports stay lazy; custom classes can select tools explicitly.
+    if provider_catalog is not None:
+        seen = set()
+        while provider not in seen:
+            seen.add(provider)
+            config = provider_catalog.get_config(provider)
+            if config is None or config.base is None:
+                break
+            provider = config.base
     return "openai" in provider.lower() or model_id.lower().startswith("openai/")
 
 
@@ -193,6 +210,7 @@ def _expand_selection(
     model_path: str,
     option_name: str,
     permissions: tuple[CodingPermission, ...],
+    provider_catalog: ProviderCatalog | None = None,
 ) -> tuple[str, ...]:
     selected: list[str] = []
     for name in names:
@@ -201,7 +219,7 @@ def _expand_selection(
         if name == "workspace":
             family = (
                 _OPENAI_WORKSPACE_TOOLS
-                if _openai_tool_family(model_path)
+                if _openai_tool_family(model_path, provider_catalog=provider_catalog)
                 else _NON_OPENAI_WORKSPACE_TOOLS
             )
             expanded = tuple(
@@ -227,6 +245,8 @@ def _expand_selection(
 
 def resolve_coding_tools(
     options: CodingAgentOptions,
+    *,
+    provider_catalog: ProviderCatalog | None = None,
 ) -> tuple[tuple[str, ...], tuple[str, ...]]:
     """Expand workspace groups without importing tools."""
     if not isinstance(options, CodingAgentOptions):
@@ -240,21 +260,25 @@ def resolve_coding_tools(
         model_path=options.model,
         option_name="active",
         permissions=options.permissions,
+        provider_catalog=provider_catalog,
     )
     deferred = _expand_selection(
         options.tools_deferred,
         model_path=options.model,
         option_name="deferred",
         permissions=options.permissions,
+        provider_catalog=provider_catalog,
     )
     return active, deferred
 
 
 def resolve_coding_agent_options(
     options: CodingAgentOptions,
+    *,
+    provider_catalog: ProviderCatalog | None = None,
 ) -> CodingAgentOptions:
     """Return a copy with workspace groups replaced by concrete tool names."""
-    active, deferred = resolve_coding_tools(options)
+    active, deferred = resolve_coding_tools(options, provider_catalog=provider_catalog)
     return msgspec.structs.replace(
         options,
         tools_active=active,

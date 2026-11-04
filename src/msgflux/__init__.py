@@ -22,7 +22,7 @@ if TYPE_CHECKING:
     from msgflux.dsl.signature import InputField, OutputField, Signature
     from msgflux.envs import set_envs
     from msgflux.exceptions import TaskError
-    from msgflux.models import Model
+    from msgflux.models import Model, ProviderCatalog, register_model
     from msgflux.models.gateway import ModelGateway
     from msgflux.nn.extensions import (
         AgentExtension,
@@ -95,9 +95,11 @@ __all__ = [
     "Message",
     "Model",
     "ModelGateway",
+    "ProviderCatalog",
     "OutputField",
     "Parser",
     "Registry",
+    "register_model",
     "Retriever",
     "SQLiteCheckpointStore",
     "SQLiteAgentInboxStore",
@@ -162,7 +164,9 @@ _LAZY_IMPORTS = {
     "ModelGateway": ("msgflux.models.gateway", "ModelGateway"),
     "OutputField": ("msgflux.dsl.signature", "OutputField"),
     "Parser": ("msgflux.data.parsers", "Parser"),
+    "ProviderCatalog": ("msgflux.models.catalog", "ProviderCatalog"),
     "Registry": ("msgflux.core.registry", "Registry"),
+    "register_model": ("msgflux.models.registry", "register_model"),
     "Retriever": ("msgflux.data.retrievers", "Retriever"),
     "SQLiteCheckpointStore": ("msgflux.data.stores", "SQLiteCheckpointStore"),
     "SQLiteAgentInboxStore": ("msgflux.runtime", "SQLiteAgentInboxStore"),

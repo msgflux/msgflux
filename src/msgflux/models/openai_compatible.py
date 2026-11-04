@@ -222,7 +222,10 @@ class OpenAICompatibleModel(ProviderEnvBase, BaseModel):
         Returns:
             ModelProfile if found, None otherwise
         """
-        return get_model_profile(self.model_id, provider_id=self.provider)
+        return get_model_profile(
+            self.model_id,
+            provider_id=getattr(self, "profile_provider", None) or self.provider,
+        )
 
 
 class OpenAICompatibleHTTPModel(OpenAICompatibleModel):

@@ -23,6 +23,7 @@ from msgflux.coding.config import (
 )
 from msgflux.coding.presets import get_coding_preset
 from msgflux.coding.prompts import system_prompt
+from msgflux.models.catalog import ProviderCatalog
 from msgflux.nn.extensions.discovery import AgentExtensionCatalog
 from msgflux.nn.extensions.installation import AgentExtensionInstallation
 from msgflux.nn.modules.agent import Agent
@@ -168,6 +169,7 @@ def create_coding_session_factory(
     agent_dir: Path | None = None,
     accounts=None,
     extension_catalog: AgentExtensionCatalog | None = None,
+    provider_catalog: ProviderCatalog | None = None,
 ) -> Callable[[ServiceThread], Awaitable[AgentSession]]:
     """Create a lazy, per-thread AgentSession factory for a coding entry."""
     if not isinstance(options, CodingAgentOptions):
@@ -188,6 +190,7 @@ def create_coding_session_factory(
         agent_dir=agent_dir,
         accounts=accounts,
         extension_catalog=extension_catalog,
+        provider_catalog=provider_catalog,
     )
     return builder.create_session
 
@@ -203,12 +206,14 @@ class _CodingSessionBuilder:
         agent_dir: Path,
         accounts=None,
         extension_catalog: AgentExtensionCatalog | None = None,
+        provider_catalog: ProviderCatalog | None = None,
     ) -> None:
         self.options = options
         self.catalog = catalog
         self.config_path = config_path
         self.runtime_dir = runtime_dir
         self.agent_dir = agent_dir
+        self.provider_catalog = provider_catalog
         self.accounts = accounts
         self.extension_catalog = extension_catalog or AgentExtensionCatalog()
         for entry in catalog.agents.values():
@@ -289,11 +294,15 @@ class _CodingSessionBuilder:
             for name in selected.tools_deferred
             if coding_tool_allowed(name, permissions)
         )
-        model = (
-            _create_model(selected, accounts=self.accounts)
-            if self.accounts is not None
-            else _create_model(selected)
-        )
+        model_kwargs = {
+            key: value
+            for key, value in (
+                ("accounts", self.accounts),
+                ("provider_catalog", self.provider_catalog),
+            )
+            if value is not None
+        }
+        model = _create_model(selected, **model_kwargs)
         models.append(model)
         tools = _tool_instances(
             active,
@@ -407,10 +416,12 @@ def _model_has_native_commentary(model: Any) -> bool:
     return bool(callable(supports_unphased) and supports_unphased())
 
 
-def _create_model(options: CodingAgentOptions, *, accounts=None):
+def _create_model(options: CodingAgentOptions, *, accounts=None, provider_catalog=None):
     from msgflux.models.model import Model  # noqa: PLC0415
 
     kwargs = {"reasoning_effort": options.reasoning_effort}
+    if provider_catalog is not None:
+        kwargs["provider_catalog"] = provider_catalog
     if accounts is not None:
         provider = options.model.split("/", 1)[0]
         kwargs["credential_resolver"] = accounts.resolver(provider)

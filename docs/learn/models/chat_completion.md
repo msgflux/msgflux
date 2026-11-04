@@ -3081,6 +3081,10 @@ Every initialized model exposes a `.profile` property that returns this metadata
 
 ## 18. **Adding a Custom Provider**
 
+To add a provider without writing a new class, declare a runtime alias from a
+registered base or an installed factory class — see
+[Dynamic Chat Providers](dynamic-providers.md).
+
 If the service you want to use exposes an **OpenAI-compatible API**, add it by
 subclassing `OpenAICompatibleChatCompletion`. `OpenAIChatCompletion` is the
 concrete OpenAI provider and should not be used as the base for another

@@ -71,6 +71,60 @@ class _BaseOpenCode(ProviderEnvBase):
         return base
 
 
+_BACKEND_FIELDS = (
+    "provider",
+    "model_type",
+    "display_name",
+    "api_key_env",
+    "base_url",
+    "base_url_env",
+    "profile_provider",
+    "session_header",
+    "provider_auth_method",
+)
+
+
+def _bound_anthropic_backend(cls: type) -> type | None:
+    """Return the native backend bound to ``cls``'s own alias metadata.
+
+    The builtin facades point at their builtin backend. Any subclass
+    (catalog alias, factory subclass, or manual subclass) whose provider
+    metadata differs gets a derived backend subclass carrying the
+    subclass's provider/env/endpoint/display/profile metadata while
+    inheriting the native Bearer, session-header, URL-conversion and
+    signed-reasoning behavior of the original backend. The derived
+    backend is cached on the class itself (``cls.__dict__`` only), so a
+    per-catalog alias class and its backend are collectable together
+    when the catalog is discarded; no global cache retains them.
+    """
+    backend = getattr(cls, "_anthropic_messages_backend", None)
+    if backend is None or not isinstance(backend, type):
+        return backend
+    cached = cls.__dict__.get("_bound_anthropic_backend_cache")
+    if isinstance(cached, type):
+        return cached
+    metadata: dict[str, Any] = {}
+    for field in _BACKEND_FIELDS:
+        value = getattr(cls, field, None)
+        if getattr(backend, field, None) != value:
+            if value is not None or field in cls.__dict__:
+                metadata[field] = value
+    if not metadata:
+        return backend
+    namespace = dict(metadata)
+    if "credential_resolver" in cls.__dict__:
+        namespace["credential_resolver"] = cls.__dict__["credential_resolver"]
+    namespace.update(
+        {
+            "__module__": backend.__module__,
+            "__qualname__": f"{cls.__qualname__}.NativeBackend",
+        }
+    )
+    derived = type(f"{cls.__name__}NativeBackend", (backend,), namespace)
+    cls._bound_anthropic_backend_cache = derived
+    return derived
+
+
 class _OpenCodeSessions:
     """Stable session and User-Agent headers shared by every API mode."""
 
@@ -296,7 +350,7 @@ class _OpenCodeChatCompletion(
         # one registered provider per namespace while returning that concrete
         # backend for this explicit mode. The backend initializes itself in
         # ``__new__``; a non-facade instance skips the facade ``__init__``.
-        backend = cls._anthropic_messages_backend
+        backend = _bound_anthropic_backend(cls)
         if backend is not None:
             api_mode = kwargs.get("api_mode")
             if api_mode == "anthropic_messages":
@@ -317,7 +371,7 @@ class _OpenCodeChatCompletion(
     @classmethod
     def from_serialized(cls, state: Mapping[str, Any]):
         """Restore the concrete backend selected by the serialized API mode."""
-        backend = cls._anthropic_messages_backend
+        backend = _bound_anthropic_backend(cls)
         if (
             backend is not None
             and isinstance(state, Mapping)

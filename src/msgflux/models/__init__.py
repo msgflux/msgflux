@@ -2,6 +2,11 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from msgflux.models.catalog import (
+        ProviderCatalog,
+        ProviderConfig,
+        get_current_provider_catalog,
+    )
     from msgflux.models.chat_capabilities import (
         ChatAPIModeCapabilities,
         ChatModelCapabilities,
@@ -16,12 +21,15 @@ if TYPE_CHECKING:
     from msgflux.models.configuration import ModelConfiguration
     from msgflux.models.model import Model
     from msgflux.models.model_credentials import (
+        APIKeyCredentialResolver,
         BearerTokenCredentialResolver,
         ModelCredentialResolver,
         ResolvedModelCredentials,
     )
+    from msgflux.models.registry import register_model
 
 __all__ = [
+    "APIKeyCredentialResolver",
     "BearerTokenCredentialResolver",
     "ChatAPIModeCapabilities",
     "ChatContextAdapter",
@@ -35,12 +43,17 @@ __all__ = [
     "ModelCompaction",
     "ModelCredentialResolver",
     "OpenAIResponsesContextAdapter",
+    "ProviderCatalog",
+    "ProviderConfig",
     "ResolvedModelCredentials",
+    "get_current_provider_catalog",
+    "register_model",
 ]
 
 
 def __getattr__(name: str):
     if name in {
+        "APIKeyCredentialResolver",
         "BearerTokenCredentialResolver",
         "ModelCredentialResolver",
         "ResolvedModelCredentials",
@@ -70,6 +83,18 @@ def __getattr__(name: str):
         return value
     if name == "ModelConfiguration":
         value = getattr(import_module("msgflux.models.configuration"), name)
+        globals()[name] = value
+        return value
+    if name in {
+        "ProviderCatalog",
+        "ProviderConfig",
+        "get_current_provider_catalog",
+    }:
+        value = getattr(import_module("msgflux.models.catalog"), name)
+        globals()[name] = value
+        return value
+    if name == "register_model":
+        value = getattr(import_module("msgflux.models.registry"), name)
         globals()[name] = value
         return value
     if name != "Model":

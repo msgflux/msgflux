@@ -20,8 +20,8 @@ from msgflux.models.chat_capabilities import (
 )
 from msgflux.models.http_transport import HTTPTransport
 from msgflux.models.model_credentials import (
+    APIKeyCredentialResolver,
     ModelCredentialResolver,
-    ResolvedModelCredentials,
 )
 from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.provider_env import ProviderEnvBase
@@ -122,13 +122,11 @@ def _plain(value: Any) -> Any:
     return deepcopy(value)
 
 
-class GeminiCredentialResolver(ModelCredentialResolver):
-    """Resolve the Google API key using the native header."""
+class GeminiCredentialResolver(APIKeyCredentialResolver):
+    """Resolve Gemini's API key using its native header."""
 
-    def resolve(self, owner: Any) -> ResolvedModelCredentials:
-        return ResolvedModelCredentials(
-            headers={"x-goog-api-key": owner._get_api_key()}
-        )
+    header_name = "x-goog-api-key"
+    value_prefix = ""
 
 
 class _BaseGemini(ProviderEnvBase):

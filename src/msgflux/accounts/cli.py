@@ -39,8 +39,49 @@ def _parser() -> argparse.ArgumentParser:
         command.add_argument(
             "--accounts-dir", type=Path, help="credential storage directory"
         )
+        command.add_argument(
+            "--config",
+            type=Path,
+            help=(
+                "config file whose provider declarations provide dynamic "
+                "providers (default: ~/.msgflux/config.toml when it exists)"
+            ),
+        )
         command.add_argument("--json", action="store_true", help="emit nonsecret JSON")
     return parser
+
+
+def _load_provider_catalog(path: Path):
+    """Read ONLY provider declarations from ``path`` (no defaults.model needed).
+
+    Delegates to ``load_provider_catalog`` in the service manifest module;
+    importing it here keeps static config handling free of external factory
+    imports.
+    """
+    from msgflux.runtime.service.local.manifest import (  # noqa: PLC0415
+        load_provider_catalog,
+    )
+
+    return load_provider_catalog(path)
+
+
+def _default_config_path() -> Path:
+    from msgflux.runtime.service.local.manifest import (  # noqa: PLC0415
+        default_service_config_path,
+    )
+
+    return default_service_config_path()
+
+
+def _catalog_for(options) -> object | None:
+    config = getattr(options, "config", None)
+    if config is None:
+        default = _default_config_path()
+        if default.exists():
+            config = default
+    if config is None:
+        return None
+    return _load_provider_catalog(config)
 
 
 def _read_key(options, spec) -> str:
@@ -62,7 +103,12 @@ def _execute(options, accounts: Accounts) -> dict:
             "account_name": options.account_name,
             "providers": accounts.info(options.account_name),
         }
-    spec = get_provider_auth(options.provider)
+    if accounts.provider_catalog is not None:
+        spec = get_provider_auth(
+            options.provider, provider_catalog=accounts.provider_catalog
+        )
+    else:
+        spec = get_provider_auth(options.provider)
     if spec.method == "oauth":
         if options.stdin or options.from_env:
             raise ValueError(
@@ -100,7 +146,13 @@ def _write_result(options, result, exit_code) -> None:
 
 def main(argv: Sequence[str] | None = None) -> None:
     options = _parser().parse_args(argv)
-    accounts = Accounts(options.accounts_dir)
+    try:
+        catalog = _catalog_for(options)
+    except Exception as error:
+        result = {"status": "failed", "error": str(error)}
+        _write_result(options, result, 1)
+        raise SystemExit(1) from None
+    accounts = Accounts(options.accounts_dir, provider_catalog=catalog)
     try:
         result = _execute(options, accounts)
     except KeyboardInterrupt:
