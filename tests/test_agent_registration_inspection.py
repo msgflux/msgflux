@@ -52,7 +52,7 @@ def test_registration_freezes_metadata_and_validates_before_mutating(service):
     "model, preset, expected",
     [
         ("openai-codex/example", "coding", ("bash", "read", "apply_patch")),
-        ("other/example", "coding", ("bash", "read", "edit", "write", "delete")),
+        ("other/example", "coding", ("bash", "read", "edit", "write")),
         (
             "openai-codex/example",
             "explorer",

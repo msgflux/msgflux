@@ -342,7 +342,11 @@ resolved active/deferred tools of the running service without materializing
 those defaults in the file. Changes require reloading the service.
 
 `workspace` expands into the tools appropriate to the model. OpenAI models use
-Bash, Read and ApplyPatch; other models use Bash, Read, Edit, Write and Delete.
+Bash, Read and ApplyPatch; other models use Bash, Read, Edit and Write.
+For non-OpenAI agents with read/write permissions but no execute permission,
+`workspace` also includes Delete. When Bash is available, deletion goes through
+Bash instead of adding a redundant tool. Explicitly selecting `delete` in
+`active` or `deferred` still adds it, subject to workspace permissions.
 Routed model IDs starting with `openai/` follow the same OpenAI selection.
 Individual builtin names, such as `read`, `bash` or `web_fetch`, can also be
 selected. An omitted tools table enables `workspace`; explicit `active = []`
