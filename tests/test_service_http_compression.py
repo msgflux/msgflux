@@ -258,15 +258,21 @@ def test_invalid_boolean_cannot_hide_behind_wildcard_origins():
 @pytest.mark.skipif(os.name != "posix", reason="Config editing uses POSIX locks")
 def test_cors_mutation_preserves_compression_setting(tmp_path):
     pytest.importorskip("tomlkit")
-    from msgflux.runtime.service.local.cors_config import mutate_cors_config
+    from msgflux.runtime.service.local.config_values import mutate_config_value
 
     path = tmp_path / "service.toml"
     path.write_text(
         _MANIFEST_PREFIX + "[http]\ncors_allow_origins = []\ncompression = true\n"
     )
-    result = mutate_cors_config(path, "https://example.com", operation="add")
+    result = mutate_config_value(
+        path,
+        "http.cors_allow_origins",
+        json.dumps(["https://example.com"]),
+        operation="set",
+    )
     assert result.changed and result.restart_required
-    assert result.cors_allow_origins == ("https://example.com",)
+    assert result.config_path == str(path.resolve())
+    assert result.key == "http.cors_allow_origins"
     assert load_service_manifest(path).http == ServiceHTTPConfig(
         ("https://example.com",), compression=True
     )

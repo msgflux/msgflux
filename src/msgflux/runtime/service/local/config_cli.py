@@ -1,4 +1,4 @@
-"""Offline service configuration validation through the manifest loader."""
+"""Offline service configuration validation and atomic value edits."""
 
 from __future__ import annotations
 
@@ -38,22 +38,24 @@ def _parser():
     parser = argparse.ArgumentParser(
         prog="msgflux config",
         parents=[common],
-        description="Validate service configuration or manage browser origins offline.",
+        description="Read, edit, or validate service configuration offline.",
     )
     commands = parser.add_subparsers(dest="command", required=True)
     commands.add_parser(
         "validate", parents=[common], help="validate service configuration"
     )
-    cors = commands.add_parser(
-        "cors", parents=[common], help="list or edit configured browser origins"
-    )
-    actions = cors.add_subparsers(dest="action", required=True)
-    for action in ("ls", "add", "remove"):
-        command = actions.add_parser(action, parents=[common])
-        if action != "ls":
+    for action in ("get", "set", "unset"):
+        command = commands.add_parser(
+            action, parents=[common], help=f"{action} stored configuration values"
+        )
+        if action == "get":
             command.add_argument(
-                "origin", help="exact HTTP(S) origin or standalone '*'"
+                "key", nargs="?", help="TOML dotted key; omit for all values"
             )
+        else:
+            command.add_argument("key", help="TOML dotted key")
+        if action == "set":
+            command.add_argument("value", help="TOML literal or unquoted string")
     return parser
 
 
@@ -61,10 +63,10 @@ def main(argv: Sequence[str] | None = None) -> None:
     args = _parser().parse_args(argv)
     args.config = getattr(args, "config", None)
     args.json = getattr(args, "json", False)
-    if args.command == "cors":
-        _cors(args)
-    else:
+    if args.command == "validate":
         _validate(args)
+    else:
+        _values(args)
 
 
 def _validate(args):
@@ -102,39 +104,47 @@ def _validate(args):
         raise SystemExit(1)
 
 
-def _cors(args):
-    from msgflux.runtime.service.local.cors_config import (  # noqa: PLC0415
-        mutate_cors_config,
-        read_cors_config,
+def _fail(args, error):
+    if args.json:
+        sys.stdout.write(msgspec_dumps({"error": str(error)}) + "\n")
+    else:
+        sys.stderr.write(f"Error: {error}\n")
+    raise SystemExit(1) from error
+
+
+def _values(args):
+    from msgflux.runtime.service.local.config_values import (  # noqa: PLC0415
+        mutate_config_value,
+        read_config_value,
     )
 
     selected = args.config or default_service_config_path()
     try:
         result = (
-            read_cors_config(selected)
-            if args.action == "ls"
-            else mutate_cors_config(selected, args.origin, operation=args.action)
+            read_config_value(selected, args.key)
+            if args.command == "get"
+            else mutate_config_value(
+                selected,
+                args.key,
+                getattr(args, "value", None),
+                operation=args.command,
+            )
         )
     except (OSError, ValueError, TypeError, RuntimeError, ImportError) as error:
-        if args.json:
-            sys.stdout.write(msgspec_dumps({"error": str(error)}) + "\n")
-        else:
-            sys.stderr.write(f"Error: {error}\n")
-        raise SystemExit(1) from error
+        _fail(args, error)
     if args.json:
         sys.stdout.write(msgspec_dumps(result) + "\n")
-        return
-    sys.stdout.write(f"Configuration: {result.config_path}\n")
-    if result.cors_allow_origins:
-        sys.stdout.write("CORS origins:\n")
-        for origin in result.cors_allow_origins:
-            sys.stdout.write(f"- {origin}\n")
+    elif args.command == "get":
+        value = result.value
+        rendered = value if isinstance(value, str) else msgspec_dumps(value)
+        if isinstance(value, dict):
+            rendered = msgspec.json.format(rendered.encode(), indent=2).decode()
+        sys.stdout.write(rendered + "\n")
     else:
-        sys.stdout.write("CORS disabled\n")
-    if args.action != "ls":
+        action = "Updated" if args.command == "set" else "Removed"
+        status = action if result.changed else "No change"
+        sys.stdout.write(f"{status} {args.key!r}: {result.config_path}\n")
         if result.restart_required:
             sys.stdout.write(
                 "Restart the service to apply the updated configuration.\n"
             )
-        else:
-            sys.stdout.write("No change\n")
