@@ -210,6 +210,10 @@ account. Recovery retains the original recorded account; changing the default
 does not change an admitted run. Missing providers or invalid credentials fail
 without selecting a different account or reading global provider credentials.
 
+Dynamic provider aliases from a config's `[providers.*]` tables can be logged
+in to before any model is configured — see
+[Dynamic Chat Providers](../../models/dynamic-providers.md).
+
 Accounts normally live under `~/.msgflux/accounts`. A trusted host can set
 `[defaults].accounts_dir` to another directory; use the same path with
 `msgflux accounts login --accounts-dir PATH`. Credentials are resolved for each

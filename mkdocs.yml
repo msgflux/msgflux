@@ -136,6 +136,7 @@ nav:
       - learn/models/model.md
       - learn/models/model_gateway.md
       - learn/models/chat_completion.md
+      - learn/models/dynamic-providers.md
       - learn/models/moderation.md
       - learn/models/text_embedder.md
       - learn/models/text_to_speech.md
