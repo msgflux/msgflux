@@ -329,7 +329,7 @@ def test_starter_config_declares_only_presets_and_resolves_neutral_coding(tmp_pa
     assert coding.description is None and coding.instructions is None
     assert coding.permissions == ("read", "write", "execute")
     # A neutral root keeps the generic workspace selection for any model family.
-    assert coding.tools_active == ("bash", "read", "edit", "write", "delete")
+    assert coding.tools_active == ("bash", "read", "edit", "write")
     assert coding.subagents == ("explorer", "builder")
     assert manifest.coding_catalog.agents["explorer"].preset == "explorer"
     assert manifest.coding_catalog.agents["builder"].preset == "builder"
@@ -704,7 +704,7 @@ def test_manifest_distinguishes_default_and_empty_permissions(tmp_path, option):
         # list following the preset.
         (
             "deferred=['web_fetch']\n",
-            ("bash", "read", "edit", "write", "delete"),
+            ("bash", "read", "edit", "write"),
             ("web_fetch",),
         ),
         ("active=['read']\n", ("read",), ()),

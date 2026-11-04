@@ -29,7 +29,7 @@ def test_coding_preset_is_neutral_and_keeps_generic_defaults(tmp_path):
     assert coding.description is None and coding.instructions is None
     assert get_coding_preset("coding").usage_guidance == ""
     assert coding.permissions == ("read", "write", "execute")
-    assert coding.tools_active == ("bash", "read", "edit", "write", "delete")
+    assert coding.tools_active == ("bash", "read", "edit", "write")
     assert coding.tools_deferred == ()
     assert coding.subagents == ()
 
@@ -83,7 +83,7 @@ def test_python_contract_accepts_unspecified_preset():
     assert options.preset is None
     assert options.description is None and options.instructions is None
     assert options.permissions == ("read", "write", "execute")
-    assert options.tools_active == ("bash", "read", "edit", "write", "delete")
+    assert options.tools_active == ("bash", "read", "edit", "write")
 
 
 @pytest.mark.parametrize(
@@ -184,7 +184,7 @@ deferred=[]
     "model,tools",
     [
         ("openai/model", ("bash", "read", "apply_patch")),
-        ("anthropic/model", ("bash", "read", "edit", "write", "delete")),
+        ("anthropic/model", ("bash", "read", "edit", "write")),
         ("opencode-go/openai/model", ("bash", "read", "apply_patch")),
     ],
 )
@@ -219,3 +219,32 @@ def test_explicit_builder_tools_and_permissions_replace_preset_defaults():
     assert options.tools_active == ("read",)
     assert options.permissions == ("read",)
     assert options.preset == "builder"
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_workspace_keeps_delete_for_writers_without_execute(deferred):
+    options = coding_agent_options(
+        "writer",
+        "anthropic/model",
+        preset="builder",
+        permissions=("read", "write"),
+        active=() if deferred else ("workspace",),
+        deferred=("workspace",) if deferred else (),
+    )
+    selected = options.tools_deferred if deferred else options.tools_active
+    assert "delete" in selected
+    assert "bash" not in selected
+
+
+@pytest.mark.parametrize("deferred", [False, True])
+def test_explicit_delete_remains_available_alongside_bash(deferred):
+    options = coding_agent_options(
+        "builder",
+        "anthropic/model",
+        preset="builder",
+        active=("workspace",) if deferred else ("workspace", "delete"),
+        deferred=("delete",) if deferred else (),
+    )
+    assert "bash" in options.tools_active
+    selected = options.tools_deferred if deferred else options.tools_active
+    assert "delete" in selected

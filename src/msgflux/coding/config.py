@@ -205,7 +205,10 @@ def _expand_selection(
                 else _NON_OPENAI_WORKSPACE_TOOLS
             )
             expanded = tuple(
-                tool for tool in family if coding_tool_allowed(tool, permissions)
+                tool
+                for tool in family
+                if coding_tool_allowed(tool, permissions)
+                and (tool != "delete" or "execute" not in permissions)
             )
             if "read" in permissions and "execute" not in permissions:
                 expanded += ("ls", "glob", "grep")
