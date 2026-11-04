@@ -391,8 +391,6 @@ class OpenAICodexChatCompletion(OpenAICompatibleChatCompletion):
     def _initialize(self) -> None:
         if not isinstance(getattr(self, "chat_transport", None), CodexChatTransport):
             self.chat_transport = CodexChatTransport()
-        if "credential_resolver" not in self.__dict__:
-            self.credential_resolver = CodexCredentialResolver()
         self.api_mode_capabilities = self.capabilities.mode(self.api_mode)
         self.api_adapter = self.api_mode_capabilities.adapter
         self.reasoning_codec = self.api_mode_capabilities.reasoning_codec

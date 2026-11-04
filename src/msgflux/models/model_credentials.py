@@ -27,16 +27,31 @@ class ModelCredentialResolver:
         return self.resolve(owner)
 
 
-class BearerTokenCredentialResolver(ModelCredentialResolver):
-    """Resolve the provider API key as a Bearer token at request time."""
+class APIKeyCredentialResolver(ModelCredentialResolver):
+    """Format an API key independently of its environment or account storage.
+
+    Provider subclasses declare their native header; account resolvers reuse
+    this method with a managed key without constructing a temporary owner.
+    """
+
+    header_name: str = "Authorization"
+    value_prefix: str = "Bearer "
+
+    def resolve_api_key(self, value: str) -> ResolvedModelCredentials:
+        return ResolvedModelCredentials(
+            headers={self.header_name: f"{self.value_prefix}{value}"}
+        )
 
     def resolve(self, owner: Any) -> ResolvedModelCredentials:
-        return ResolvedModelCredentials(
-            headers={"Authorization": f"Bearer {owner._get_api_key()}"}
-        )
+        return self.resolve_api_key(owner._get_api_key())
+
+
+class BearerTokenCredentialResolver(APIKeyCredentialResolver):
+    """Resolve the provider API key as a Bearer token at request time."""
 
 
 __all__ = [
+    "APIKeyCredentialResolver",
     "BearerTokenCredentialResolver",
     "ModelCredentialResolver",
     "ResolvedModelCredentials",
