@@ -1246,3 +1246,118 @@ automatic reconnect loop. `await session.inspect_run(run_id)` returns the same i
 record as the embedded CodingSession. `session.aclose()` is an optional no-op because the facade
 borrows its client and owns no background tasks; a UI can close its active watch
 context on shutdown, while the host closes the shared HTTP client.
+
+## Configure Extensions For A Thread
+
+The service can inspect and reconstruct a stopped thread's Agent composition
+with a different selection of registered extensions. This is independent of
+what an extension does: prompt hooks, tools, limits and custom application
+extensions use the same endpoint. It does not change the global TOML defaults.
+
+```python
+composition = await session.thread_extensions()
+print(composition.revision, composition.available)
+for agent in composition.agents:
+    print(agent.agent_id, agent.name, agent.parent_id, agent.status, agent.extensions)
+```
+
+This lists the principal Agent and its embedded subagents, including Agents
+captured by an `AgentTool` bucket. The service returns position IDs such as
+`root` and `root/builder`; use the returned IDs rather than display names, which
+may repeat in different branches. Independently launched service threads are
+separate compositions and are not changed through their parent's endpoint.
+`extensions` contains the enabled names. `available` lists host-registered
+catalog names and factory-provided extensions; constructor options and secrets
+are not returned. The status describes whether the composition is currently
+safe to update, not a recovery guarantee for external effects.
+
+```python
+updated = await session.update_extensions(
+    scope="tree",
+    enable=["my_extension"],
+    expected_revision=composition.revision,
+)
+
+updated = await session.update_extensions(
+    agent_ids=[updated.agents[0].agent_id],
+    disable=["my_extension"],
+    expected_revision=updated.revision,
+)
+```
+
+The first update enables a host-registered extension for all Agents currently
+in this composition. The second disables it only for the selected Agent.
+Other enabled extensions are preserved. Tree scope addresses the Agents present
+before the update. Agents introduced by an extension use their constructor
+defaults and appear in the returned tree; removing that extension can remove
+those Agents from the composition. Supply either `scope="tree"` or a
+nonempty `agent_ids` list, never both. Names in `enable` and `disable` must not
+overlap. An already-applied selection is a no-op and keeps its revision.
+
+The HTTP equivalents are:
+
+```http
+GET /v1/threads/{thread_id}/extensions
+PATCH /v1/threads/{thread_id}/extensions
+```
+
+```json
+{
+  "scope": "tree",
+  "enable": ["my_extension"],
+  "expected_revision": 0
+}
+```
+
+`expected_revision` is optional. When supplied, a stale value returns HTTP 409,
+including for a no-op. The GET always returns the current revision. The initial
+revision is zero; successful selection changes increment it. The service also
+uses a revision check internally so another process cannot admit work from an
+obsolete session while the configuration changes.
+
+Updates require a fully stopped composition. Accepted, running or paused
+admissions, active subagent calls, unfinished background tasks, finalizers and
+retained session leases return HTTP 409. An abort request alone is insufficient:
+wait for execution and cleanup to finish before retrying. The PATCH neither
+aborts nor resumes work. During reconstruction, new operations on the thread
+are refused with 409.
+
+The service releases the old session and calls its host factory again. It
+composes fresh extension instances before publishing the new session; there is
+no per-hook or per-tool execution filter. Selection and revision persist in the
+service's SQLite journal and are reapplied after cache eviction or service
+restart. Conversation checkpoints, model binding, permissions and stored
+results are preserved. A validation or constructor failure leaves the previous
+persisted selection in place; a subsequent access can reconstruct it again.
+Failed cleanup quarantines the session rather than overlapping generations.
+Cancelling a client wait does not cancel the service-owned update; inspect the
+GET resource after reconnecting to discover which revision completed.
+
+For an embedded custom service, make additional extensions available through
+its trusted catalog:
+
+```python
+from msgflux.nn.extensions.discovery import AgentExtensionCatalog, ExtensionConfig
+from msgflux.runtime.service import AgentSession
+
+catalog = AgentExtensionCatalog({
+    "my_extension": ExtensionConfig(factory="my_app.extensions:MyExtension"),
+})
+
+def create_session(thread):
+    return AgentSession(
+        make_fresh_agent(thread),
+        extension_catalog=catalog,
+        on_close=close_owned_resources,
+    )
+```
+
+Here `make_fresh_agent` and `close_owned_resources` are host application
+functions. Each factory call must build a fresh principal and subagents and
+release its owned resources on close. The service can also disable and
+reenable extensions supplied by that factory without a catalog. Additional
+catalog extensions use their host-configured options; HTTP requests cannot
+supply a Python factory or override constructor arguments. The local coding
+factory and configured custom-factory wrapper expose their existing catalog
+automatically. An embedded `CodingSession` that retains one Agent cannot be
+reconstructed through this operation; use a service-owned factory session.

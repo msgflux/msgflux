@@ -5,6 +5,7 @@ from msgflux.runtime.service.cache_policy import SessionCachePolicy
 from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AgentConfiguration,
+    AgentExtensionStatus,
     AgentInspection,
     ApprovalReview,
     EventRecord,
@@ -20,6 +21,7 @@ from msgflux.runtime.service.records import (
     ServiceRecoveryRequiredError,
     ServiceThread,
     SnapshotRecord,
+    ThreadExtensions,
     ThreadSteerResult,
 )
 from msgflux.runtime.service.session_cache import SessionLease
@@ -29,6 +31,8 @@ __all__ = [
     "AgentService",
     "AgentConfiguration",
     "AgentInspection",
+    "AgentExtensionStatus",
+    "ThreadExtensions",
     "AgentSession",
     "SessionLease",
     "SessionCachePolicy",
