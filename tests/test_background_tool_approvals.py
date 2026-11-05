@@ -96,6 +96,7 @@ async def test_bash_approval_precedes_effect_and_task_admission(
                 approved=approved,
                 decided_by="user",
                 expected_revision=record.revision,
+                feedback="Summarize the command outcome.",
             )
             assert await agent.acall("Continue", scope=scope) == "done"
             if approved and background:
@@ -113,6 +114,16 @@ async def test_bash_approval_precedes_effect_and_task_admission(
             else:
                 assert not (root / "marker.txt").exists()
             assert len(admissions) == int(approved and background)
+            model_messages = agent.generator.aforward.call_args.kwargs["messages"]
+            comments = [
+                item
+                for item in model_messages._to_state()["items"]
+                if "approval_feedback" in item.get("metadata", {})
+            ]
+            assert len(comments) == 1
+            (review,) = comments[0]["metadata"]["approval_feedback"]["reviews"]
+            assert review["feedback"] == "Summarize the command outcome."
+            assert review["approved"] == approved
     finally:
         await agent.aclose()
 

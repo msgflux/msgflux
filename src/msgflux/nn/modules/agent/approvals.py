@@ -20,12 +20,18 @@ from msgflux.runtime.approvals.agent import (
     AgentApprovals,
     ApprovalBatch,
     ApprovalReconciliationRequiredError,
+    _approval_arguments,
     _retired_tool_call_outcome,
     approval_batch_active,
 )
+from msgflux.runtime.approvals.feedback import (
+    REVIEW_FEEDBACK_KEY,
+    append_review_feedback,
+    capture_review_feedback,
+)
 from msgflux.runtime.approvals.reconciliation import inspect_batch, reconcile_batch
 from msgflux.runtime.approvals.records import _digest
-from msgflux.runtime.context import ExecutionScope
+from msgflux.runtime.context import ExecutionScope, get_execution_scope
 from msgflux.runtime.events import EventType, _hub_event_sink
 from msgflux.runtime.workspace.changes import PreparedFileChange
 from msgflux.utils.msgspec import msgspec_dumps
@@ -154,6 +160,7 @@ class AgentApprovalMixin:
         decided_by: str,
         approvals=_UNSET,
         expected_revision: int | None = None,
+        feedback: str | None = None,
     ):
         """Record an authenticated host decision without automatically resuming."""
         policy = self._get_effective_approvals(approvals)
@@ -165,12 +172,14 @@ class AgentApprovalMixin:
             approved=approved,
             decided_by=decided_by,
             expected_revision=expected_revision,
+            feedback=feedback,
         )
         _hub_event_sink().emit(
             EventType.TOOL_APPROVAL_RESOLVED,
             {
                 "request_id": request_id,
                 "status": record.status,
+                "feedback": record.feedback,
                 "tool_call_id": record.binding.tool_call_id,
                 "tool_name": record.binding.tool_name,
             },
@@ -190,6 +199,7 @@ class AgentApprovalMixin:
         decided_by: str,
         approvals=_UNSET,
         expected_revision: int | None = None,
+        feedback: str | None = None,
     ):
         return await asyncio.to_thread(
             self.decide_approval,
@@ -198,6 +208,7 @@ class AgentApprovalMixin:
             decided_by=decided_by,
             approvals=approvals,
             expected_revision=expected_revision,
+            feedback=feedback,
         )
 
     def _load_approval_snapshot(self, thread_id, *, approvals=_UNSET):
@@ -296,11 +307,13 @@ class AgentApprovalMixin:
     ):
         allowed, denied = self._partition_tool_filter_intents(intents)
         allowed, denied = self._partition_retired_intents(allowed, denied)
-        if not allowed:
-            return self._order_tool_outcomes(intents, (), denied)
         pending = self._approval_pending(
             model_response, intents, messages, approval_intents=allowed
         )
+        if not allowed:
+            if pending is not None:
+                self._capture_approval_feedback(pending, intents)
+            return self._order_tool_outcomes(intents, (), denied)
         if pending is None:
             with (
                 ApprovalBatch(
@@ -319,6 +332,7 @@ class AgentApprovalMixin:
         pending["requests"].update(
             {key: record.request_id for key, record in batch.records.items()}
         )
+        self._capture_approval_feedback(pending, intents, batch.records)
         self._checkpoint_save(messages, vars)
         batch.require_ready()
         pending["phase"] = "executing"
@@ -332,11 +346,13 @@ class AgentApprovalMixin:
     ):
         allowed, denied = self._partition_tool_filter_intents(intents)
         allowed, denied = self._partition_retired_intents(allowed, denied)
-        if not allowed:
-            return self._order_tool_outcomes(intents, (), denied)
         pending = self._approval_pending(
             model_response, intents, messages, approval_intents=allowed
         )
+        if not allowed:
+            if pending is not None:
+                self._capture_approval_feedback(pending, intents)
+            return self._order_tool_outcomes(intents, (), denied)
         if pending is None:
             with (
                 ApprovalBatch(
@@ -360,6 +376,7 @@ class AgentApprovalMixin:
         pending["requests"].update(
             {key: record.request_id for key, record in batch.records.items()}
         )
+        self._capture_approval_feedback(pending, intents, batch.records)
         await self._acheckpoint_save(messages, vars)
         batch.require_ready()
         pending["phase"] = "executing"
@@ -402,6 +419,58 @@ class AgentApprovalMixin:
         by_id = {outcome.intent_id: outcome for outcome in outcomes}
         by_id.update(denied)
         return tuple(by_id[intent.id] for intent in intents)
+
+    def _capture_approval_feedback(self, pending, intents, records=None):
+        """Keep review comments even if a current tool filter blocks the call.
+
+        These snapshots report decisions, never execution authority. Match the
+        original call and live principal; execution still uses the full guard.
+        """
+        policy = self._get_effective_approvals()
+        scope = get_execution_scope()
+        found = dict(records or {})
+        verified = []
+        for intent in intents:
+            request_id = pending["requests"].get(intent.id)
+            record = found.get(intent.id)
+            if record is None and request_id is not None:
+                record = policy.store.get(scope.namespace, request_id)
+            if record is None or record.feedback is None:
+                continue
+            binding = record.binding
+            if (
+                (
+                    binding.namespace,
+                    binding.thread_id,
+                    binding.run_id,
+                    binding.principal,
+                )
+                != (scope.namespace, scope.thread_id, scope.run_id, scope.principal)
+                or binding.tool_call_id != intent.id
+                or binding.tool_name != intent.name
+                or record.request_id != request_id
+            ):
+                raise TaskPauseRequestedError(
+                    message="Approval feedback binding changed"
+                )
+            if not self.tool_library.registry.has(intent.name):
+                continue
+            arguments, _ = _approval_arguments(
+                self.tool_library.get_tool_definition(intent.name), intent.arguments
+            )
+            if _digest(arguments) != binding.arguments_digest:
+                raise TaskPauseRequestedError(
+                    message="Approval feedback arguments changed"
+                )
+            verified.append(record)
+        pending[REVIEW_FEEDBACK_KEY] = capture_review_feedback(verified)
+
+    @staticmethod
+    def _append_approval_feedback(messages):
+        run = get_agent_run()
+        pending = run.get_extension(_KEY) if run is not None else None
+        if pending is not None:
+            append_review_feedback(messages, pending)
 
     @staticmethod
     def _clear_approval_batch():

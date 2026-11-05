@@ -78,4 +78,5 @@ def project(record: ApprovalRecord, *, diff: str | None = None) -> ApprovalRevie
         revision=record.revision,
         expires_at=record.expires_at,
         diff=diff,
+        feedback=record.feedback,
     )

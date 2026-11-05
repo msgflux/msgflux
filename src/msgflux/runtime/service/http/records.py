@@ -4,6 +4,7 @@ from typing import Annotated, Literal
 
 import msgspec
 
+from msgflux.runtime.approvals.records import MAX_APPROVAL_FEEDBACK_LENGTH
 from msgflux.runtime.permissions import ResourcePermission
 from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.records import (
@@ -87,6 +88,9 @@ class ShutdownResponse(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
 class ApprovalDecisionRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     approved: bool
     expected_revision: Annotated[int, msgspec.Meta(gt=0)]
+    feedback: (
+        Annotated[str, msgspec.Meta(max_length=MAX_APPROVAL_FEEDBACK_LENGTH)] | None
+    ) = None
 
 
 class WorkspacePolicyRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

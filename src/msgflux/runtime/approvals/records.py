@@ -11,6 +11,22 @@ from typing import Any, Mapping
 
 from msgflux.runtime.permissions import normalize_permissions
 
+MAX_APPROVAL_FEEDBACK_LENGTH = 4096
+
+
+def normalize_feedback(value: str | None) -> str | None:
+    """Strip reviewer feedback and reject blank or oversized values."""
+    if value is None:
+        return None
+    if not isinstance(value, str):
+        raise TypeError("Approval feedback must be a string or None")
+    if len(value) > MAX_APPROVAL_FEEDBACK_LENGTH:
+        raise ValueError("Approval feedback exceeds the maximum length")
+    normalized = value.strip()
+    if not normalized:
+        raise ValueError("Approval feedback must not be blank")
+    return normalized
+
 
 def require_name(value: str) -> str:
     if not isinstance(value, str) or not value.strip():
@@ -132,6 +148,7 @@ class ApprovalRecord:
     status: str = "pending"
     revision: int = 1
     decided_by: str | None = None
+    feedback: str | None = None
     schema_version: int = 1
 
     def __post_init__(self) -> None:
@@ -150,6 +167,7 @@ class ApprovalRecord:
             raise ValueError("Unsupported approval schema version")
         if self.decided_by is not None:
             require_name(self.decided_by)
+        object.__setattr__(self, "feedback", normalize_feedback(self.feedback))
         if (
             self.status in {"approved", "denied", "consumed"}
             and self.decided_by is None
@@ -165,6 +183,10 @@ class ApprovalEvent:
     status: str
     timestamp: float
     decided_by: str | None
+    feedback: str | None = None
+
+    def __post_init__(self) -> None:
+        object.__setattr__(self, "feedback", normalize_feedback(self.feedback))
 
     @classmethod
     def from_record(cls, record: ApprovalRecord) -> ApprovalEvent:
@@ -175,4 +197,5 @@ class ApprovalEvent:
             status=record.status,
             timestamp=record.updated_at,
             decided_by=record.decided_by,
+            feedback=record.feedback,
         )

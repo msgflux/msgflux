@@ -180,3 +180,133 @@ async def test_sqlite_approval_review_and_decision_survive_service_restart(tmp_p
         reopened_checkpoints.close()
         reopened_approvals.close()
         reopened_service_store.close()
+
+
+@pytest.mark.asyncio
+async def test_sqlite_denied_approval_recovers_and_delivers_blocked_result(tmp_path):
+    checkpoint_path = tmp_path / "checkpoints.sqlite3"
+    approval_path = tmp_path / "approvals.sqlite3"
+    service_path = tmp_path / "service.sqlite3"
+    effects_path = tmp_path / "effects.log"
+    effects_path.write_text("", encoding="utf-8")
+    effects = []
+
+    def record_effect(value: str) -> str:
+        with effects_path.open("a", encoding="utf-8") as handle:
+            handle.write(value + "\n")
+        effects.append(value)
+        return f"recorded {value}"
+
+    checkpoints = SQLiteCheckpointStore(checkpoint_path)
+    approvals = SQLiteApprovalStore(approval_path)
+    service_store = SQLiteServiceStore(service_path)
+    first_agent = _agent(checkpoints, approvals, record_effect)
+    first_agent.generator.aforward = AsyncMock(
+        side_effect=[_tool_response(), _text_response("finished")]
+    )
+    first_service = _service(first_agent, checkpoints, approvals, service_store)
+    first_app = create_service_app(first_service, token="owner-token")
+    transport = httpx2.ASGITransport(app=first_app)
+    request_id = "denied-approval-request"
+    thread_id = "denied-approval-thread"
+
+    feedback = "do not run this"
+    try:
+        async with httpx2.AsyncClient(transport=transport) as http:
+            client = AgentServiceClient(
+                "http://testserver", token="owner-token", client=http
+            )
+            session = await AgentSessionClient.open(
+                client, thread_id=thread_id, agent_id="main"
+            )
+            admission = await session.prompt("record one effect", request_id=request_id)
+            paused = await asyncio.wait_for(session.wait(request_id), timeout=5)
+            assert paused.status == "paused"
+            (before_restart,) = await session.approval_reviews(admission.run_id)
+            decided = await session.decide_approval(
+                admission.run_id,
+                before_restart.request_id,
+                approved=False,
+                expected_revision=before_restart.revision,
+                feedback=feedback,
+            )
+            assert decided.status == "denied"
+            assert decided.feedback == feedback
+            assert effects == []
+    finally:
+        await first_service.aclose()
+        checkpoints.close()
+        approvals.close()
+        service_store.close()
+
+    reopened_checkpoints = SQLiteCheckpointStore(checkpoint_path)
+    reopened_approvals = SQLiteApprovalStore(approval_path)
+    reopened_service_store = SQLiteServiceStore(service_path)
+    recovered_agent = _agent(reopened_checkpoints, reopened_approvals, record_effect)
+
+    async def continue_after_blocked(**kwargs):
+        assert effects_path.read_text(encoding="utf-8") == ""
+        items = kwargs["messages"].to_items()
+        tool_indexes = [
+            index
+            for index, item in enumerate(items)
+            if item.get("type") == "function_call_output" or item.get("role") == "tool"
+        ]
+        comments = [
+            (index, item)
+            for index, item in enumerate(items)
+            if isinstance(item.get("metadata"), dict)
+            and "approval_feedback" in item["metadata"]
+        ]
+        assert tool_indexes
+        assert len(comments) == 1
+        comment_index, comment = comments[0]
+        assert comment_index > tool_indexes[-1]
+        (review,) = comment["metadata"]["approval_feedback"]["reviews"]
+        assert review["feedback"] == feedback
+        assert review["approved"] is False
+        assert feedback in str(comment.get("content"))
+        return _text_response("finished")
+
+    recovered_agent.generator.aforward = AsyncMock(side_effect=continue_after_blocked)
+    recovered_service = _service(
+        recovered_agent,
+        reopened_checkpoints,
+        reopened_approvals,
+        reopened_service_store,
+    )
+    recovered_app = create_service_app(recovered_service, token="owner-token")
+    recovered_transport = httpx2.ASGITransport(app=recovered_app)
+
+    try:
+        async with httpx2.AsyncClient(transport=recovered_transport) as http:
+            client = AgentServiceClient(
+                "http://testserver", token="owner-token", client=http
+            )
+            session = await AgentSessionClient.open(
+                client, thread_id=thread_id, agent_id="main"
+            )
+            (after_restart,) = await session.approval_reviews(admission.run_id)
+            assert after_restart.request_id == before_restart.request_id
+            assert after_restart.status == "denied"
+            assert after_restart.feedback == feedback
+            assert effects == []
+
+            receipt = await recovered_service.resume_checkpoint(
+                thread_id, admission.run_id, worker_stopped=True
+            )
+            assert receipt.run_id == admission.run_id
+            settled = await asyncio.wait_for(session.wait(request_id), timeout=5)
+            assert settled.status == "completed", settled.error
+            assert effects_path.read_text(encoding="utf-8") == ""
+            assert effects == []
+            assert recovered_agent.generator.aforward.await_count == 1
+            settled_record = reopened_approvals.get(
+                "recovery-agent", before_restart.request_id
+            )
+            assert settled_record.status == "denied"
+    finally:
+        await recovered_service.aclose()
+        reopened_checkpoints.close()
+        reopened_approvals.close()
+        reopened_service_store.close()

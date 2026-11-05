@@ -223,7 +223,12 @@ If a command receipt has an uncertain outcome, `prompt()` and recovery raise
 `ServiceRecoveryRequiredError` with the concrete reconciliation reason, without
 starting a new run. Reconcile the command through the trusted workspace host
 before retrying. An approval request inside a run remains a normal `paused`
-receipt; inspect and decide the approval, then resume that run.
+receipt; inspect and decide the approval, then resume that run. Decisions accept
+optional `feedback` for approved or denied calls (see
+[Review Tool Approvals](service-http.md#review-tool-approvals)); on resume the
+comment arrives as a separate canonical `user` reviewer-feedback context after
+the tool results, while a positive decision executes the exact original approved
+arguments and a rejection lets the model propose anew.
 
 ## Shared Runtime
 

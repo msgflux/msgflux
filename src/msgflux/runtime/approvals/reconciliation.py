@@ -10,6 +10,7 @@ import msgspec
 from msgflux.chat_messages import ChatMessages
 from msgflux.data.stores.base import CheckpointConflictError
 from msgflux.models.tool_transport import render_native_output, validate_native_calls
+from msgflux.runtime.approvals.feedback import append_review_feedback
 from msgflux.runtime.approvals.records import require_name
 from msgflux.utils.msgspec import msgspec_loads
 
@@ -220,6 +221,7 @@ def reconcile_batch(  # noqa: C901
                 ),
             }
         )
+    append_review_feedback(messages, pending)
     messages.end_turn(event="interrupt" if abandon else "pause")
     state["messages"] = messages._to_state()
     state["status"] = "interrupted" if abandon else "paused"

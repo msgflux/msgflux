@@ -501,6 +501,7 @@ class AgentServiceClient:
         *,
         approved: bool,
         expected_revision: int,
+        feedback: str | None = None,
     ) -> ApprovalReview:
         """Record a reviewer decision without resuming the paused run."""
         path = (
@@ -511,7 +512,11 @@ class AgentServiceClient:
             + _segment(request_id)
             + "/decision"
         )
-        request = ApprovalDecisionRequest(approved, expected_revision)
+        request = ApprovalDecisionRequest(
+            approved=approved,
+            expected_revision=expected_revision,
+            feedback=feedback,
+        )
         return await self._json("POST", path, ApprovalReview, request)
 
     @asynccontextmanager

@@ -1,5 +1,6 @@
 """Restart adoption validates the saved batch without settling decisions."""
 
+import asyncio
 from dataclasses import replace
 
 import pytest
@@ -49,8 +50,73 @@ async def test_recovery_validation_keeps_decisions_and_effects_unchanged(approve
 
 
 @pytest.mark.asyncio
+async def test_recovery_allows_denied_decision_without_settling_it():
+    (
+        service,
+        agent,
+        approvals,
+        calls,
+        _scope,
+        thread,
+        receipt,
+        review,
+    ) = await _paused_review_fixture()
+    try:
+        decided = await service.decide_approval(
+            thread.thread_id,
+            receipt.run_id,
+            review.request_id,
+            approved=False,
+            expected_revision=review.revision,
+            feedback="use a read-only lookup instead",
+        )
+        assert decided.feedback == "use a read-only lookup instead"
+        before = approvals.get(agent.get_module_name(), review.request_id)
+        assert before.status == "denied"
+        assert before.feedback == "use a read-only lookup instead"
+        record = service.store.get(thread.thread_id, receipt.request_id)
+        async with service._use_session(thread.thread_id) as session:
+            state = validate_approval_recovery(service, session, record)
+        assert state["status"] == "paused"
+        assert approvals.get(agent.get_module_name(), review.request_id) == before
+        assert calls == []
+        assert agent.generator.aforward.await_count == 1
+    finally:
+        await _close_service(service)
+
+
+@pytest.mark.asyncio
+async def test_ready_reevaluation_keeps_denied_blocked(tmp_path):
+    session, workspace, agent, target = _managed_session(tmp_path)
+    try:
+        receipt = await _pause_with_patch(session)
+        (review,) = await session.approval_reviews(receipt.run_id)
+        await session.decide_approval(
+            receipt.run_id,
+            review.request_id,
+            approved=False,
+            expected_revision=review.revision,
+        )
+        policy = await session.workspace_policy()
+        await session.update_workspace_policy(
+            permissions="full-access",
+            approval_policy="never",
+            expected_revision=policy.revision,
+        )
+        settled = await asyncio.wait_for(session.wait("patch-request"), timeout=5)
+        assert settled.status == "paused"
+        (after,) = await session.approval_reviews(receipt.run_id)
+        assert after.status == "denied"
+        assert target.read_text() == "old"
+        assert agent.generator.aforward.await_count == 1
+    finally:
+        await session.aclose()
+        await workspace.aclose()
+
+
+@pytest.mark.asyncio
 @pytest.mark.parametrize(
-    "reason", ["consumed", "denied", "expired", "tool_revision", "principal", "task"]
+    "reason", ["consumed", "expired", "tool_revision", "principal", "task"]
 )
 async def test_recovery_refuses_changed_or_uncertain_execution(reason):
     (
@@ -73,14 +139,6 @@ async def test_recovery_refuses_changed_or_uncertain_execution(reason):
                     lambda item: replace(
                         item, status="consumed", decided_by="operator"
                     ),
-                )
-            elif reason == "denied":
-                await service.decide_approval(
-                    thread.thread_id,
-                    receipt.run_id,
-                    review.request_id,
-                    approved=False,
-                    expected_revision=review.revision,
                 )
             elif reason == "expired":
                 approvals._clock = lambda: review.expires_at + 1

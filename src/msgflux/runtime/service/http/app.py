@@ -343,6 +343,7 @@ def create_service_app(  # noqa: C901
             request_id,
             approved=data.approved,
             expected_revision=data.expected_revision,
+            feedback=data.feedback,
         )
         return _response(review)
 

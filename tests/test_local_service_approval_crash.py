@@ -64,6 +64,37 @@ def create_service(runtime_dir):
         async def respond(**kwargs):
             with (runtime_dir / "model_calls").open("a") as stream:
                 stream.write("call\\n")
+            items = kwargs["messages"].to_items()
+            tool_indexes = [
+                index
+                for index, item in enumerate(items)
+                if item.get("type") == "function_call_output"
+                or item.get("role") == "tool"
+            ]
+            if tool_indexes and (runtime_dir / "expected_feedback").exists():
+                expected = json.loads((runtime_dir / "expected_feedback").read_text())
+                comments = [
+                    (index, item)
+                    for index, item in enumerate(items)
+                    if isinstance(item.get("metadata"), dict)
+                    and "approval_feedback" in item["metadata"]
+                ]
+                (runtime_dir / "feedback_seen").write_text(
+                    json.dumps(
+                        {
+                            "count": len(comments),
+                            "tool_indexes": tool_indexes,
+                            "comment_indexes": [index for index, _ in comments],
+                        }
+                    )
+                )
+                assert len(comments) == 1
+                comment_index, comment = comments[0]
+                assert comment_index > tool_indexes[-1]
+                (review,) = comment["metadata"]["approval_feedback"]["reviews"]
+                assert review["feedback"] == expected["feedback"]
+                assert review["approved"] == expected["approved"]
+                assert expected["feedback"] in str(comment.get("content"))
             response = ModelResponse()
             if any(item.get("role") == "tool" for item in kwargs["messages"].to_chatml()):
                 response.set_response_type("text_generation")
@@ -267,6 +298,74 @@ async def test_pending_approval_survives_sigkill_and_resumes_same_run_once(
         assert duplicate.run_id == admission.run_id
         assert duplicate.status == "completed"
         assert (runtime_dir / "effects.log").read_text() == "one\n"
+    finally:
+        await restarted.aclose()
+
+
+@pytest.mark.asyncio
+@pytest.mark.parametrize("approved", [False, True])
+async def test_sigkill_feedback_decision_recovers_via_lease_reclaim(
+    approval_daemon_workspace, approved
+):
+    import json
+
+    project, runtime_dir = approval_daemon_workspace
+    client, thread_id, admission, review = await _start_paused(project, runtime_dir)
+    feedback = "record exactly once" if approved else "do not run this"
+    decided = await client.decide_approval(
+        thread_id,
+        admission.run_id,
+        review.request_id,
+        approved=approved,
+        expected_revision=review.revision,
+        feedback=feedback,
+    )
+    assert decided.status == ("approved" if approved else "denied")
+    assert decided.feedback == feedback
+    (runtime_dir / "expected_feedback").write_text(
+        json.dumps({"feedback": feedback, "approved": approved})
+    )
+    previous = await _crash_daemon(client, runtime_dir)
+    restarted = await connect_local_service(
+        FACTORY, runtime_dir=runtime_dir, cwd=project
+    )
+    try:
+        assert (await restarted.health()).instance_id != previous.instance_id
+        (recovered,) = await restarted.approval_reviews(thread_id, admission.run_id)
+        assert recovered.request_id == review.request_id
+        assert recovered.status == decided.status
+        assert recovered.feedback == feedback
+        assert (await restarted.active_runs()) == ()
+        assert not (runtime_dir / "effects.log").exists()
+        assert (runtime_dir / "model_calls").read_text().splitlines() == ["call"]
+        # No worker_stopped: lifetime-lease owner reclaim on explicit resume.
+        resumed = await restarted.resume_checkpoint(thread_id, admission.run_id)
+        assert resumed.run_id == admission.run_id
+        finished = await _wait_completed(restarted, thread_id, admission.request_id)
+        assert finished.status == "completed", finished.error
+        assert (
+            await restarted.run_result(thread_id, admission.run_id)
+        ).output == "finished"
+        if approved:
+            assert (runtime_dir / "effects.log").read_text() == "one\n"
+        else:
+            assert not (runtime_dir / "effects.log").exists()
+        assert (runtime_dir / "model_calls").read_text().splitlines() == [
+            "call",
+            "call",
+        ]
+        seen = json.loads((runtime_dir / "feedback_seen").read_text())
+        assert seen["count"] == 1
+        assert seen["comment_indexes"][0] > seen["tool_indexes"][-1]
+        duplicate = await restarted.prompt(
+            thread_id, "record one effect", request_id="one"
+        )
+        assert duplicate.run_id == admission.run_id
+        assert duplicate.status == "completed"
+        if approved:
+            assert (runtime_dir / "effects.log").read_text() == "one\n"
+        else:
+            assert not (runtime_dir / "effects.log").exists()
     finally:
         await restarted.aclose()
 
