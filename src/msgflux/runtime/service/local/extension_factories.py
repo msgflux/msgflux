@@ -7,14 +7,12 @@ from functools import partial
 
 from msgflux.nn.extensions.installation import AgentExtensionInstallation
 from msgflux.runtime.service.api import AgentSession
+from msgflux.runtime.service.extension_controls import own_installation
 from msgflux.utils.imports import _factory_import_root
 
 
 def with_extensions(factory, names, catalog, *, import_root):
     """Keep custom Agent construction lazy and retain its cleanup ownership."""
-    if not names:
-        return factory
-
     return partial(_create_session, factory, tuple(names), catalog, import_root)
 
 
@@ -25,22 +23,9 @@ async def _create_session(factory, names, catalog, import_root, thread):
     if not isinstance(session, AgentSession):
         raise TypeError("factory must return AgentSession")
     installation = AgentExtensionInstallation(catalog, session.agent)
-    original_close = session._host_on_close if session._managed else session.on_close
-
-    async def close():
-        try:
-            await installation.aclose()
-        finally:
-            if original_close is not None:
-                result = original_close()
-                if inspect.isawaitable(result):
-                    await result
-
-    if session._managed:
-        # Managed sessions settle delegated work before invoking host cleanup.
-        session._host_on_close = close
-    else:
-        session.on_close = close
+    session.extension_catalog = catalog
+    session.extension_import_root = import_root
+    own_installation(session, installation)
     try:
         with _factory_import_root(import_root):
             installation.install(names)
