@@ -1731,15 +1731,28 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
             },
         }
 
+    def _response_cache_key(self, **kwargs):
+        scope = get_execution_context().get("scope")
+        identity = None
+        resolver = getattr(self, "credential_resolver", None)
+        if resolver is not None:
+            cache_identity = getattr(resolver, "cache_identity", None)
+            if callable(cache_identity):
+                identity = cache_identity(self)
+        if identity is not None:
+            account_partition = identity
+        else:
+            account_partition = getattr(scope, "account_name", None)
+        return generate_cache_key(
+            **kwargs,
+            _sampling_run_params=self.sampling_run_params,
+            _chat_settings=self.chat_settings,
+            _account_name=account_partition,
+        )
+
     def _check_cache(self, **kwargs):
         if self.enable_cache and self._response_cache:
-            scope = get_execution_context().get("scope")
-            cache_key = generate_cache_key(
-                **kwargs,
-                _sampling_run_params=self.sampling_run_params,
-                _chat_settings=self.chat_settings,
-                _account_name=getattr(scope, "account_name", None),
-            )
+            cache_key = self._response_cache_key(**kwargs)
             hit, cached_response = self._response_cache.get(cache_key)
             if hit:
                 return cached_response
@@ -1747,13 +1760,7 @@ class OpenAICompatibleChatCompletion(OpenAICompatibleModel, ChatCompletionModel)
 
     def _store_cache(self, response, **kwargs):
         if self.enable_cache and self._response_cache:
-            scope = get_execution_context().get("scope")
-            cache_key = generate_cache_key(
-                **kwargs,
-                _sampling_run_params=self.sampling_run_params,
-                _chat_settings=self.chat_settings,
-                _account_name=getattr(scope, "account_name", None),
-            )
+            cache_key = self._response_cache_key(**kwargs)
             self._response_cache.set(cache_key, response)
 
     def _prepare_generate_kwargs(self, kwargs):

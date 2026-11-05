@@ -322,11 +322,22 @@ class Accounts:
             }
         return result
 
-    def resolver(self, provider: str, *, account_name: str | None = None):
+    def resolver(
+        self,
+        provider: str,
+        *,
+        account_name: str | None = None,
+        allow_account_override: bool = False,
+    ):
         """Build a request-time model resolver without reading credentials."""
         from msgflux.accounts.resolver import AccountCredentialResolver  # noqa: PLC0415
 
-        return AccountCredentialResolver(self, provider, account_name=account_name)
+        return AccountCredentialResolver(
+            self,
+            provider,
+            account_name=account_name,
+            allow_account_override=allow_account_override,
+        )
 
     async def login(
         self, provider: str, account_name: str = "default"

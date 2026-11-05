@@ -26,6 +26,16 @@ class ModelCredentialResolver:
     async def aresolve(self, owner: Any) -> ResolvedModelCredentials:
         return self.resolve(owner)
 
+    def cache_identity(self, owner: Any) -> dict[str, str] | None:
+        """Safe cache partition identity, or None to use the caller's fallback.
+
+        Implementations must return only public metadata (never tokens,
+        secret headers, or repr-derived material) and must not read or
+        refresh credentials.
+        """
+        _ = owner
+        return None
+
 
 class BearerTokenCredentialResolver(ModelCredentialResolver):
     """Resolve the provider API key as a Bearer token at request time."""

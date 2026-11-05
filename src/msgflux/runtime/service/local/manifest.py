@@ -13,7 +13,9 @@ import msgspec
 from msgflux.coding.config import (
     CodingAgentCatalog,
     CodingAgentOptions,
+    CodingModelDeployment,
     CodingPermission,
+    _validate_deployment,
     coding_agent_options,
     validate_coding_catalog,
     validate_model_path,
@@ -69,11 +71,20 @@ class _ToolsConfig(msgspec.Struct, forbid_unknown_fields=True):
     deferred: list[str] | None = None
 
 
+class _ModelConfig(msgspec.Struct, forbid_unknown_fields=True):
+    model: str
+    description: str
+    reasoning_effort: str | None = None
+    account_name: str | None = None
+
+
 class _AgentConfig(msgspec.Struct, forbid_unknown_fields=True):
     preset: str | None = None
     factory: str | None = None
     description: str | None = None
     model: str | None = None
+    models: list[str] | None = None
+    model_fallback: bool = False
     reasoning_effort: str | None = None
     prompt_file: str | None = None
     permissions: list[CodingPermission] | None = None
@@ -90,6 +101,7 @@ class _AgentConfig(msgspec.Struct, forbid_unknown_fields=True):
 class _ServiceConfig(msgspec.Struct, forbid_unknown_fields=True):
     defaults: _DefaultsConfig
     agents: dict[str, _AgentConfig]
+    models: dict[str, _ModelConfig] = msgspec.field(default_factory=dict)
     extensions: dict[str, ExtensionConfig] = msgspec.field(default_factory=dict)
     http: ServiceHTTPConfig = msgspec.field(default_factory=ServiceHTTPConfig)
 
@@ -102,6 +114,7 @@ class ServiceManifest(msgspec.Struct, frozen=True):
     coding_catalog: CodingAgentCatalog
     extension_catalog: AgentExtensionCatalog
     http: ServiceHTTPConfig = msgspec.field(default_factory=ServiceHTTPConfig)
+    models: dict[str, _ModelConfig] = msgspec.field(default_factory=dict)
 
 
 def default_service_config_path() -> Path:
@@ -240,11 +253,14 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
     _resolve_agent_dir_default(config.defaults, manifest_path.parent)
     if config.defaults.agent not in config.agents:
         raise ValueError("defaults.agent must reference a declared agent")
+    _validate_models(config.models, manifest_path)
 
     extension_catalog = AgentExtensionCatalog(config.extensions)
     for agent_id, agent in config.agents.items():
         validate_identifier(agent_id, "agent_id")
-        _validate_agent(agent_id, agent, config.agents, manifest_path.parent)
+        _validate_agent(
+            agent_id, agent, config.agents, manifest_path.parent, config.models
+        )
         if len(agent.extensions) != len(set(agent.extensions)):
             raise ValueError(f"Agent {agent_id!r} has duplicate extension names")
         for name in agent.extensions:
@@ -263,7 +279,17 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
         coding_catalog=coding_catalog,
         extension_catalog=extension_catalog,
         http=config.http,
+        models=config.models,
     )
+
+
+def _validate_models(models: dict[str, _ModelConfig], config_path: Path) -> None:
+    for alias, entry in models.items():
+        validate_identifier(alias, "model alias")
+        _validate_deployment(
+            CodingModelDeployment(model_name=alias, **msgspec.to_builtins(entry)),
+            f"model catalog in {config_path}",
+        )
 
 
 def _resolve_coding_options(
@@ -273,19 +299,35 @@ def _resolve_coding_options(
     for agent_id, agent in config.agents.items():
         if agent.harness != _CODING_HARNESS:
             continue
-        model = agent.model or config.defaults.model
-        if model is None:
-            raise ValueError(
-                f"Coding agent {agent_id!r} in {config_path} requires "
-                f"a model; set defaults.model or agents.{agent_id}.model "
-                "to a provider/model-id"
+        deployments: tuple[CodingModelDeployment, ...] | None = None
+        if agent.models:
+            deployments = tuple(
+                CodingModelDeployment(
+                    model_name=alias,
+                    model=config.models[alias].model,
+                    description=config.models[alias].description,
+                    reasoning_effort=config.models[alias].reasoning_effort,
+                    account_name=config.models[alias].account_name,
+                )
+                for alias in agent.models
             )
+            model = None
+        else:
+            model = agent.model or config.defaults.model
+            if model is None:
+                raise ValueError(
+                    f"Coding agent {agent_id!r} in {config_path} requires "
+                    f"a model; set defaults.model or agents.{agent_id}.model "
+                    f"to a provider/model-id, or configure agents.{agent_id}.models"
+                )
         prompt_file = Path(agent.prompt_file) if agent.prompt_file is not None else None
         if prompt_file is not None and not prompt_file.is_absolute():
             prompt_file = config_dir / prompt_file
         options = coding_agent_options(
             agent_id=agent_id,
             model=model,
+            models=deployments,
+            model_fallback=agent.model_fallback,
             reasoning_effort=(
                 agent.reasoning_effort or config.defaults.reasoning_effort or "medium"
             ),
@@ -317,6 +359,7 @@ def _validate_agent(
     agent: _AgentConfig,
     agents: dict[str, _AgentConfig],
     config_dir: Path,
+    models: dict[str, _ModelConfig] | None = None,
 ) -> None:
     coding = agent.harness is not None
     custom = agent.factory is not None
@@ -334,11 +377,13 @@ def _validate_agent(
                     agent.preset,
                     agent.description,
                     agent.model,
+                    agent.models,
                     agent.reasoning_effort,
                     agent.prompt_file,
                     agent.tools,
                 )
             )
+            or agent.model_fallback
             or agent.subagents
             or agent.permissions is not None
         ):
@@ -347,7 +392,7 @@ def _validate_agent(
             )
         return
 
-    _validate_coding_agent(agent_id, agent, agents, config_dir)
+    _validate_coding_agent(agent_id, agent, agents, config_dir, models)
 
 
 def _validate_coding_agent(
@@ -355,6 +400,7 @@ def _validate_coding_agent(
     agent: _AgentConfig,
     agents: dict[str, _AgentConfig],
     config_dir: Path,
+    models: dict[str, _ModelConfig] | None = None,
 ) -> None:
     for label, value in (
         ("preset", agent.preset),
@@ -364,6 +410,21 @@ def _validate_coding_agent(
     ):
         if value is not None and not value.strip():
             raise ValueError(f"Agent {agent_id!r} {label} must be non-empty")
+    if agent.models is not None:
+        if not agent.models:
+            raise ValueError(f"Agent {agent_id!r} models must not be empty")
+        if agent.model is not None:
+            raise ValueError(f"Agent {agent_id!r} cannot declare both model and models")
+        if len(agent.models) != len(set(agent.models)):
+            raise ValueError(f"Agent {agent_id!r} has duplicate model aliases")
+        for alias in agent.models:
+            validate_identifier(alias, "model alias")
+            if models is not None and alias not in models:
+                raise ValueError(
+                    f"Agent {agent_id!r} references unknown model {alias!r}"
+                )
+    if agent.model_fallback and agent.models is None:
+        raise ValueError(f"Agent {agent_id!r} model_fallback requires models")
     _resolve_prompt_file(agent_id, agent, config_dir)
     _validate_subagents(agent_id, agent, agents)
 

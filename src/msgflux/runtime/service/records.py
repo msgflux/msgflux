@@ -11,6 +11,21 @@ AdmissionStatus = Literal[
 ]
 
 
+class AgentModelDeployment(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Safe metadata for one named model deployment, never credentials.
+
+    ``account_name`` is ``None`` when the deployment inherits the execution
+    account. ``is_default`` marks the first (default) deployment.
+    """
+
+    model_name: str
+    model: str
+    description: str
+    reasoning_effort: str | None = None
+    account_name: str | None = None
+    is_default: bool = False
+
+
 class AgentConfiguration(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     """Host-published registration defaults, never live sessions or credentials."""
 
@@ -29,6 +44,8 @@ class AgentConfiguration(msgspec.Struct, frozen=True, forbid_unknown_fields=True
     config_path: str | None = None
     config_digest: str | None = None
     supports_model_override: bool = False
+    models: tuple[AgentModelDeployment, ...] = ()
+    model_fallback: bool = False
 
 
 class AgentInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):

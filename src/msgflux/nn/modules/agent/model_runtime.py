@@ -150,6 +150,7 @@ class AgentModelRuntimeMixin:
                 scope=effective_scope,
                 vars=vars,
                 messages=messages,
+                model_preference=model_preference,
             ),
         )
         conversation = _require_lifecycle_payload(
@@ -233,6 +234,7 @@ class AgentModelRuntimeMixin:
                 scope=effective_scope,
                 vars=vars,
                 messages=messages,
+                model_preference=model_preference,
             ),
         )
         conversation = _require_lifecycle_payload(
@@ -484,6 +486,7 @@ class AgentModelRuntimeMixin:
         messages: Any,
         vars: Mapping[str, Any],
         scope: ExecutionScope,
+        model_preference: str | None = None,
     ) -> ToolCatalogView:
         catalog_context = self._run_lifecycle_hooks(
             "transform_tool_catalog",
@@ -492,6 +495,7 @@ class AgentModelRuntimeMixin:
                 vars=vars,
                 catalog=tool_catalog,
                 messages=messages,
+                model_preference=model_preference,
             ),
         )
         catalog_context = _require_lifecycle_payload(
@@ -518,6 +522,7 @@ class AgentModelRuntimeMixin:
                 vars=vars,
                 catalog=tool_catalog,
                 messages=model_execution_params.messages,
+                model_preference=model_execution_params.get("model_preference"),
             ),
         )
         catalog_context = _require_lifecycle_payload(
@@ -627,6 +632,7 @@ class AgentModelRuntimeMixin:
                 messages=model_messages,
                 vars=vars,
                 scope=effective_scope,
+                model_preference=model_preference,
             )
         tool_catalog = tool_catalog if tool_catalog.visible_entries() else None
         system_prompt = self._build_system_prompt(
