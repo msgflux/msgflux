@@ -189,7 +189,13 @@ class CodingSession:
         return await self.service.approval_reviews(self.thread_id, run_id)
 
     async def decide_approval(
-        self, run_id: str, request_id: str, *, approved: bool, expected_revision: int
+        self,
+        run_id: str,
+        request_id: str,
+        *,
+        approved: bool,
+        expected_revision: int,
+        feedback: str | None = None,
     ):
         return await self.service.decide_approval(
             self.thread_id,
@@ -197,6 +203,7 @@ class CodingSession:
             request_id,
             approved=approved,
             expected_revision=expected_revision,
+            feedback=feedback,
         )
 
     async def cancel(self, run_id: str) -> bool:

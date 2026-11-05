@@ -216,8 +216,10 @@ async def test_prompt_wait_receipt_and_run_summaries_share_types(kind):
 
 @pytest.mark.asyncio
 @pytest.mark.parametrize("kind", ["local", "http"])
+@pytest.mark.parametrize("approved", [False, True])
 async def test_approval_resume_returns_receipt_for_same_run_and_is_observed_by_watch(
     kind,
+    approved,
 ):
     calls = []
 
@@ -243,8 +245,9 @@ async def test_approval_resume_returns_receipt_for_same_run_and_is_observed_by_w
         await session.decide_approval(
             admitted.run_id,
             review.request_id,
-            approved=True,
+            approved=approved,
             expected_revision=review.revision,
+            feedback="Summarize the observed outcome.",
         )
 
         async with session.watch() as watcher:
@@ -259,7 +262,16 @@ async def test_approval_resume_returns_receipt_for_same_run_and_is_observed_by_w
 
         settled = await asyncio.wait_for(session.wait("approval-request"), timeout=5)
         assert settled.status == "completed"
-        assert calls == ["key"]
+        assert calls == (["key"] if approved else [])
+        items = agent.generator.aforward.call_args.kwargs["messages"]._to_state()[
+            "items"
+        ]
+        (comment,) = [
+            item for item in items if "approval_feedback" in item.get("metadata", {})
+        ]
+        (decision,) = comment["metadata"]["approval_feedback"]["reviews"]
+        assert decision["approved"] is approved
+        assert decision["feedback"] == "Summarize the observed outcome."
         assert all(isinstance(event, EventRecord) for event in events)
         assert all(isinstance(event.data, dict) for event in events)
         assert events[-1].run_id == admitted.run_id

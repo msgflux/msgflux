@@ -13,6 +13,7 @@ from msgflux.runtime.approvals.records import (
     ApprovalBinding,
     ApprovalEvent,
     ApprovalRecord,
+    normalize_feedback,
     require_name,
     require_time,
 )
@@ -155,17 +156,21 @@ class ApprovalStore(ABC, ApprovalStoreType):
         *,
         approved: bool,
         decided_by: str,
+        feedback: str | None = None,
         expected_revision: int | None = None,
     ) -> ApprovalRecord:
         """Record a trusted host decision, optionally comparing its revision.
 
-        A repeated identical decision by the same reviewer remains idempotent
-        even when its expected revision is stale, covering a lost response.
+        A repeated identical decision by the same reviewer and normalized
+        feedback remains idempotent even when its expected revision is stale,
+        covering a lost response. Changed feedback on a settled decision is a
+        conflict.
         """
         if type(approved) is not bool:
             raise TypeError("Approval decisions require a bool")
         self._validate_expected_revision(expected_revision)
         require_name(decided_by)
+        normalized_feedback = normalize_feedback(feedback)
         status = "approved" if approved else "denied"
 
         def decide(current):
@@ -175,13 +180,19 @@ class ApprovalStore(ABC, ApprovalStoreType):
                 raise KeyError("Approval request not found")
             if record.status == "expired":
                 return record
-            if record.status == status and record.decided_by == decided_by:
+            if (
+                record.status == status
+                and record.decided_by == decided_by
+                and record.feedback == normalized_feedback
+            ):
                 return record
             if expected_revision is not None and record.revision != expected_revision:
                 raise ApprovalConflictError("Approval revision changed")
             if record.status != "pending":
                 raise ApprovalConflictError("Approval decision is already settled")
-            return self._transition(record, status, now, decided_by=decided_by)
+            return self._transition(
+                record, status, now, decided_by=decided_by, feedback=normalized_feedback
+            )
 
         record = self._update(require_name(namespace), require_name(request_id), decide)
         if record.status == "expired":
@@ -249,6 +260,7 @@ class ApprovalStore(ABC, ApprovalStoreType):
         *,
         approved: bool,
         decided_by: str,
+        feedback: str | None = None,
         expected_revision: int | None = None,
     ) -> ApprovalRecord:
         return await asyncio.to_thread(
@@ -257,6 +269,7 @@ class ApprovalStore(ABC, ApprovalStoreType):
             request_id,
             approved=approved,
             decided_by=decided_by,
+            feedback=feedback,
             expected_revision=expected_revision,
         )
 

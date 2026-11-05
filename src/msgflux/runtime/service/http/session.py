@@ -181,6 +181,7 @@ class AgentSessionClient:
         *,
         approved: bool,
         expected_revision: int,
+        feedback: str | None = None,
     ) -> ApprovalReview:
         """Record an approval decision; call :meth:`resume` separately."""
         return await self._client.decide_approval(
@@ -189,6 +190,7 @@ class AgentSessionClient:
             request_id,
             approved=approved,
             expected_revision=expected_revision,
+            feedback=feedback,
         )
 
     async def runs(self) -> tuple[RunSummary, ...]:

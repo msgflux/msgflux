@@ -231,7 +231,11 @@ contain request and tool metadata plus a verified file diff when available;
 they omit raw arguments and checkpoint contents.
 
 The client first lists review requests, decides against the revision it
-inspected, then resumes the paused run explicitly:
+inspected, then resumes the paused run explicitly. Both decisions accept
+optional `feedback: str | None = None` (at most 4096 input characters, trimmed;
+empty or non-string values are invalid); `ApprovalReview.feedback` projects the
+stored comment, and the reviewer identity remains the host-configured
+`approval_reviewer`, never a request-body value:
 
 ```python
 reviews = await session.approval_reviews(run_id)
@@ -242,16 +246,27 @@ for review in reviews:
         review.request_id,
         approved=True,
         expected_revision=review.revision,
+        feedback="Proceed with these exact arguments; summarize the result next.",
     )
-    print("Recorded:", decided.status)
+    print("Recorded:", decided.status, decided.feedback)
+
+# To change the proposed action, reject it instead and let the model propose
+# anew; a positive decision still executes the exact original approved args.
+# decided = await session.decide_approval(
+#     run_id, review.request_id, approved=False,
+#     expected_revision=review.revision,
+#     feedback="Do not run this yet; propose the corrected call first.",
+# )
 
 # A decision records the human choice. It does not execute tools or resume work.
 receipt = await session.resume(run_id)
 ```
 
-An expired or stale request returns HTTP 409 and must be reviewed again. A
-decision does not itself resume execution or claim exactly-once behavior; normal
-service recovery checks still govern `resume()`.
+An expired or stale request returns HTTP 409 and must be reviewed again, except
+an exact retry—same reviewer, decision, and normalized feedback—remains
+idempotent even with a stale revision; changed feedback after settlement
+conflicts. A decision does not itself resume execution or claim exactly-once
+behavior; normal service recovery checks still govern `resume()`.
 
 ## Connect And Observe
 

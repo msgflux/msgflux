@@ -1200,8 +1200,9 @@ class AgentModelRuntimeMixin:
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
-                self._clear_approval_batch()
                 self._apply_context_scope_outcomes(messages, tool_outcomes)
+                self._append_approval_feedback(messages)
+                self._clear_approval_batch()
                 decision = self._resolve_continuation(
                     "after_tools", messages, vars, tool_intents, tool_outcomes
                 )
@@ -1288,8 +1289,9 @@ class AgentModelRuntimeMixin:
                     tool_outcomes
                 )
                 self._extend_tool_response_history(messages, tool_responses_message)
-                self._clear_approval_batch()
                 self._apply_context_scope_outcomes(messages, tool_outcomes)
+                self._append_approval_feedback(messages)
+                self._clear_approval_batch()
                 decision = await self._aresolve_continuation(
                     "after_tools", messages, vars, tool_intents, tool_outcomes
                 )
@@ -1349,10 +1351,12 @@ class AgentModelRuntimeMixin:
             self._extend_tool_response_history(
                 messages, model_response.render_tool_outcomes(control.outcomes)
             )
+            self._append_approval_feedback(messages)
             raise control.error from None
         self._append_interrupted_tool_response_messages(
             messages, model_response, reason=str(control)
         )
+        self._append_approval_feedback(messages)
         raise control
 
     def _process_tool_intents(

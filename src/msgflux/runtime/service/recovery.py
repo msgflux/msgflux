@@ -54,7 +54,9 @@ def _validate_approval_recovery(service, session, record):
             raise ServiceRecoveryRequiredError(
                 "Pending batch has no live approval policy"
             )
-        _validate_pending_decisions(session, thread_id, run_id, pending, policy)
+        _validate_pending_decisions(
+            session, thread_id, run_id, pending, policy, allow_denied=True
+        )
     return state
 
 

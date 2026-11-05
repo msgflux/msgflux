@@ -105,12 +105,19 @@ def _approval_candidate(service, session, thread_id):
     return record, pending
 
 
-def _validate_pending_decisions(session, thread_id, run_id, pending, policy):
+def _validate_pending_decisions(
+    session, thread_id, run_id, pending, policy, *, allow_denied=False
+):
+    # Only verified owner recovery passes allow_denied=True, so a paused
+    # unexecuted denied batch can resume to deliver its blocked result.
+    # The default strict set keeps workspace-policy reevaluation from
+    # reapproving or autoresuming an explicit denial on policy change.
+    allowed = {"pending", "approved"} | ({"denied"} if allow_denied else set())
     decisions = []
     intents = {item["id"]: item for item in pending["intents"]}
     for call_id, request_id in pending["requests"].items():
         review = review_record(session, thread_id, run_id, request_id)
-        if review.status not in {"pending", "approved"}:
+        if review.status not in allowed:
             raise ServiceRecoveryRequiredError(
                 f"Approval {request_id} is {review.status}"
             )

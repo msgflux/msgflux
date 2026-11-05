@@ -73,6 +73,7 @@ class ApprovalReview(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     revision: int
     expires_at: float
     diff: str | None = None
+    feedback: str | None = None
 
 
 class ServiceConflictError(RuntimeError):

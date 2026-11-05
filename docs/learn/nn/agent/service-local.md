@@ -1419,14 +1419,18 @@ The daemon verifies and locks the old owner's registered lease file before
 conditionally adopting the paused admission. The lock files beside the service
 journal are retained as recovery evidence; keep them with the journal.
 
-A live owner, missing or replaced lease file, expired/consumed decision, changed
-workspace, or batch already marked `executing` blocks recovery with a concrete
-reason. A `running` admission after a crash remains uncertain even if an approval
-was previously granted. Embedded services without registered local owner leases
-continue to require explicit trusted-host recovery. The same applies to runs
-owned by older daemon versions that did not register a lease: upgrading cannot
-create evidence about a previous worker retroactively. Neither HTTP nor CLI
-callers can supply an old-worker quiescence override.
+Verified local service owner recovery also supports a **denied, unexecuted**
+batch, so resume can deliver the blocked output and its reviewer comment;
+workspace-policy reevaluation cannot reapprove an explicit denial. The
+lease/quiescence/policy/binding/consumed/expired/executing/live-worker guards
+are unchanged: a live owner, missing or replaced lease file, expired/consumed
+decision, changed workspace, or batch already marked `executing` blocks recovery
+with a concrete reason. A `running` admission after a crash remains uncertain
+even if an approval was previously granted. Embedded services without registered
+local owner leases continue to require explicit trusted-host recovery. The same
+applies to runs owned by older daemon versions that did not register a lease:
+upgrading cannot create evidence about a previous worker retroactively. Neither
+HTTP nor CLI callers can supply an old-worker quiescence override.
 
 ## Gracefully Stop The Daemon
 

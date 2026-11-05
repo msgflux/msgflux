@@ -267,6 +267,8 @@ them. All following events remain correlatable through `run_id` and
 | `reasoning.delta` | Reasoning content chunk, when exposed by the provider |
 | `reasoning_summary.delta` | Provider reasoning-summary chunk |
 | `message.end` | Complete assistant output |
+| `tool.approval_required` | A tool call is paused for host approval; identifies the request and call without raw arguments |
+| `tool.approval_resolved` | A host decision was recorded; projects the normalized reviewer `feedback` when present |
 | `tool.start` | A validated local tool call or an observed provider search is starting |
 | `tool.blocked` | A tool policy rejected the call before execution; includes its reason. Permission denials omit arguments. |
 | `tool.permission_denied` | Required permissions were denied before dispatch; includes the call ID, tool name, code, and structured error |
@@ -290,6 +292,11 @@ cooperative abort, task interruption or asyncio cancellation emits
 propagates to direct callers and event-stream consumers. Service observers
 receive the event; the service owns execution and settles the corresponding
 receipt.
+
+Reviewer feedback is not embedded in `tool.end`, tool JSON, native schemas, or
+error text. It is projected on `tool.approval_resolved` and watcher snapshots,
+and reaches the model as a separate canonical `user` context message after the
+batch tool results, before the next inference.
 
 The textual `data.error` preserves the exception message. Empty or
 whitespace-only messages fall back to the exception class, such as `ReadTimeout`,

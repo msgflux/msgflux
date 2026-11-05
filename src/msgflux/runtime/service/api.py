@@ -23,6 +23,7 @@ from msgflux.exceptions import (
 from msgflux.logger import logger
 from msgflux.runtime.abort import AbortSignal
 from msgflux.runtime.agent_inbox.base import AgentInboxClosedError
+from msgflux.runtime.approvals.records import normalize_feedback
 from msgflux.runtime.compaction import CompactionResult
 from msgflux.runtime.context import ExecutionScope, execution_context, new_thread_id
 from msgflux.runtime.events import EventType, _hub_event_sink
@@ -799,10 +800,12 @@ class AgentService:
         *,
         approved: bool,
         expected_revision: int,
+        feedback: str | None = None,
     ) -> ApprovalReview:
         """Record one host review; execution still requires explicit resume."""
         if type(expected_revision) is not int or expected_revision <= 0:
             raise ValueError("expected_revision must be a positive integer")
+        feedback = normalize_feedback(feedback)
         async with self._use_session(thread_id) as session:
             async with self._lock:
                 reviewer = session.approval_reviewer
@@ -820,6 +823,7 @@ class AgentService:
                         approved=approved,
                         decided_by=reviewer,
                         expected_revision=expected_revision,
+                        feedback=feedback,
                     )
                     return project(result, diff=initial_review.diff)
 

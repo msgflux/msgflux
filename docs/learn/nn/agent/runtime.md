@@ -1327,6 +1327,7 @@ try:
     # Only after authenticating the reviewer and receiving their actual decision:
     decided = store.decide(
         "catalog", request_id, approved=True, decided_by="reviewer:7",
+        feedback="Publish exactly this entry; I will review the result.",
     )
 
     # The host must recompute the binding from the current invocation and policy.
@@ -1346,8 +1347,15 @@ This example creates a five-minute request, records a host-authenticated decisio
 and consumes it once. It deliberately performs no external action. The journal
 contains the `pending`, `approved`, and `consumed` revisions. A second consumption
 raises `ApprovalConflictError`, even from another process. `approved=False`
-records a terminal denial. Repeating the same request ID and binding/deadline or
-the same decision/reviewer is idempotent; conflicting retries are rejected.
+records a terminal denial. Both decisions accept optional
+`feedback: str | None = None`: at most 4096 input characters, whitespace-trimmed;
+empty or non-string values are invalid. The journal and its audit event persist
+the normalized feedback, so treat comments as stored history/audit data—not as
+redacted or nonsecret—and protect access to those stores. Reviewer identity
+(`decided_by`) is host-controlled. Repeating the same request ID and
+binding/deadline or the same decision/reviewer/normalized feedback is idempotent,
+even with a stale expected revision; changed feedback after a decision settles
+conflicts.
 
 ### Binding and authority
 
@@ -1462,8 +1470,20 @@ request and received an actual decision, it can record that decision:
 
 ```python
 agent.decide_approval(
-    request_id, approved=reviewer_approved, decided_by=authenticated_reviewer_id,
+    request_id, approved=True, decided_by=authenticated_reviewer_id,
     expected_revision=reviewed_request.revision,
+    feedback="Proceed with these exact arguments; summarize the result next.",
+)
+result = agent("", scope=scope)
+```
+
+To change the proposed action, reject it instead and let the model propose anew:
+
+```python
+agent.decide_approval(
+    request_id, approved=False, decided_by=authenticated_reviewer_id,
+    expected_revision=reviewed_request.revision,
+    feedback="Do not publish yet; propose the corrected entry first.",
 )
 result = agent("", scope=scope)
 ```
@@ -1471,11 +1491,32 @@ result = agent("", scope=scope)
 Here `reviewed_request` is the journal record shown to the reviewer. The optional
 `expected_revision` compares its revision atomically before changing the decision.
 A conflicting revision raises `ApprovalConflictError`. Repeating the same
-decision by the same reviewer returns the existing decision without another
-revision, even if the response was lost. A consumed approval cannot be decided
+decision by the same reviewer with the same normalized feedback returns the
+existing decision without another revision, even if the response was lost; changed
+feedback after settlement conflicts. A consumed approval cannot be decided
 again. `adecide_approval()` and the journal's `decide()`/`adecide()` accept the
-same option. The [native service client](service-http.md#review-tool-approvals)
-requires a revision for remote decisions.
+same `feedback: str | None = None` option (at most 4096 input characters, trimmed;
+empty or non-string values are invalid). The
+[native service client](service-http.md#review-tool-approvals) requires a
+revision for remote decisions and also accepts `feedback`.
+
+A positive decision executes the **exact original approved arguments**; its
+comment is guidance for the *next* model turn, not a modification of the current
+call. There is no conditional authorization and no automatic resume: to alter
+the proposed action, reject with feedback and let the model propose anew. Actual
+tool results, JSON/native schemas, and error messages are unchanged. After the
+batch tool results, Agent adds a separate canonical `user` context message
+labeled reviewer feedback—before the next inference—whose provenance identifies
+the request, tool, call, reviewer, original decision, and journal status. An
+approval that expires before execution retains the reviewer's positive decision
+alongside `status="expired"`; its tool output still reports that execution was
+blocked. A current tool filter can likewise block an approved call without
+discarding its reviewer's comment. This is distinct from
+`ToolOutcome.feedback`, which remains the `FeedbackSpec` continuation policy.
+Batch settlement comments are persisted atomically with tool outcomes and
+pending-batch clearing; partial interruption/reconciliation reuses the existing
+checkpoint delivery receipt to avoid duplicate comments. This does not claim
+exactly-once external effects.
 
 Use the `request_id` returned in `requests` or a watcher snapshot. The second
 call resumes the **same** namespace, thread and run; its message is ignored.
@@ -1554,7 +1595,7 @@ async with agent.watch(scope.thread_id, approvals=policy) as watcher:
 
 await agent.adecide_approval(
     request_id, approved=reviewer_approved, decided_by=authenticated_reviewer_id,
-    approvals=policy,
+    approvals=policy, feedback="Use the exact approved arguments.",
 )
 result = await agent.acall("", scope=scope, approvals=policy)
 ```
@@ -1592,8 +1633,9 @@ async with agent.watch("catalog:42") as watcher:
 
 `snapshot.approvals` contains journal records referenced by the latest run's
 pending batch. They may be pending, decided, expired, or consumed-but-unsettled.
-`decide_approval` emits `tool.approval_resolved` to live watchers in this process;
-direct `journal.decide` only updates storage. A decision never automatically
+`decide_approval` emits `tool.approval_resolved` to live watchers in this process,
+projecting the normalized `feedback` when present; direct `journal.decide` only
+updates storage. A decision never automatically
 restarts the Agent. Cross-process live events and an atomic snapshot spanning
 the checkpoint and journal databases are not provided; reconnect or poll storage
 to refresh external decisions.
@@ -1623,9 +1665,9 @@ async def run_turn(message):
         show_approval_requests(requests)
 
 
-async def answer_request(request_id, approved, reviewer_id):
+async def answer_request(request_id, approved, reviewer_id, feedback=None):
     await agent.adecide_approval(
-        request_id, approved=approved, decided_by=reviewer_id,
+        request_id, approved=approved, decided_by=reviewer_id, feedback=feedback,
     )
     await run_turn("")
 ```
@@ -1649,7 +1691,10 @@ to automatically resume it.
 ### Denial, timeout, and recovery
 
 Denied or expired approvals become blocked tool observations on the next resume;
-the model can continue without executing those calls. Deadline checks are lazy:
+the model can continue without executing those calls. A denied decision's
+feedback is delivered with that blocked output as the separate reviewer-feedback
+context described above, so the model can propose a corrected action.
+Deadline checks are lazy:
 there is no timer that resumes a paused Agent automatically. Removing a pending
 rule or changing its binding leaves the run paused for host reconciliation.
 
