@@ -572,7 +572,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             event=deepcopy(dict(event)) if event is not None else None,
             branch_id=branch_id,
             head_item_id=head_item_id,
-            extension_state=extension_state,
+            extension_state=deepcopy(extension_state),
         )
 
     def _must_append_inline(self) -> bool:
@@ -722,51 +722,24 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         # A caller mutating its inputs cannot desynchronize the ack/payloads.
         new_items = control_state["messages"]["items"]
 
-        incoming_ids = [item["item_id"] for item in new_items]
+        # Strictly validate every prior payload exactly once and retain only
+        # occurrence identities, never the previous timeline.
         old_item_ids: List[str] = []
-        if inline is not None:
-            old_item_ids = [
-                entry.get("item_id") if isinstance(entry, Mapping) else None
-                for entry in inline
-            ]
-            if all(isinstance(item_id, str) and item_id for item_id in old_item_ids):
-                # Entries already carry their occurrence ids, so the payloads
-                # are not decoded; as in the manifest layout, archive
-                # integrity is enforced on full load and full commits.
-                prior = (
-                    {"_checkpoint": previous["_checkpoint"]}
-                    if "_checkpoint" in previous
-                    else {}
-                )
-            else:
-                # Legacy id-less entries need their payloads to derive
-                # deterministic occurrence ids.
-                old_item_ids = []
-                prior = self._commit_envelope_from_state(
-                    namespace,
-                    thread_id,
-                    previous,
-                    collect_item_ids=old_item_ids,
-                )
-            if len(old_item_ids) != old_base.item_count:
-                raise ValueError("Checkpoint manifest occurrence count is corrupted")
-            old_id_set = set(old_item_ids)
-            if len(old_id_set) != len(old_item_ids):
-                raise ValueError("Checkpoint archive contains duplicate item IDs")
-            for item_id in incoming_ids:
-                if item_id in old_id_set:
-                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
-        else:
-            # O(delta) append: the base CAS (revision + envelope digest)
-            # proves the archive is the one the caller extends, so the
-            # immutable prefix is not re-read. Archive integrity and
-            # occurrence-id uniqueness are enforced when the full history
-            # is loaded and by full commits.
-            prior = (
-                {"_checkpoint": previous["_checkpoint"]}
-                if "_checkpoint" in previous
-                else {}
-            )
+        prior = self._commit_envelope_from_state(
+            namespace,
+            thread_id,
+            previous,
+            collect_item_ids=old_item_ids,
+        )
+        if len(old_item_ids) != old_base.item_count:
+            raise ValueError("Checkpoint manifest occurrence count is corrupted")
+        incoming_ids = [item["item_id"] for item in new_items]
+        old_id_set = set(old_item_ids)
+        if len(old_id_set) != len(old_item_ids):
+            raise ValueError("Checkpoint archive contains duplicate item IDs")
+        for item_id in incoming_ids:
+            if item_id in old_id_set:
+                raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
 
         effective_head = (
             job.head_item_id
@@ -971,16 +944,16 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         self,
         path: str = ".msgflux/checkpoints.sqlite3",
         *,
-        synchronous: str = "NORMAL",
+        synchronous: str = "FULL",
         group_commit: bool = True,
     ) -> None:
         """Open (or create) a WAL-mode SQLite checkpoint database.
 
         ``synchronous`` is the SQLite ``PRAGMA synchronous`` level. The default
-        ``NORMAL`` keeps every committed checkpoint durable across process
-        crashes (WAL mode) and skips the per-commit fsync; use ``"FULL"`` to
-        also survive OS crashes or power loss at the cost of one fsync per
-        checkpoint.
+        ``FULL`` preserves SQLite's per-commit synchronization for OS crashes
+        and power loss. Explicitly choose ``"NORMAL"`` to skip per-commit fsync
+        while retaining WAL recovery across process crashes; recent commits
+        may then be lost after OS crashes or power loss.
 
         With ``group_commit`` (default) appends from concurrent agents are
         queued to one writer thread that publishes each queued batch in a
@@ -1898,7 +1871,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
     def collect_garbage(self, namespace: str, thread_id: str) -> None:
         """Delete payloads and pages unreachable from any run in the thread.
 
-        Appends are O(delta) and only drop the partial head page they rewrite,
+        Appends only drop the partial head page they rewrite,
         so a full reachability sweep is never paid per checkpoint. Garbage left
         by crashes or external writes is reclaimed here, by full replacements,
         ``delete_run`` and ``clear``. The sweep is atomic.
@@ -1938,13 +1911,23 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             self._rollback_preserving_error(error)
             raise
 
-    @_locked
     def close(self) -> None:
+        """Drain accepted appends before closing, without holding their lock."""
         with self._writer_guard:
-            self._writer_closed = True
             writer = self._writer_thread
-            if writer is not None:
-                self._writer_queue.put(None)
-        if writer is not None and writer is not current_thread():
+            if writer is current_thread():
+                raise RuntimeError("Cannot close SQLiteCheckpointStore from its writer")
+            if writer is not None and writer.is_alive() and self._lock._is_owned():
+                raise RuntimeError(
+                    "Cannot drain SQLiteCheckpointStore while holding its lock"
+                )
+            if not self._writer_closed:
+                self._writer_closed = True
+                if writer is not None:
+                    self._writer_queue.put(None)
+        # The writer needs _lock to publish accepted jobs. Joining it while
+        # owning that lock would deadlock shutdown against the pending append.
+        if writer is not None:
             writer.join()
-        self._conn.close()
+        with self._lock:
+            self._conn.close()

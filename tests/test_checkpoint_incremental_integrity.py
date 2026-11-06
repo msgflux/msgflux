@@ -49,24 +49,21 @@ def _corrupt_first_payload(store):
         items[next(iter(items))] = b"\xc1"
 
 
-def test_segmented_append_defers_cold_integrity_until_full_load(checkpoint_store):
+@pytest.mark.parametrize("count", [3, 300])
+def test_suffix_does_not_claim_cold_integrity_but_append_remains_strict(
+    checkpoint_store,
+    count,
+):
     store = checkpoint_store
-    store.commit_state(NS, THREAD, RUN, _state(), expected_revision=0)
-    before = store.load_tail(NS, THREAD, RUN, limit=3)
+    store.commit_state(NS, THREAD, RUN, _state(count), expected_revision=0)
+    before = store.load_tail(NS, THREAD, RUN, limit=1)
     _corrupt_first_payload(store)
-    assert store.load_tail(NS, THREAD, RUN, limit=3) == before
-    acknowledgment = store.append_state(
-        NS,
-        THREAD,
-        RUN,
-        [_new_item()],
-        base=before.base,
-        event={"event_type": "integrity_deferred"},
-    )
-    assert acknowledgment.base.item_count == 301
-    assert acknowledgment.base.revision == 2
-    assert store.load_events(NS, THREAD, RUN) == [{"event_type": "integrity_deferred"}]
-    with pytest.raises((ValueError, TypeError, KeyError)):
+    assert store.load_tail(NS, THREAD, RUN, limit=1) == before
+    with pytest.raises((ValueError, TypeError)):
+        store.append_state(NS, THREAD, RUN, [_new_item()], base=before.base)
+    assert store.load_tail(NS, THREAD, RUN, limit=1) == before
+    assert store.load_events(NS, THREAD, RUN) == []
+    with pytest.raises((ValueError, TypeError)):
         store.load_state(NS, THREAD, RUN)
 
 
@@ -492,12 +489,143 @@ async def test_async_appends_from_many_agents_share_the_writer(tmp_path):
     store.close()
 
 
-def test_inline_append_does_not_decode_the_prefix(checkpoint_store):
+@pytest.mark.parametrize("count", [3, 128, 129, 300])
+@pytest.mark.parametrize("asynchronous", [False, True])
+def test_append_rejects_occurrence_id_from_persisted_prefix(
+    checkpoint_store, count, asynchronous
+):
+    import asyncio
+
     store = checkpoint_store
-    store.commit_state(NS, THREAD, RUN, _state(3), expected_revision=0)
-    tail = store.load_tail(NS, THREAD, RUN, limit=1)
-    _corrupt_first_payload(store)
-    acknowledgment = store.append_state(NS, THREAD, RUN, [_new_item()], base=tail.base)
-    assert acknowledgment.base.item_count == 4
-    with pytest.raises((ValueError, TypeError, KeyError)):
-        store.load_state(NS, THREAD, RUN)
+    committed = store.commit_state(NS, THREAD, RUN, _state(count), expected_revision=0)
+    before = store.load_state(NS, THREAD, RUN)
+    duplicate = {**_new_item(), "item_id": "itm_0"}
+    with pytest.raises(ValueError, match="Duplicate ChatMessages item_id"):
+        if asynchronous:
+            asyncio.run(
+                store.aappend_state(NS, THREAD, RUN, [duplicate], base=committed.base)
+            )
+        else:
+            store.append_state(NS, THREAD, RUN, [duplicate], base=committed.base)
+    assert store.load_state(NS, THREAD, RUN) == before
+    assert store.load_events(NS, THREAD, RUN) == []
+    ChatMessages()._hydrate_state(before["messages"])
+
+
+def _close_with_pending_append_worker(path, result_queue):
+    import threading
+    import time
+
+    store = SQLiteCheckpointStore(path)
+    committed = store.commit_state(NS, THREAD, RUN, _state(3), expected_revision=0)
+    writer_entered = threading.Event()
+    release_writer = threading.Event()
+    publish = store._publish_batch
+
+    def delayed_publish(jobs):
+        writer_entered.set()
+        assert release_writer.wait(5)
+        publish(jobs)
+
+    store._publish_batch = delayed_publish
+    future = store._submit_append(
+        store._prepare_append_job(NS, THREAD, RUN, [_new_item()], base=committed.base)
+    )
+    assert writer_entered.wait(5)
+    closer = threading.Thread(target=store.close, daemon=True)
+    closer.start()
+    deadline = time.monotonic() + 5
+    while not store._writer_closed and time.monotonic() < deadline:
+        time.sleep(0.001)
+    assert store._writer_closed
+    release_writer.set()
+    closer.join(5)
+    assert not closer.is_alive(), "close deadlocked against its writer"
+    assert future.result(timeout=1).base.revision == 2
+    store.close()
+    with pytest.raises(RuntimeError, match="closed"):
+        store.append_state(NS, THREAD, RUN, [_new_item()], base=committed.base)
+    reopened = SQLiteCheckpointStore(path)
+    try:
+        assert (
+            reopened.load_state(NS, THREAD, RUN)["messages"]["items"][-1] == _new_item()
+        )
+    finally:
+        reopened.close()
+    result_queue.put("closed and recovered")
+
+
+def test_close_drains_pending_append_without_holding_connection_lock(tmp_path):
+    context = multiprocessing.get_context("spawn")
+    result_queue = context.Queue()
+    worker = context.Process(
+        target=_close_with_pending_append_worker,
+        args=(str(tmp_path / "shutdown.sqlite3"), result_queue),
+    )
+    worker.start()
+    try:
+        worker.join(15)
+        assert not worker.is_alive(), "checkpoint shutdown did not finish"
+        assert worker.exitcode == 0
+        assert result_queue.get(timeout=2) == "closed and recovered"
+    finally:
+        if worker.is_alive():
+            worker.terminate()
+            worker.join(5)
+        result_queue.close()
+        result_queue.join_thread()
+
+
+@pytest.mark.asyncio
+async def test_queued_append_freezes_extension_state_before_publication(tmp_path):
+    import asyncio
+    import threading
+
+    store = SQLiteCheckpointStore(str(tmp_path / "frozen.sqlite3"))
+    committed = store.commit_state(NS, THREAD, RUN, _state(3), expected_revision=0)
+    entered = threading.Event()
+    release = threading.Event()
+    publish = store._publish_batch
+
+    def delayed_publish(jobs):
+        entered.set()
+        assert release.wait(5)
+        publish(jobs)
+
+    store._publish_batch = delayed_publish
+    extensions = {"policy": {"enabled": True}}
+    pending = asyncio.create_task(
+        store.aappend_state(
+            NS,
+            THREAD,
+            RUN,
+            [_new_item()],
+            base=committed.base,
+            extension_state=extensions,
+        )
+    )
+    try:
+        assert await asyncio.to_thread(entered.wait, 5)
+        extensions["policy"]["enabled"] = False
+        release.set()
+        result = await asyncio.wait_for(pending, 5)
+        assert result.state["_checkpoint"]["extensions"] == {
+            "policy": {"enabled": True}
+        }
+        assert store.load_state(NS, THREAD, RUN)["_checkpoint"]["extensions"] == {
+            "policy": {"enabled": True}
+        }
+    finally:
+        release.set()
+        await asyncio.gather(pending, return_exceptions=True)
+        store.close()
+
+
+@pytest.mark.parametrize("mode, expected", [(None, 2), ("FULL", 2), ("NORMAL", 1)])
+def test_sqlite_preserves_full_synchronization_by_default(tmp_path, mode, expected):
+    options = {} if mode is None else {"synchronous": mode}
+    store = SQLiteCheckpointStore(str(tmp_path / "durability.sqlite3"), **options)
+    try:
+        assert store._conn.execute("PRAGMA synchronous").fetchone()[0] == expected
+    finally:
+        store.close()

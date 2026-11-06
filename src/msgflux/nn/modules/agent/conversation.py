@@ -1367,7 +1367,6 @@ class AgentConversationMixin:
                 expected_tracker, expected_revision = tracker_snapshot(run)
             # Bind the body to the revision observed before constructing it.
             # A newer commit during preparation must conflict, never be adopted.
-            epoch = messages._epoch
             state = self._build_checkpoint_state(
                 messages, status=status, task_result=task_result
             )
@@ -1383,7 +1382,6 @@ class AgentConversationMixin:
                     thread_id=thread_id,
                     run_id=run_id,
                     expected_revision=expected_revision,
-                    epoch=epoch,
                 )
                 if plan is not None:
                     tail = checkpoint_store.append_state(
@@ -1416,9 +1414,7 @@ class AgentConversationMixin:
                         head_item_id=run.head_item_id,
                     )
                     advance_revision(run, committed.revision)
-                    replacement = tracker_from_commit(
-                        committed, checkpoint_store, epoch=epoch
-                    )
+                    replacement = tracker_from_commit(committed, checkpoint_store)
                     commit_tracker(
                         run, expected_tracker, replacement, committed.revision
                     )
@@ -1459,7 +1455,6 @@ class AgentConversationMixin:
                 expected_tracker, expected_revision = tracker_snapshot(run)
             # Bind the body to the revision observed before constructing it.
             # A newer commit during preparation must conflict, never be adopted.
-            epoch = messages._epoch
             state = self._build_checkpoint_state(
                 messages, status=status, task_result=task_result
             )
@@ -1475,7 +1470,6 @@ class AgentConversationMixin:
                     thread_id=thread_id,
                     run_id=run_id,
                     expected_revision=expected_revision,
-                    epoch=epoch,
                 )
                 if plan is not None:
                     tail = await self._aappend_checkpoint_state(
@@ -1503,9 +1497,7 @@ class AgentConversationMixin:
                         event=event,
                     )
                     advance_revision(run, committed.revision)
-                    replacement = tracker_from_commit(
-                        committed, checkpoint_store, epoch=epoch
-                    )
+                    replacement = tracker_from_commit(committed, checkpoint_store)
                     commit_tracker(
                         run, expected_tracker, replacement, committed.revision
                     )
@@ -1677,7 +1669,7 @@ class AgentConversationMixin:
                 else None
             ),
             "status": status,
-            "messages": messages._checkpoint_state(),
+            "messages": messages._to_state(),
             "runtime": runtime_state,
             "scope": scope.to_dict(),
             "model_preference": context.get("model_preference"),

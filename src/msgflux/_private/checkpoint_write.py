@@ -1,27 +1,24 @@
 """Ephemeral planning for automatic Agent checkpoint appends.
 
-The tracker built here is run-local, immutable and O(1) in size: it holds the
-committed base, the item count, the id of the last persisted item and the
-``ChatMessages`` prefix epoch observed when that state was built. It never
-keeps a copy of the conversation history and is never written into durable
-state.
+The tracker built here is run-local, immutable and intentionally small: it holds
+the committed base, the item count, one digest over the already-copied canonical
+checkpoint items and the control/message key sets. It never keeps a second
+copy of the conversation history and is never written into durable state.
 
 Every save revalidates the tracker against the current store, run scope and
-timeline. Appended ``ChatMessages`` items are immutable; any non-append
-mutation replaces the process-unique timeline epoch (copies inherit it), so an
-unchanged epoch, a long-enough timeline and the same boundary item id prove the
-persisted prefix is intact without rehashing or copying it. Any mismatch,
-unsupported payload or stale revision falls back to the full commit path; only
-the new suffix is appended.
-Append failures always propagate so callers cannot mask CAS or corruption
-errors with an implicit full retry.
+full checkpoint state. Any mismatch, unsupported payload or stale revision
+falls back to the existing full commit path; only an exact unchanged prefix is
+appended. Append failures always propagate so callers cannot mask CAS or
+corruption errors with an implicit full retry.
 """
 
 from __future__ import annotations
 
+import hashlib
 from dataclasses import dataclass
 from typing import Any, Mapping
 
+from msgflux.data.stores._manifest import _canonical_json
 from msgflux.data.stores.base import AsyncCheckpointStore
 from msgflux.data.stores.incremental import (
     CheckpointBase,
@@ -31,6 +28,7 @@ from msgflux.data.stores.incremental import (
 
 _HISTORY_KEYS = frozenset({"messages", "_messages", "_checkpoint"})
 _CONTAINER_KEYS = frozenset({"items"})
+_QUALIFICATION_ERRORS = (TypeError, ValueError, RecursionError)
 
 
 @dataclass(frozen=True)
@@ -39,8 +37,7 @@ class CheckpointTracker:
 
     base: CheckpointBase
     count: int
-    last_item_id: str | None
-    epoch: int
+    digest: str
     control_keys: frozenset[str]
     message_keys: frozenset[str]
 
@@ -54,8 +51,7 @@ class AppendPlan:
     items: list[Mapping[str, Any]]
     state_updates: dict[str, Any]
     message_updates: dict[str, Any]
-    last_item_id: str | None
-    epoch: int
+    digest: str
     control_keys: frozenset[str]
     message_keys: frozenset[str]
 
@@ -72,16 +68,24 @@ def _messages_and_items(
     return messages, items
 
 
-def _last_id(items: list[Any], count: int) -> str | None:
-    if count == 0:
-        return None
-    item = items[count - 1]
-    if type(item) is not dict:
-        raise ValueError("Automatic checkpoint items must be plain dicts")
-    item_id = item.get("item_id")
-    if not isinstance(item_id, str) or not item_id:
-        raise ValueError("Automatic checkpoint items require an item_id")
-    return item_id
+def _fingerprint(items: list[Any], prefix_count: int) -> tuple[str, str]:
+    """Hash canonical typed JSON items in one pass with O(max item) memory.
+
+    Each item is framed with its byte length so concatenations cannot alias.
+    The prefix digest covers the first ``prefix_count`` items; the whole digest
+    covers every item and is stored in the next tracker.
+    """
+    prefix = hashlib.sha256()
+    whole = hashlib.sha256()
+    for index, item in enumerate(items):
+        if not is_plain_json(item):
+            raise ValueError("Automatic checkpoint hashing requires plain JSON items")
+        encoded = _canonical_json(item)
+        frame = len(encoded).to_bytes(8, "big") + encoded
+        whole.update(frame)
+        if index < prefix_count:
+            prefix.update(frame)
+    return prefix.hexdigest(), whole.hexdigest()
 
 
 def _keysets(
@@ -118,35 +122,24 @@ def _updates_are_json_native(
 
 
 def seed_tracker(
-    base: CheckpointBase | None,
-    state: Mapping[str, Any],
-    epoch: int | None = None,
+    base: CheckpointBase | None, state: Mapping[str, Any]
 ) -> CheckpointTracker | None:
-    """Build a tracker from an actual committed state, or disable tracking.
-
-    ``epoch`` is the ``ChatMessages`` prefix epoch the state was built from.
-    Without it no later append can prove its prefix, so tracking is disabled.
-    Seeding qualifies the whole committed history once (plain JSON, explicit
-    ids); later appends only qualify their own suffix.
-    """
+    """Build a tracker from an actual committed state, or disable tracking."""
     try:
-        if type(base) is not CheckpointBase or epoch is None:
+        if type(base) is not CheckpointBase:
             return None
         resolved = _messages_and_items(state)
         if resolved is None:
             return None
-        resolved_messages, items = resolved
+        messages, items = resolved
         if len(items) != base.item_count:
             return None
-        for item in items:
-            if type(item) is not dict or not is_plain_json(item):
-                return None
-        control_keys, message_keys = _keysets(state, resolved_messages)
+        _, digest = _fingerprint(items, 0)
+        control_keys, message_keys = _keysets(state, messages)
         return CheckpointTracker(
             base=base,
             count=len(items),
-            last_item_id=_last_id(items, len(items)),
-            epoch=epoch,
+            digest=digest,
             control_keys=control_keys,
             message_keys=message_keys,
         )
@@ -155,9 +148,7 @@ def seed_tracker(
 
 
 def tracker_from_commit(
-    committed: Any,
-    store: Any | None = None,
-    epoch: int | None = None,
+    committed: Any, store: Any | None = None
 ) -> CheckpointTracker | None:
     """Seed optional provenance without failing an already committed write."""
     try:
@@ -166,7 +157,7 @@ def tracker_from_commit(
             and getattr(store, "supports_agent_incremental", False) is not True
         ):
             return None
-        return seed_tracker(getattr(committed, "base", None), committed.state, epoch)
+        return seed_tracker(getattr(committed, "base", None), committed.state)
     except Exception:
         return None
 
@@ -233,45 +224,40 @@ def plan_append(
     thread_id: str,
     run_id: str,
     expected_revision: int | None = None,
-    epoch: int | None = None,
 ) -> AppendPlan | None:
-    """Return an append plan only when the persisted prefix is unchanged.
+    """Return an append plan only when the whole prior history is unchanged.
 
-    The work is O(new items): the prefix is proven by the timeline's prefix
-    epoch, its length and the boundary item id. The
+    The capability and revision are checked on every save. The
     ``supports_agent_incremental`` flag is re-read dynamically so a subclass,
     instance wrapper or ``acommit_state`` override installed after the seed is
     honored.
     """
-    if run is None or epoch is None:
+    if run is None:
         return None
     revision = run.revision if expected_revision is None else expected_revision
     if not _eligible(store, tracker, revision, namespace, thread_id, run_id):
         return None
     try:
-        resolved = _matching_state(tracker, state, epoch)
+        resolved = _matching_state(tracker, state)
         if resolved is None:
             return None
-        resolved_messages, items = resolved
-        if not _updates_are_json_native(state, resolved_messages, run.extension_state):
+        messages, items, digest = resolved
+        if not _updates_are_json_native(state, messages, run.extension_state):
             return None
         updates = {
             key: value for key, value in state.items() if key not in _HISTORY_KEYS
         }
         message_updates = {
-            key: value
-            for key, value in resolved_messages.items()
-            if key not in _CONTAINER_KEYS
+            key: value for key, value in messages.items() if key not in _CONTAINER_KEYS
         }
-        control_keys, message_keys = _keysets(state, resolved_messages)
+        control_keys, message_keys = _keysets(state, messages)
         return AppendPlan(
             base=tracker.base,
             count=len(items),
-            items=items[tracker.count :],
+            items=list(items[tracker.count :]),
             state_updates=updates,
             message_updates=message_updates,
-            last_item_id=_last_id(items, len(items)),
-            epoch=epoch,
+            digest=digest,
             control_keys=control_keys,
             message_keys=message_keys,
         )
@@ -309,33 +295,33 @@ def _eligible(
 
 
 def _matching_state(
-    tracker: CheckpointTracker,
-    state: Mapping[str, Any],
-    epoch: int,
-) -> tuple[Mapping[str, Any], list[Any]] | None:
-    if epoch != tracker.epoch:
-        return None
+    tracker: CheckpointTracker, state: Mapping[str, Any]
+) -> tuple[Mapping[str, Any], list[Any], str] | None:
     resolved = _messages_and_items(state)
     if resolved is None:
         return None
-    resolved_messages, items = resolved
+    messages, items = resolved
     if len(items) < tracker.count:
         return None
-    control_keys, message_keys = _keysets(state, resolved_messages)
+    control_keys, message_keys = _keysets(state, messages)
     if control_keys != tracker.control_keys or message_keys != tracker.message_keys:
         return None
-    if _last_id(items, tracker.count) != tracker.last_item_id:
+    try:
+        prefix_digest, digest = _fingerprint(items, tracker.count)
+    except _QUALIFICATION_ERRORS:
         return None
+    if prefix_digest != tracker.digest:
+        return None
+    # Fingerprinting first qualifies exact native containers, so these lookups
+    # cannot invoke an opaque Mapping subclass's callbacks during planning.
     for item in items[tracker.count :]:
-        # Exact native containers only, so planning never invokes an opaque
-        # Mapping subclass's callbacks.
-        if type(item) is not dict or not is_plain_json(item):
+        if type(item) is not dict:
             return None
         item_id = item.get("item_id")
         if not isinstance(item_id, str) or not item_id:
             # The full path assigns legacy occurrence ids; append requires them.
             return None
-    return resolved_messages, items
+    return messages, items, digest
 
 
 def accept_append(plan: AppendPlan, tail: CheckpointTail) -> CheckpointTracker | None:
@@ -355,8 +341,7 @@ def accept_append(plan: AppendPlan, tail: CheckpointTail) -> CheckpointTracker |
     return CheckpointTracker(
         base=base,
         count=plan.count,
-        last_item_id=plan.last_item_id,
-        epoch=plan.epoch,
+        digest=plan.digest,
         control_keys=plan.control_keys,
         message_keys=plan.message_keys,
     )

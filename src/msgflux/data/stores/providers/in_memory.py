@@ -229,52 +229,22 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             # A caller mutating its inputs cannot desynchronize the ack/payloads.
             new_items = control_state["messages"]["items"]
 
-            incoming_ids = [item["item_id"] for item in new_items]
             old_item_ids: List[str] = []
-            if inline is not None:
-                old_item_ids = [
-                    entry.get("item_id") if isinstance(entry, Mapping) else None
-                    for entry in inline
-                ]
-                if all(
-                    isinstance(item_id, str) and item_id for item_id in old_item_ids
-                ):
-                    # Ids live on the entries: no payload decode is needed.
-                    prior = (
-                        {"_checkpoint": previous["_checkpoint"]}
-                        if "_checkpoint" in previous
-                        else {}
-                    )
-                else:
-                    # Legacy id-less entries derive ids from their payloads.
-                    old_item_ids = []
-                    prior = self._commit_envelope_from_state(
-                        namespace,
-                        thread_id,
-                        previous,
-                        collect_item_ids=old_item_ids,
-                    )
-                if len(old_item_ids) != old_base.item_count:
-                    raise ValueError(
-                        "Checkpoint manifest occurrence count is corrupted"
-                    )
-                old_id_set = set(old_item_ids)
-                if len(old_id_set) != len(old_item_ids):
-                    raise ValueError("Checkpoint archive contains duplicate item IDs")
-                for item_id in incoming_ids:
-                    if item_id in old_id_set:
-                        raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
-            else:
-                # O(delta) append: the base CAS (revision + envelope digest)
-                # proves the archive is the one the caller extends, so the
-                # immutable prefix is not re-read. Archive integrity and
-                # occurrence-id uniqueness are enforced when the full history
-                # is loaded and by full commits.
-                prior = (
-                    {"_checkpoint": previous["_checkpoint"]}
-                    if "_checkpoint" in previous
-                    else {}
-                )
+            prior = self._commit_envelope_from_state(
+                namespace,
+                thread_id,
+                previous,
+                collect_item_ids=old_item_ids,
+            )
+            if len(old_item_ids) != old_base.item_count:
+                raise ValueError("Checkpoint manifest occurrence count is corrupted")
+            incoming_ids = [item["item_id"] for item in new_items]
+            old_id_set = set(old_item_ids)
+            if len(old_id_set) != len(old_item_ids):
+                raise ValueError("Checkpoint archive contains duplicate item IDs")
+            for item_id in incoming_ids:
+                if item_id in old_id_set:
+                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
 
             effective_head = (
                 head_item_id
@@ -1151,7 +1121,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
     def collect_garbage(self, namespace: str, thread_id: str) -> None:
         """Delete payloads and pages unreachable from any run in the thread.
 
-        Appends are O(delta) and only drop the partial head page they rewrite;
+        Appends only drop the partial head page they rewrite;
         full reachability sweeps run here, on replacements, deletes and clear.
         """
         with self._lock:
