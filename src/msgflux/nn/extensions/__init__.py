@@ -4,6 +4,7 @@ from importlib import import_module
 from typing import TYPE_CHECKING
 
 if TYPE_CHECKING:
+    from msgflux.nn.extensions.agents_file import AgentsFileExtension
     from msgflux.nn.extensions.artifact import (
         Artifact,
         ArtifactExtension,
@@ -48,6 +49,7 @@ if TYPE_CHECKING:
     )
 
 __all__ = [
+    "AgentsFileExtension",
     "AgentExtensionCatalog",
     "ExtensionConfig",
     "ExtensionInfo",
@@ -81,6 +83,7 @@ __all__ = [
 ]
 
 _LAZY_IMPORTS = {
+    "AgentsFileExtension": ("msgflux.nn.extensions.agents_file", "AgentsFileExtension"),
     "AgentExtensionCatalog": (
         "msgflux.nn.extensions.discovery",
         "AgentExtensionCatalog",
