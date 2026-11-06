@@ -125,16 +125,16 @@ async def test_service_shutdown_interrupts_nested_background_work_before_host_cl
 
     # The thread store was closed after the host callback; persisted state can
     # be reopened and confirms that the task reached a terminal state.
-    from msgflux.runtime.agent_resources import AgentResources
+    from msgflux.runtime.agent_backend import AgentDirectoryResources
 
-    resources = AgentResources(tmp_path / "agent-state").bind(
-        thread.thread_id, namespace="root"
-    )
+    resources = AgentDirectoryResources(tmp_path / "agent-state")
+    binding = resources.bind(thread.thread_id, namespace="root")
     try:
-        task = resources.task_store.list()[0]
+        task = binding.task_store.list()[0]
         assert task.status in {"completed", "interrupted", "failed"}
     finally:
-        resources.close()
+        binding.close()
+        resources.release()
 
 
 def test_service_journal_is_opened_with_private_permissions(tmp_path):
@@ -159,8 +159,13 @@ def root_task_state(service, thread_id):
 
 @pytest.mark.asyncio
 async def test_thread_close_retry_does_not_repeat_successful_host_callback(tmp_path):
-    agent = _agent("retry-close", tmp_path / "retry-close", lambda **_kwargs: _text())
+    from msgflux.runtime.agent_resources import AgentResources
+
+    root = tmp_path / "retry-close"
     thread_id = "retry-close-thread"
+    initial = AgentResources(root).bind(thread_id, namespace="retry-close")
+    initial.close()
+    agent = _agent("retry-close", root, lambda **_kwargs: _text())
     resources = agent._bind_resources(thread_id)
     original_close = resources.checkpoint_store.close
     store_close_calls = 0
@@ -191,6 +196,7 @@ async def test_thread_close_retry_does_not_repeat_successful_host_callback(tmp_p
     finally:
         if not resources._closed:
             resources.close()
+        await agent.aclose()
 
 
 @pytest.mark.asyncio
@@ -220,3 +226,4 @@ async def test_failed_host_close_callback_is_quarantined_without_silent_retry(
         assert not resources._closed
     finally:
         resources.close()
+        agent._resources.release()

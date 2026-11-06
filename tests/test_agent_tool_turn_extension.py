@@ -128,6 +128,9 @@ async def test_budget_survives_failed_run_resume(asynchronous):
             await agent.acall("start", scope=scope)
         else:
             agent("start", scope=scope)
+    saved = store.load_state("budget", "thread", "run")["runtime"]["extensions"]
+    # Non-terminal batches live only in the timeline, not in control state.
+    assert saved["tool_turn_limit"] == {"completed_tool_turns": 1}
     restored = make_agent(2, store=store)
     mock = (
         AsyncMock(return_value=tool_response(index=1))

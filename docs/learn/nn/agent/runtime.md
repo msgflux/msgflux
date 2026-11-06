@@ -15,12 +15,14 @@ The core pieces are:
 | `AgentInboxStore` | Optional persistence boundary for the inbox. Without one, the inbox is in memory. |
 | `SQLiteAgentBackend` | Shares four SQLite store connections across many durable Agent thread bindings. |
 
-For a host that runs many durable Agents in one process, construct one
-`SQLiteAgentBackend` and pass it to each `Agent(backend=...)`. The backend owns
-the four shared stores; each Agent owns its thread binding lease, while models
-and workspaces remain host-owned. Close Agents or an `AgentService` before
-closing the backend. See [Shared SQLite Backend](resources.md#shared-sqlite-backend)
-for the layout, task isolation, cache target, and ownership rules.
+For a host that runs many durable Agents in one process, use the same
+`agent_dir` for each Agent: new roots automatically share one process-wide
+`SQLiteAgentBackend` and its four SQLite connections. Each Agent releases its
+own registry reference at shutdown; the pool closes after the last Agent.
+Alternatively, construct `SQLiteAgentBackend` explicitly and pass it through
+`backend=` when the host needs direct lifecycle control. See
+[Shared SQLite Backend](resources.md#shared-sqlite-backend) for the layout,
+legacy compatibility, task isolation, cache target, and ownership rules.
 
 ## Workspace
 

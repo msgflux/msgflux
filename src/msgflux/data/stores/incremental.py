@@ -125,13 +125,8 @@ def recover_tail(
     return CheckpointTail(base, start, state)
 
 
-def append_control_state(
-    normalized: Mapping[str, Any],
-    items: list[Mapping[str, Any]],
-    state_updates: Mapping[str, Any] | None,
-    message_updates: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Prepare a bounded public tail/control state for revision preparation."""
+def validate_append_items(items: list[Mapping[str, Any]]) -> None:
+    """Require a list of mappings with explicit, unique, non-empty item ids."""
     if not isinstance(items, list):
         raise ValueError("Checkpoint append items must be a list")
     ids = set()
@@ -144,6 +139,24 @@ def append_control_state(
         if item_id in ids:
             raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
         ids.add(item_id)
+
+
+def append_control_state(
+    normalized: Mapping[str, Any],
+    items: list[Mapping[str, Any]],
+    state_updates: Mapping[str, Any] | None,
+    message_updates: Mapping[str, Any] | None,
+    *,
+    owned: bool = False,
+) -> dict[str, Any]:
+    """Prepare a bounded public tail/control state for revision preparation.
+
+    ``owned=True`` declares that ``normalized`` and every input are private
+    copies (e.g. freshly decoded from storage and frozen by the caller), so
+    they are reused instead of deep-copied again.
+    """
+    validate_append_items(items)
+    copy = (lambda value: value) if owned else deepcopy
     updates = {} if state_updates is None else state_updates
     message_updates = {} if message_updates is None else message_updates
     if not isinstance(updates, Mapping) or not isinstance(message_updates, Mapping):
@@ -155,12 +168,12 @@ def append_control_state(
     if "items" in message_updates:
         raise ValueError("Checkpoint message updates cannot replace items")
     state = {
-        key: deepcopy(value) for key, value in normalized.items() if key != "_messages"
+        key: copy(value) for key, value in normalized.items() if key != "_messages"
     }
-    state.update(deepcopy(dict(updates)))
-    messages = deepcopy(dict(normalized["_messages"]["state"]))
-    messages.update(deepcopy(dict(message_updates)))
-    messages["items"] = deepcopy(items)
+    state.update(copy(dict(updates)))
+    messages = copy(dict(normalized["_messages"]["state"]))
+    messages.update(copy(dict(message_updates)))
+    messages["items"] = copy(items)
     state["messages"] = messages
     return state
 

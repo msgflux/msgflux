@@ -259,7 +259,7 @@ async def test_fresh_backend_reopens_completed_history_after_close(tmp_path):
 
 
 @pytest.mark.asyncio
-async def test_backend_rejects_conflicts_and_never_mixes_old_layout(tmp_path):
+async def test_backend_rejects_conflicts_and_agent_dir_uses_shared_layout(tmp_path):
     model = Mock(model_type="chat_completion")
     backend = SQLiteAgentBackend(tmp_path / "shared", cache_bytes=CACHE_BYTES)
 
@@ -291,16 +291,24 @@ async def test_backend_rejects_conflicts_and_never_mixes_old_layout(tmp_path):
         answer=lambda **_: _response("legacy"),
     )
     try:
-        with pytest.raises(ValueError, match="shared SQLite Agent backend layout"):
+        assert (
             await legacy_on_shared.acall(
                 "hello", scope=_scope("legacy-thread", "legacy", "run")
             )
-        assert not (shared_root / "threads" / "legacy-thread").exists()
+            == "legacy"
+        )
+        assert (shared_root / "threads" / "legacy-thread").is_dir()
+        assert (shared_root / "runtime" / "backend" / "layout.json").is_file()
+        assert not list((shared_root / "threads" / "legacy-thread").glob("*.sqlite3"))
     finally:
         await legacy_on_shared.aclose()
     backend.close()
 
+    from msgflux.runtime.agent_resources import AgentResources
+
     legacy_root = tmp_path / "legacy"
+    existing = AgentResources(legacy_root).bind("legacy-thread", namespace="legacy")
+    existing.close()
     legacy = _agent(
         "legacy", agent_dir=legacy_root, answer=lambda **_: _response("legacy")
     )
@@ -312,12 +320,12 @@ async def test_backend_rejects_conflicts_and_never_mixes_old_layout(tmp_path):
 
     rejected_backend = SQLiteAgentBackend(legacy_root, cache_bytes=CACHE_BYTES)
     rejected = _agent(
-        "legacy", backend=rejected_backend, answer=lambda **_: _response()
+        "legacy", backend=rejected_backend, answer=lambda **_: _response("unused")
     )
     try:
         with pytest.raises(ValueError, match="legacy per-thread Agent stores"):
             await rejected.acall(
-                "hello", scope=_scope("legacy-thread", "legacy", "run")
+                "hello", scope=_scope("legacy-thread-2", "legacy", "run")
             )
         assert not (legacy_root / "runtime" / "backend").exists()
     finally:
@@ -543,11 +551,14 @@ async def test_background_children_share_pool_but_not_cancellation_or_results(tm
             task_b.task_id
         )
         assert future_b is not None and not future_b.done()
-        assert any(
-            notice.source == "task"
-            and notice.ref == task_a.task_id
-            and notice.status == "interrupted"
-            for notice in binding_a.agent_inbox.fork(run_id=run_a).peek()
+        # The notice is published after the interrupted status is persisted.
+        await _wait_until(
+            lambda: any(
+                notice.source == "task"
+                and notice.ref == task_a.task_id
+                and notice.status == "interrupted"
+                for notice in binding_a.agent_inbox.fork(run_id=run_a).peek()
+            )
         )
 
         # Closing one binding must not read another thread's result payloads or

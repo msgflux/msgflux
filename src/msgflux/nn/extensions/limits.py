@@ -43,9 +43,15 @@ class ToolTurnLimitExtension(AgentExtension):
         if ctx.phase == "after_tools" and ctx.intents:
             completed += 1
             state["completed_tool_turns"] = completed
-            state["last_tool_results"] = ToolResponses.from_outcomes(
-                ctx.intents, ctx.outcomes
-            ).to_dict()["tool_calls"]
+            if completed >= self.limit:
+                # Only the terminal batch is returned. Earlier batches already
+                # live in the timeline; keeping them in durable control state
+                # would rewrite every tool output on each checkpoint.
+                state["last_tool_results"] = ToolResponses.from_outcomes(
+                    ctx.intents, ctx.outcomes
+                ).to_dict()["tool_calls"]
+            else:
+                state.pop("last_tool_results", None)
         if completed < self.limit:
             return ctx
         return replace(

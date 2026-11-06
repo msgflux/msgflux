@@ -35,16 +35,28 @@
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import sqlite3
 import time
+from concurrent.futures import Future
 from copy import deepcopy
 from functools import wraps
 from itertools import islice
 from pathlib import Path
-from threading import RLock
-from typing import Any, Dict, Iterable, Iterator, List, Literal, Mapping
+from queue import Empty, SimpleQueue
+from threading import Lock, RLock, Thread, current_thread
+from typing import (
+    Any,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Literal,
+    Mapping,
+    NamedTuple,
+)
 from uuid import uuid4
 
 from msgflux._private.chat_items import (
@@ -78,6 +90,7 @@ from msgflux.data.stores.incremental import (
     recover_tail,
     same_payload_value,
     snapshot_base,
+    validate_append_items,
     validate_tail_limit,
 )
 from msgflux.data.stores.observation import make_page, validate_read
@@ -130,6 +143,45 @@ WHERE namespace=? AND thread_id=? AND segment_ref=?
 
 _ITEM_BATCH_SIZE = 500
 _BASE_CACHE_SIZE = 1024
+_HEAD_CACHE_SIZE = 256
+_MAX_APPEND_BATCH = 64
+
+
+def _text_digest(text: str) -> bytes:
+    return hashlib.blake2b(text.encode("utf-8"), digest_size=16).digest()
+
+
+class _AppendJob:
+    """One append, frozen by the caller and published by the store writer."""
+
+    __slots__ = (
+        "base",
+        "branch_id",
+        "entries",
+        "event",
+        "extension_state",
+        "future",
+        "head_item_id",
+        "items",
+        "message_updates",
+        "namespace",
+        "payloads",
+        "run_id",
+        "state_updates",
+        "thread_id",
+    )
+
+    def __init__(self, **fields: Any) -> None:
+        self.future: Future | None = None
+        for name, value in fields.items():
+            setattr(self, name, value)
+
+
+class _PublishedAppend(NamedTuple):
+    tail: CheckpointTail
+    cache_entry: tuple[tuple[str, str, str], str, CheckpointBase]
+
+
 _SYNCHRONOUS_MODES = frozenset({"OFF", "NORMAL", "FULL", "EXTRA"})
 
 _DELETE_RUN = "DELETE FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?"
@@ -319,6 +371,9 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             _SELECT_MESSAGE_ITEM,
             (namespace, thread_id, item_ref),
         ).fetchone()
+        if row is not None and row[0] == text:
+            # Identical bytes (the common case) need no decode-and-compare.
+            return
         try:
             stored = None if row is None else self._deserialize(row[0])
             expected = self._deserialize(text)
@@ -421,8 +476,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             entries.append(entry)
         return entries, payloads
 
-    @_locked
-    def append_state(  # noqa: C901 - keeps validation, staging and CAS in one transaction
+    def append_state(
         self,
         namespace: str,
         thread_id: str,
@@ -437,229 +491,424 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         head_item_id: str | None = None,
         extension_state: Mapping[str, Any] | None = None,
     ) -> CheckpointTail:
+        job = self._prepare_append_job(
+            namespace,
+            thread_id,
+            run_id,
+            items,
+            base=base,
+            state_updates=state_updates,
+            message_updates=message_updates,
+            event=event,
+            branch_id=branch_id,
+            head_item_id=head_item_id,
+            extension_state=extension_state,
+        )
+        if self._must_append_inline():
+            return self._append_inline(job)
+        return self._submit_append(job).result()
+
+    async def aappend_state(self, *args: Any, **kwargs: Any) -> CheckpointTail:
+        """Queue an append for the shared writer without holding a worker thread.
+
+        Many concurrent agents await their own future while one writer thread
+        publishes queued appends together, one SQLite commit per batch.
+        """
+        if (
+            "append_state" in vars(self)
+            or type(self).append_state is not SQLiteCheckpointStore.append_state
+        ):
+            # Honor wrapped or overridden synchronous appends.
+            return await asyncio.to_thread(self.append_state, *args, **kwargs)
+        job = self._prepare_append_job(*args, **kwargs)
+        if self._must_append_inline():
+            return await asyncio.to_thread(self._append_inline, job)
+        return await asyncio.wrap_future(self._submit_append(job))
+
+    def _prepare_append_job(
+        self,
+        namespace: str,
+        thread_id: str,
+        run_id: str,
+        items: list[Mapping[str, Any]],
+        *,
+        base: CheckpointBase,
+        state_updates: Mapping[str, Any] | None = None,
+        message_updates: Mapping[str, Any] | None = None,
+        event: Mapping[str, Any] | None = None,
+        branch_id: str | None = None,
+        head_item_id: str | None = None,
+        extension_state: Mapping[str, Any] | None = None,
+    ) -> _AppendJob:
+        """Validate and freeze the delta outside the writer's critical section.
+
+        Copying and encoding the new item payloads depends only on the caller's
+        base, so it runs in the caller's thread; the writer only performs the
+        CAS check and the inserts.
+        """
         self._validate_incremental_base(
             base, namespace, thread_id, run_id, self.routing_id
         )
-        now = time.time()
-        cur = self._conn.cursor()
-        try:
-            # Reserve the writer before reading the previous snapshot so no
-            # independent connection can replace the base we are validating.
-            cur.execute("BEGIN IMMEDIATE")
-            row = cur.execute(_SELECT_STATE, (namespace, thread_id, run_id)).fetchone()
-            if row is None:
-                raise CheckpointConflictError(
-                    f"Checkpoint run `{run_id}` not found in thread `{thread_id}`."
-                )
-            previous = self._deserialize(row[0])
-            self._validate_checkpoint_envelope(previous.get("_checkpoint"))
-            run_key = (namespace, thread_id, run_id)
-            cached = self._base_cache.get(run_key)
-            if cached is not None and cached[0] == row[0]:
-                # The base is a pure function of the exact stored text, so the
-                # one computed by the previous write can be reused safely.
-                old_base = cached[1]
-            else:
-                old_base = snapshot_base(
-                    self.routing_id, namespace, thread_id, run_id, previous
-                )
-            if old_base != base:
-                raise CheckpointConflictError(
-                    "Checkpoint base is stale or does not match the persisted snapshot"
-                )
-            previous_messages = previous.get("_messages")
-            if not isinstance(previous_messages, Mapping):
-                raise ValueError(
-                    "Incremental checkpoints require a normalized message history"
-                )
-            if not isinstance(previous_messages.get("state"), Mapping):
-                raise ValueError("Checkpoint manifest is missing its message state")
-            inline, manifest = resolve_manifest_layout(previous_messages)
-            control_state = append_control_state(
-                previous, items, state_updates, message_updates
-            )
-            # Freeze the delta before the potentially long strict archive scan.
-            # A caller mutating its inputs cannot desynchronize the ack/payloads.
-            new_items = control_state["messages"]["items"]
+        validate_append_items(items)
+        frozen = deepcopy(items)
+        entries, payloads = self._prepare_append_items(
+            namespace, thread_id, frozen, start_index=base.item_count
+        )
+        return _AppendJob(
+            namespace=namespace,
+            thread_id=thread_id,
+            run_id=run_id,
+            items=frozen,
+            entries=entries,
+            payloads=payloads,
+            base=base,
+            state_updates=deepcopy(dict(state_updates or {})),
+            message_updates=deepcopy(dict(message_updates or {})),
+            event=deepcopy(dict(event)) if event is not None else None,
+            branch_id=branch_id,
+            head_item_id=head_item_id,
+            extension_state=extension_state,
+        )
 
-            incoming_ids = [item["item_id"] for item in new_items]
-            old_item_ids: List[str] = []
-            if inline is not None:
-                # A bounded inline layout is validated in full; legacy entries
-                # may also need their deterministic occurrence ids.
+    def _must_append_inline(self) -> bool:
+        # A caller already inside the store lock (or the writer itself) would
+        # deadlock waiting on the queue, so it publishes in its own transaction.
+        return (
+            not self._group_commit
+            or self._lock._is_owned()
+            or current_thread() is self._writer_thread
+        )
+
+    def _append_inline(self, job: _AppendJob) -> CheckpointTail:
+        with self._lock:
+            cur = self._conn.cursor()
+            try:
+                cur.execute("BEGIN IMMEDIATE")
+                published = self._append_in_transaction(cur, job)
+                self._conn.commit()
+            except BaseException as error:
+                self._rollback_preserving_error(error)
+                raise
+            self._remember_base(*published.cache_entry)
+            return published.tail
+
+    def _submit_append(self, job: _AppendJob) -> Future:
+        future: Future = Future()
+        job.future = future
+        with self._writer_guard:
+            if self._writer_closed:
+                raise RuntimeError("SQLiteCheckpointStore is closed")
+            if self._writer_thread is None:
+                self._writer_thread = Thread(
+                    target=self._writer_loop,
+                    name=f"msgflux-checkpoint-writer:{self.path}",
+                    daemon=True,
+                )
+                self._writer_thread.start()
+            self._writer_queue.put(job)
+        return future
+
+    def _writer_loop(self) -> None:
+        queue = self._writer_queue
+        while True:
+            job = queue.get()
+            if job is None:
+                return
+            batch = [job]
+            stop = False
+            while len(batch) < _MAX_APPEND_BATCH:
+                try:
+                    queued = queue.get_nowait()
+                except Empty:
+                    break
+                if queued is None:
+                    stop = True
+                    break
+                batch.append(queued)
+            self._publish_batch(
+                [job for job in batch if job.future.set_running_or_notify_cancel()]
+            )
+            if stop:
+                return
+
+    def _publish_batch(self, jobs: list[_AppendJob]) -> None:
+        """Publish many appends in one transaction, isolating each by savepoint.
+
+        A failed append (stale base, invalid delta) rolls back only its own
+        savepoint; the others still commit. A commit failure fails them all.
+        """
+        if not jobs:
+            return
+        published: list[tuple[_AppendJob, _PublishedAppend]] = []
+        try:
+            with self._lock:
+                cur = self._conn.cursor()
+                try:
+                    cur.execute("BEGIN IMMEDIATE")
+                    for job in jobs:
+                        cur.execute("SAVEPOINT msgflux_append")
+                        try:
+                            result = self._append_in_transaction(cur, job)
+                        except Exception as error:
+                            cur.execute("ROLLBACK TO msgflux_append")
+                            cur.execute("RELEASE msgflux_append")
+                            job.future.set_exception(error)
+                            continue
+                        cur.execute("RELEASE msgflux_append")
+                        published.append((job, result))
+                    self._conn.commit()
+                except BaseException as error:
+                    self._rollback_preserving_error(error)
+                    raise
+                for _job, result in published:
+                    self._remember_base(*result.cache_entry)
+        except BaseException as error:
+            # The writer must survive any failure, or queued callers would hang.
+            for job in jobs:
+                if not job.future.done():
+                    job.future.set_exception(error)
+            return
+        for job, result in published:
+            job.future.set_result(result.tail)
+
+    def _append_in_transaction(  # noqa: C901 - validation, staging and CAS
+        self, cur: Any, job: _AppendJob
+    ) -> _PublishedAppend:
+        namespace, thread_id, run_id = job.namespace, job.thread_id, job.run_id
+        base = job.base
+        now = time.time()
+        row = cur.execute(_SELECT_STATE, (namespace, thread_id, run_id)).fetchone()
+        if row is None:
+            raise CheckpointConflictError(
+                f"Checkpoint run `{run_id}` not found in thread `{thread_id}`."
+            )
+        previous = self._deserialize(row[0])
+        self._validate_checkpoint_envelope(previous.get("_checkpoint"))
+        run_key = (namespace, thread_id, run_id)
+        cached = self._base_cache.get(run_key)
+        if cached is not None and cached[0] == _text_digest(row[0]):
+            # The base is a pure function of the exact stored text, so the
+            # one computed by the previous write can be reused safely.
+            old_base = cached[1]
+        else:
+            old_base = snapshot_base(
+                self.routing_id, namespace, thread_id, run_id, previous
+            )
+        if old_base != base:
+            raise CheckpointConflictError(
+                "Checkpoint base is stale or does not match the persisted snapshot"
+            )
+        previous_messages = previous.get("_messages")
+        if not isinstance(previous_messages, Mapping):
+            raise ValueError(
+                "Incremental checkpoints require a normalized message history"
+            )
+        if not isinstance(previous_messages.get("state"), Mapping):
+            raise ValueError("Checkpoint manifest is missing its message state")
+        inline, manifest = resolve_manifest_layout(previous_messages)
+        control_state = append_control_state(
+            previous,
+            job.items,
+            job.state_updates,
+            job.message_updates,
+            owned=True,
+        )
+        # Freeze the delta before the potentially long strict archive scan.
+        # A caller mutating its inputs cannot desynchronize the ack/payloads.
+        new_items = control_state["messages"]["items"]
+
+        incoming_ids = [item["item_id"] for item in new_items]
+        old_item_ids: List[str] = []
+        if inline is not None:
+            old_item_ids = [
+                entry.get("item_id") if isinstance(entry, Mapping) else None
+                for entry in inline
+            ]
+            if all(isinstance(item_id, str) and item_id for item_id in old_item_ids):
+                # Entries already carry their occurrence ids, so the payloads
+                # are not decoded; as in the manifest layout, archive
+                # integrity is enforced on full load and full commits.
+                prior = (
+                    {"_checkpoint": previous["_checkpoint"]}
+                    if "_checkpoint" in previous
+                    else {}
+                )
+            else:
+                # Legacy id-less entries need their payloads to derive
+                # deterministic occurrence ids.
+                old_item_ids = []
                 prior = self._commit_envelope_from_state(
                     namespace,
                     thread_id,
                     previous,
                     collect_item_ids=old_item_ids,
                 )
-                if len(old_item_ids) != old_base.item_count:
-                    raise ValueError(
-                        "Checkpoint manifest occurrence count is corrupted"
-                    )
-                old_id_set = set(old_item_ids)
-                if len(old_id_set) != len(old_item_ids):
-                    raise ValueError("Checkpoint archive contains duplicate item IDs")
-                for item_id in incoming_ids:
-                    if item_id in old_id_set:
-                        raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
-            else:
-                # O(delta) append: the base CAS (revision + envelope digest)
-                # proves the archive is the one the caller extends, so the
-                # immutable prefix is not re-read. Archive integrity and
-                # occurrence-id uniqueness are enforced when the full history
-                # is loaded and by full commits.
-                prior = (
-                    {"_checkpoint": previous["_checkpoint"]}
-                    if "_checkpoint" in previous
-                    else {}
-                )
-
-            effective_head = (
-                head_item_id
-                if head_item_id is not None
-                else (incoming_ids[-1] if incoming_ids else None)
+            if len(old_item_ids) != old_base.item_count:
+                raise ValueError("Checkpoint manifest occurrence count is corrupted")
+            old_id_set = set(old_item_ids)
+            if len(old_id_set) != len(old_item_ids):
+                raise ValueError("Checkpoint archive contains duplicate item IDs")
+            for item_id in incoming_ids:
+                if item_id in old_id_set:
+                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+        else:
+            # O(delta) append: the base CAS (revision + envelope digest)
+            # proves the archive is the one the caller extends, so the
+            # immutable prefix is not re-read. Archive integrity and
+            # occurrence-id uniqueness are enforced when the full history
+            # is loaded and by full commits.
+            prior = (
+                {"_checkpoint": previous["_checkpoint"]}
+                if "_checkpoint" in previous
+                else {}
             )
-            committed, next_revision = self._prepare_revision_state(
-                control_state,
-                prior,
-                expected_revision=base.revision,
-                branch_id=branch_id,
-                head_item_id=effective_head,
-                extension_state=extension_state,
-                copy_state=False,
-            )
-            prepared_event = deepcopy(dict(event)) if event is not None else None
 
-            new_entries, payloads = self._prepare_append_items(
+        effective_head = (
+            job.head_item_id
+            if job.head_item_id is not None
+            else (incoming_ids[-1] if incoming_ids else None)
+        )
+        committed, next_revision = self._prepare_revision_state(
+            control_state,
+            prior,
+            expected_revision=base.revision,
+            branch_id=job.branch_id,
+            head_item_id=effective_head,
+            extension_state=job.extension_state,
+            copy_state=False,
+        )
+        prepared_event = job.event
+        new_entries = [dict(entry) for entry in job.entries]
+        payloads = job.payloads
+        for item_ref, text in payloads.items():
+            self._write_message_item(
                 namespace,
                 thread_id,
-                new_items,
-                start_index=old_base.item_count,
+                item_ref,
+                text,
+                now,
+                executor=cur,
             )
-            for item_ref, text in payloads.items():
-                self._write_message_item(
-                    namespace,
-                    thread_id,
-                    item_ref,
-                    text,
-                    now,
-                    executor=cur,
-                )
 
-            def write_page(segment_ref: str, data: bytes) -> None:
-                self._write_manifest_page(
-                    namespace,
-                    thread_id,
-                    segment_ref,
-                    data,
-                    now,
-                    executor=cur,
-                )
+        def write_page(segment_ref: str, data: bytes) -> None:
+            self._write_manifest_page(
+                namespace,
+                thread_id,
+                segment_ref,
+                data,
+                now,
+                executor=cur,
+            )
 
-            if inline is not None:
-                prefix = (
-                    migrate_inline_entries(inline, old_item_ids)
-                    if new_entries
-                    else [dict(entry) for entry in inline]
-                )
-                combined = prefix + new_entries
-                # A control-only update preserves even a large legacy inline
-                # layout; no migration or page rewrite is needed without a delta.
-                if not new_entries or len(combined) <= MANIFEST_PAGE_SIZE:
-                    normalized = compose_append_state(committed, item_entries=combined)
-                else:
-                    normalized = compose_append_state(
-                        committed,
-                        manifest=build_manifest(combined, write_page),
-                    )
+        if inline is not None:
+            prefix = (
+                migrate_inline_entries(inline, old_item_ids)
+                if new_entries
+                else [dict(entry) for entry in inline]
+            )
+            combined = prefix + new_entries
+            # A control-only update preserves even a large legacy inline
+            # layout; no migration or page rewrite is needed without a delta.
+            if not new_entries or len(combined) <= MANIFEST_PAGE_SIZE:
+                normalized = compose_append_state(committed, item_entries=combined)
             else:
-                updated_manifest = (
-                    append_manifest(
-                        manifest,
-                        new_entries,
-                        lambda segment_ref: self._read_manifest_segment(
-                            namespace, thread_id, segment_ref
-                        ),
-                        write_page,
-                    )
-                    if new_entries
-                    else dict(manifest)
+                normalized = compose_append_state(
+                    committed,
+                    manifest=build_manifest(combined, write_page),
                 )
-                normalized = compose_append_state(committed, manifest=updated_manifest)
+        else:
+            updated_manifest = (
+                append_manifest(
+                    manifest,
+                    new_entries,
+                    lambda segment_ref: self._read_manifest_segment(
+                        namespace, thread_id, segment_ref
+                    ),
+                    write_page,
+                    head_cache=self._head_cache,
+                )
+                if new_entries
+                else dict(manifest)
+            )
+            normalized = compose_append_state(committed, manifest=updated_manifest)
+            if new_entries:
+                head_cache = self._head_cache
+                old_head = manifest.get("head")
+                if old_head != updated_manifest["head"]:
+                    head_cache.pop(old_head, None)
+                while len(head_cache) > _HEAD_CACHE_SIZE:
+                    head_cache.pop(next(iter(head_cache)))
 
-            # Validate raw control metadata before SQLite's legacy default=str
-            # serializer could erase a type distinction in the incremental API.
-            new_base = snapshot_base(
-                self.routing_id, namespace, thread_id, run_id, normalized
-            )
-            payload = self._serialize(normalized)
-            orphan_head = (
-                appended_orphan_head(manifest, normalized["_messages"]["manifest"])
-                if inline is None and new_entries
-                else None
-            )
+        # Validate raw control metadata before SQLite's legacy default=str
+        # serializer could erase a type distinction in the incremental API.
+        new_base = snapshot_base(
+            self.routing_id, namespace, thread_id, run_id, normalized
+        )
+        payload = self._serialize(normalized)
+        orphan_head = (
+            appended_orphan_head(manifest, normalized["_messages"]["manifest"])
+            if inline is None and new_entries
+            else None
+        )
+        cur.execute(
+            _UPSERT_STATE,
+            (
+                namespace,
+                thread_id,
+                run_id,
+                committed.get("status", "running"),
+                payload,
+                now,
+                now,
+            ),
+        )
+        if orphan_head is not None:
+            # A pure append can orphan only the rewritten partial head
+            # page; no item payload becomes unreachable. Drop just that
+            # page when no other run still points at it, instead of a full
+            # reachability sweep over every run in the thread.
+            self._drop_unreferenced_head(cur, namespace, thread_id, orphan_head)
+        if prepared_event is not None:
             cur.execute(
-                _UPSERT_STATE,
+                _INSERT_EVENT,
                 (
                     namespace,
                     thread_id,
                     run_id,
-                    committed.get("status", "running"),
-                    payload,
+                    prepared_event.get("event_type", "unknown"),
                     now,
-                    now,
+                    self._serialize(prepared_event),
                 ),
             )
-            if orphan_head is not None:
-                # A pure append can orphan only the rewritten partial head
-                # page; no item payload becomes unreachable. Drop just that
-                # page when no other run still points at it, instead of a full
-                # reachability sweep over every run in the thread.
-                self._drop_unreferenced_head(cur, namespace, thread_id, orphan_head)
-            if prepared_event is not None:
-                cur.execute(
-                    _INSERT_EVENT,
-                    (
-                        namespace,
-                        thread_id,
-                        run_id,
-                        prepared_event.get("event_type", "unknown"),
-                        now,
-                        self._serialize(prepared_event),
-                    ),
-                )
-            cur.execute(
-                "INSERT INTO checkpoint_commits VALUES (?, ?, ?, ?, ?, ?)",
-                (
-                    namespace,
-                    thread_id,
-                    run_id,
-                    committed["_checkpoint"]["stream_id"],
-                    next_revision,
-                    self._serialize(
-                        prepared_event
-                        if prepared_event is not None
-                        else {
-                            "event_type": "checkpoint",
-                            "status": committed.get("status"),
-                        }
-                    ),
+        cur.execute(
+            "INSERT INTO checkpoint_commits VALUES (?, ?, ?, ?, ?, ?)",
+            (
+                namespace,
+                thread_id,
+                run_id,
+                committed["_checkpoint"]["stream_id"],
+                next_revision,
+                self._serialize(
+                    prepared_event
+                    if prepared_event is not None
+                    else {
+                        "event_type": "checkpoint",
+                        "status": committed.get("status"),
+                    }
                 ),
-            )
-            self._conn.commit()
-            self._remember_base(run_key, payload, new_base)
-            return CheckpointTail(new_base, old_base.item_count, committed)
-        except BaseException as error:
-            self._rollback_preserving_error(error)
-            raise
+            ),
+        )
+        return _PublishedAppend(
+            CheckpointTail(new_base, old_base.item_count, committed),
+            (run_key, payload, new_base),
+        )
 
     def _remember_base(
         self, run_key: tuple[str, str, str], text: str, base: CheckpointBase
     ) -> None:
         cache = self._base_cache
         cache.pop(run_key, None)
-        cache[run_key] = (text, base)
+        cache[run_key] = (_text_digest(text), base)
         while len(cache) > _BASE_CACHE_SIZE:
             cache.pop(next(iter(cache)))
 
@@ -718,6 +967,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         path: str = ".msgflux/checkpoints.sqlite3",
         *,
         synchronous: str = "NORMAL",
+        group_commit: bool = True,
     ) -> None:
         """Open (or create) a WAL-mode SQLite checkpoint database.
 
@@ -726,6 +976,11 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         crashes (WAL mode) and skips the per-commit fsync; use ``"FULL"`` to
         also survive OS crashes or power loss at the cost of one fsync per
         checkpoint.
+
+        With ``group_commit`` (default) appends from concurrent agents are
+        queued to one writer thread that publishes each queued batch in a
+        single transaction, so dozens of subagents share one commit instead
+        of contending for the connection lock.
         """
         mode = synchronous.upper() if isinstance(synchronous, str) else None
         if mode not in _SYNCHRONOUS_MODES:
@@ -735,7 +990,13 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
         self.path = path
         self._lock = RLock()
-        self._base_cache: Dict[tuple[str, str, str], tuple[str, CheckpointBase]] = {}
+        self._base_cache: Dict[tuple[str, str, str], tuple[bytes, CheckpointBase]] = {}
+        self._head_cache: Dict[str, Dict[str, Any]] = {}
+        self._group_commit = bool(group_commit)
+        self._writer_guard = Lock()
+        self._writer_queue: SimpleQueue = SimpleQueue()
+        self._writer_thread: Thread | None = None
+        self._writer_closed = False
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         prepare_sqlite_file(path)
         self._conn = sqlite3.connect(path, check_same_thread=False)
@@ -1675,4 +1936,11 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     @_locked
     def close(self) -> None:
+        with self._writer_guard:
+            self._writer_closed = True
+            writer = self._writer_thread
+            if writer is not None:
+                self._writer_queue.put(None)
+        if writer is not None and writer is not current_thread():
+            writer.join()
         self._conn.close()

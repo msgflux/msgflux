@@ -46,11 +46,13 @@ lazy; the first admitted prompt creates the private runtime directories:
   runtime/
     service.sqlite3
     backend-layout.lock            # serializes legacy/shared layout initialization
+    backend/
+      layout.json
+      checkpoints.sqlite3
+      tasks.sqlite3
+      inbox.sqlite3
+      approvals.sqlite3
   threads/project-thread-1/
-    checkpoints.sqlite3
-    tasks.sqlite3
-    inbox.sqlite3
-    approvals.sqlite3
     tool-results/                  # created only when a result is offloaded
       res_<id>/content
       res_<id>/metadata.json
@@ -102,12 +104,14 @@ async def main():
 asyncio.run(main())
 ```
 
-This creates per-thread checkpoint, background task, inbox, and approval stores
-under `agent_dir/threads/<thread_id>/`. An embedded `CodingSession` also stores
-its admission journal at `agent_dir/runtime/service.sqlite3` on the first
-prompt. Restart with the same Agent name, `agent_dir`, and thread ID to reopen
-history and receipts. `session.aclose()` settles managed background work and
-closes its owned handles without deleting persisted data.
+On a new root, `Agent(agent_dir=...)` lazily creates one shared checkpoint,
+task, inbox, and approval database set for the process. Every Agent using the
+same resolved path shares those four SQLite connections across its threads.
+An embedded `CodingSession` also stores its admission journal at
+`agent_dir/runtime/service.sqlite3` on the first prompt. Restart with the same
+Agent name, `agent_dir`, and thread ID to reopen history and receipts.
+`session.aclose()` settles managed background work and releases its Agent
+reference without deleting persisted data.
 
 The built-in local coding service preserves this layout with its default
 `runtime_dir=~/.msgflux/runtime` and `agent_dir=~/.msgflux`. If you choose another
@@ -190,12 +194,13 @@ resume across process restarts when rebuilding it with that factory. Use a
 backend reconnect with the saved workspace identity when approval recovery must
 survive restarts.
 
-Generic `AgentService` applications also get per-thread stores automatically
+Generic `AgentService` applications also get managed stores automatically
 when their trusted session factory returns an Agent configured with `agent_dir`.
 The service owns those loaded thread handles and closes them during shutdown.
 For a shared long-lived service, the host can release one idle live binding with
-`await service.release_session(thread_id)`. This closes its SQLite connections
-and invokes the factory cleanup callback while preserving the thread directory,
+`await service.release_session(thread_id)`. This releases its thread lease
+(and closes the shared pool only when the last Agent releases it) and invokes
+the factory cleanup callback while preserving the thread directory,
 checkpoints, tasks, inbox, approvals, tool results, and admission journal. A
 later prompt or cold snapshot reloads a fresh Agent for the same durable thread.
 Watch attachment briefly loads the binding to capture history and subscribe
@@ -222,10 +227,10 @@ task, inbox, or approval stores.
 
 ## Shared SQLite Backend
 
-The managed `agent_dir` setup above opens a separate checkpoint, task, inbox,
-and approval SQLite connection for every thread. A host that runs many durable
-threads can instead construct one `SQLiteAgentBackend` and share the same four
-connections across all of them:
+`Agent(agent_dir=...)` automatically shares a process-wide backend among Agents
+using the same resolved directory. A host can also explicitly construct one
+`SQLiteAgentBackend` and pass it with `backend=` when it needs direct lifecycle
+control:
 
 ```python
 import asyncio
@@ -264,11 +269,12 @@ async def main():
 asyncio.run(main())
 ```
 
-This example creates one backend, two independent Agents, and two durable
-threads. Both Agents borrow the same four backend stores while retaining their
-own thread bindings. The host still owns the model; neither the backend nor
-`Agent.aclose()` closes it. Reuse one backend per `agent_dir` and share it
-instead of constructing a second backend for the same root.
+This example creates one explicitly owned backend, two independent Agents, and
+two durable threads. Both Agents borrow the same four backend stores while
+retaining their own thread bindings. The host still owns the model; neither the
+backend nor `Agent.aclose()` closes it. For the automatic `agent_dir=` mode,
+the process registry performs this sharing and closes the pool after the last
+Agent releases it.
 
 The first call that binds a thread creates the shared layout and that thread's
 private artifact directory. Constructing the backend and calling `has_thread()`
@@ -405,11 +411,14 @@ and `approvals.sqlite3`.
 
 The two layouts cannot be mixed:
 
-- Initializing a shared backend refuses a root containing legacy per-thread
-  databases.
-- Binding a legacy `AgentResources`, `Agent(agent_dir=...)`, or
-  `RuntimeResources.checkpoint_store()` refuses a root containing the shared
-  backend marker.
+- `Agent(agent_dir=...)` preserves an existing legacy root with
+  `threads/<thread_id>/*.sqlite3` databases and continues opening per-thread
+  stores there; no migration is attempted.
+- New or empty roots use the shared layout. Explicitly constructing a shared
+  backend refuses a root containing legacy per-thread databases.
+- Direct `AgentResources` use remains the legacy per-thread API and refuses a
+  root containing the shared marker. `RuntimeResources.checkpoint_store()`
+  opens the shared checkpoint database when that marker is present.
 - There is no automatic migration, adoption, or in-place conversion. Stop all
   writers and migrate through application-owned export/import into a fresh
   root or explicit adapters.
@@ -417,12 +426,10 @@ The two layouts cannot be mixed:
   closed. A partial initialization may leave a marker, temporary file, or
   database for diagnosis; the backend has no automatic repair command.
 
-`has_thread()` is a shared-layout query, not a compatibility probe. On a legacy
-root it reports no shared thread; `bind()` reports the legacy layout. Inspect
-the error before creating a new state root. The advanced
-`RuntimeResources.checkpoint_store()` helper uses the same layout lock and
-refuses a shared backend root, so explicit per-thread checkpoint files cannot
-be opened through that helper on a shared root.
+The managed `Agent(agent_dir=...)` selector recognizes both layouts lazily.
+The advanced `RuntimeResources.checkpoint_store()` helper uses the shared
+checkpoint database for a marked shared root; the returned adapter is caller
+owned and closing it does not close an Agent's pooled connection.
 
 ## Advanced: Explicit Resource Helpers
 

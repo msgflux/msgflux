@@ -284,6 +284,22 @@ the hot path.
 process crash without one fsync per save. Pass `synchronous="FULL"` when they
 must also survive an OS crash or power loss.
 
+With `group_commit=True` (the default), concurrent appends are encoded in the
+caller's thread and queued to one writer thread per store. The writer
+publishes everything queued in a single transaction, isolating each append
+in its own savepoint: a stale or invalid append fails alone, while a failed
+commit fails the whole batch. `aappend_state` awaits that writer instead of
+holding an executor thread, so dozens of subagents do not exhaust the default
+thread pool while they wait for the connection.
+
+Every `Agent(agent_dir=...)` in a process that uses the same directory shares
+one `SQLiteAgentBackend`: one checkpoint connection and therefore one writer.
+Subagents inherit their parent's store through the execution context.
+
+Keep extension durable state small. It is rewritten on every save. Anything
+that is already in the timeline (for example tool outputs) should be referenced,
+not copied.
+
 ### Streaming boundary
 
 Providers emit arbitrary delta shapes, but checkpoints only accept coherent

@@ -233,14 +233,28 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             incoming_ids = [item["item_id"] for item in new_items]
             old_item_ids: List[str] = []
             if inline is not None:
-                # A bounded inline layout is validated in full; legacy entries
-                # may also need their deterministic occurrence ids.
-                prior = self._commit_envelope_from_state(
-                    namespace,
-                    thread_id,
-                    previous,
-                    collect_item_ids=old_item_ids,
-                )
+                old_item_ids = [
+                    entry.get("item_id") if isinstance(entry, Mapping) else None
+                    for entry in inline
+                ]
+                if all(
+                    isinstance(item_id, str) and item_id for item_id in old_item_ids
+                ):
+                    # Ids live on the entries: no payload decode is needed.
+                    prior = (
+                        {"_checkpoint": previous["_checkpoint"]}
+                        if "_checkpoint" in previous
+                        else {}
+                    )
+                else:
+                    # Legacy id-less entries derive ids from their payloads.
+                    old_item_ids = []
+                    prior = self._commit_envelope_from_state(
+                        namespace,
+                        thread_id,
+                        previous,
+                        collect_item_ids=old_item_ids,
+                    )
                 if len(old_item_ids) != old_base.item_count:
                     raise ValueError(
                         "Checkpoint manifest occurrence count is corrupted"

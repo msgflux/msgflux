@@ -46,9 +46,11 @@ async def test_agent_dir_lazily_persists_and_reopens_thread_history(tmp_path):
         scope=ExecutionScope(thread_id=thread_id, run_id="run_first"),
     )
     thread_dir = agent_dir / "threads" / thread_id
-    assert (thread_dir / "checkpoints.sqlite3").is_file()
-    assert (thread_dir / "tasks.sqlite3").is_file()
-    assert (thread_dir / "inbox.sqlite3").is_file()
+    backend_dir = agent_dir / "runtime" / "backend"
+    assert (backend_dir / "checkpoints.sqlite3").is_file()
+    assert (backend_dir / "tasks.sqlite3").is_file()
+    assert (backend_dir / "inbox.sqlite3").is_file()
+    assert not list(thread_dir.glob("*.sqlite3"))
     await first.aclose()
 
     observed = {}
@@ -89,7 +91,7 @@ async def test_coding_session_defers_disk_creation_until_first_prompt_and_reopen
         settled = await asyncio.wait_for(first.wait(receipt.request_id), timeout=3)
         assert settled.status == "completed"
         assert (agent_dir / "runtime" / "service.sqlite3").is_file()
-        assert (agent_dir / "threads" / thread_id / "checkpoints.sqlite3").is_file()
+        assert (agent_dir / "runtime" / "backend" / "checkpoints.sqlite3").is_file()
     finally:
         await first.aclose()
 
@@ -156,13 +158,11 @@ async def test_agent_service_manages_isolated_thread_resources(tmp_path):
 
         first_stores = agents[first.thread_id + "_stores"]
         second_stores = agents[second.thread_id + "_stores"]
-        assert first_stores[0] is not second_stores[0]
+        assert first_stores[0] is second_stores[0]
         assert first_stores[1] is not second_stores[1]
-        assert first_stores[2] is not second_stores[2]
-        assert (agent_dir / "threads" / first.thread_id / "approvals.sqlite3").is_file()
-        assert (
-            agent_dir / "threads" / second.thread_id / "approvals.sqlite3"
-        ).is_file()
+        assert first_stores[2] is second_stores[2]
+        assert (agent_dir / "runtime" / "backend" / "approvals.sqlite3").is_file()
+        assert not list((agent_dir / "threads").glob("*/approvals.sqlite3"))
     finally:
         await service.aclose()
 
@@ -270,7 +270,9 @@ async def test_concurrent_threads_bind_distinct_stores_and_inbox_namespaces(tmp_
         await asyncio.gather(run("thread-one"), run("thread-two"))
         one = observed["thread-one"]
         two = observed["thread-two"]
-        assert all(left is not right for left, right in zip(one, two, strict=True))
+        assert one[0] is two[0]
+        assert one[1] is not two[1]
+        assert one[2] is not two[2]
         assert (one[2].namespace, one[2].thread_id) == (
             "concurrent-agent",
             "thread-one",

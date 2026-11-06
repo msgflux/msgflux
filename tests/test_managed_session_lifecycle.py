@@ -80,8 +80,10 @@ async def test_managed_coding_session_cancelled_close_drains_before_reopen(tmp_p
         assert resources._closed
         with pytest.raises(sqlite3.ProgrammingError):
             journal.threads()
-        with pytest.raises(sqlite3.ProgrammingError):
-            checkpoints.list_runs("main", session.thread_id)
+        # agent_dir uses the process-wide shared pool: the thread lease is
+        # released while the pool stays warm for the Agent's other threads.
+        assert agent._resources.backend.active_bindings == 0
+        assert checkpoints.list_runs("main", session.thread_id)
 
         history = {}
 

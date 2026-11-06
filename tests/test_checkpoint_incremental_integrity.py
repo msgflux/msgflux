@@ -396,3 +396,108 @@ async def test_async_incremental_wrappers_preserve_archive_and_conflicts(
     assert store.load_state(NS, THREAD, RUN)["messages"]["items"][-1:] == [_new_item()]
     with pytest.raises(CheckpointConflictError):
         await store.aappend_state(NS, THREAD, RUN, [], base=tail.base)
+
+
+def test_group_commit_batches_concurrent_appends_and_isolates_stale_ones(tmp_path):
+    import threading
+    import time
+
+    store = SQLiteCheckpointStore(str(tmp_path / "group.sqlite3"))
+    runs = [f"run-{index}" for index in range(6)]
+    tails = {}
+    for run in runs:
+        store.commit_state(NS, THREAD, run, _state(3), expected_revision=0)
+        tails[run] = store.load_tail(NS, THREAD, run, limit=1)
+    stale = tails[runs[0]].base
+    batches = []
+    publish = store._publish_batch
+    store._publish_batch = lambda jobs: (batches.append(len(jobs)), publish(jobs))
+    submit = store._submit_append
+    submitted = []
+
+    def counted_submit(job):
+        future = submit(job)
+        submitted.append(job)
+        return future
+
+    store._submit_append = counted_submit
+    results = {}
+
+    def append(key, run, base):
+        try:
+            results[key] = store.append_state(NS, THREAD, run, [_new_item()], base=base)
+        except Exception as error:
+            results[key] = error
+
+    workers = [
+        threading.Thread(target=append, args=(run, run, tails[run].base))
+        for run in runs
+    ]
+    with store._lock:
+        # The writer blocks on the lock while every append queues behind it.
+        for worker in workers:
+            worker.start()
+        while len(submitted) < len(runs):
+            time.sleep(0.001)
+    for worker in workers:
+        worker.join()
+    # A second append on an already advanced base must fail on its own.
+    append("stale", runs[0], stale)
+
+    assert max(batches) > 1
+    assert isinstance(results.pop("stale"), CheckpointConflictError)
+    for run in runs:
+        assert results[run].base.item_count == 4
+        items = store.load_state(NS, THREAD, run)["messages"]["items"]
+        assert [item["item_id"] for item in items][-1] == "itm_new"
+    store.close()
+    assert not store._writer_thread.is_alive()
+
+
+@pytest.mark.asyncio
+async def test_async_appends_from_many_agents_share_the_writer(tmp_path):
+    import asyncio
+
+    store = SQLiteCheckpointStore(str(tmp_path / "async.sqlite3"))
+    runs = [f"run-{index}" for index in range(20)]
+    bases = {}
+    for run in runs:
+        store.commit_state(NS, THREAD, run, _state(3), expected_revision=0)
+        bases[run] = store.load_tail(NS, THREAD, run, limit=1).base
+    for round_index in range(3):
+        tails = await asyncio.gather(
+            *(
+                store.aappend_state(
+                    NS,
+                    THREAD,
+                    run,
+                    [
+                        {
+                            "role": "tool",
+                            "content": "x",
+                            "item_id": f"itm_{run}_{round_index}",
+                        }
+                    ],
+                    base=bases[run],
+                )
+                for run in runs
+            )
+        )
+        bases = {run: tail.base for run, tail in zip(runs, tails)}
+    for run in runs:
+        assert bases[run].item_count == 6
+        assert store.load_state(NS, THREAD, run)["messages"]["items"][-1][
+            "item_id"
+        ] == (f"itm_{run}_2")
+    store.close()
+
+
+def test_inline_append_does_not_decode_the_prefix(checkpoint_store):
+    store = checkpoint_store
+    store.commit_state(NS, THREAD, RUN, _state(3), expected_revision=0)
+    tail = store.load_tail(NS, THREAD, RUN, limit=1)
+    _corrupt_first_payload(store)
+    acknowledgment = store.append_state(NS, THREAD, RUN, [_new_item()], base=tail.base)
+    assert acknowledgment.base.item_count == 4
+    with pytest.raises((ValueError, TypeError, KeyError)):
+        store.load_state(NS, THREAD, RUN)

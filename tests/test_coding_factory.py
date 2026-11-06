@@ -469,10 +469,7 @@ async def test_child_agent_tool_result_is_checkpoint_and_watch_serializable(
         assert snapshot.messages is not None
         assert child_agent.config["stream"] is False
         assert (
-            parent_agent.agent_dir
-            / "threads"
-            / "stream-child-thread"
-            / "checkpoints.sqlite3"
+            parent_agent.agent_dir / "runtime" / "backend" / "checkpoints.sqlite3"
         ).is_file()
         assert child_agent._owned_threads == {}
     finally:
