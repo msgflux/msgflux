@@ -1,14 +1,31 @@
 from __future__ import annotations
 
 import hashlib
+import itertools
 import json
+import os
 from typing import Any, Mapping
-from uuid import uuid4
+
+# A random per-process prefix plus a counter keeps ids unique without one
+# ``getrandom`` syscall per item; each syscall drops the GIL, and on a busy
+# event loop re-acquiring it competes with the checkpoint writer thread.
+_item_id_prefix = os.urandom(8).hex()
+_item_id_counter = itertools.count()
+
+
+def _reseed_item_ids() -> None:
+    global _item_id_prefix, _item_id_counter  # noqa: PLW0603
+    _item_id_prefix = os.urandom(8).hex()
+    _item_id_counter = itertools.count()
+
+
+if hasattr(os, "register_at_fork"):
+    os.register_at_fork(after_in_child=_reseed_item_ids)
 
 
 def new_item_id() -> str:
     """Return a new logical identity for one timeline occurrence."""
-    return f"itm_{uuid4().hex}"
+    return f"itm_{_item_id_prefix}{next(_item_id_counter) & 0xFFFFFFFFFFFFFFFF:016x}"
 
 
 def legacy_item_id(

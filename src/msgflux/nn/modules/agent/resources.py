@@ -16,7 +16,7 @@ import msgspec
 
 from msgflux.core.dotdict import dotdict
 from msgflux.exceptions import TaskPauseRequestedError
-from msgflux.runtime.agent_resources import AgentResources, BoundAgentResources
+from msgflux.runtime.agent_resources import BoundAgentResources
 from msgflux.runtime.context import execution_context, get_execution_context
 
 
@@ -128,7 +128,7 @@ class AgentResourceMixin:
         self._resources = (
             backend
             if backend is not None
-            else AgentResources(agent_dir)
+            else self._managed_agent_dir_resources(agent_dir)
             if agent_dir is not None
             else None
         )
@@ -144,6 +144,14 @@ class AgentResourceMixin:
         self._resource_close_callbacks_done: set[str] = set()
         self._resource_close_callback_failures: dict[str, BaseException] = {}
         self._resource_shutdown_task = None
+
+    @staticmethod
+    def _managed_agent_dir_resources(agent_dir):
+        from msgflux.runtime.agent_backend import (  # noqa: PLC0415
+            AgentDirectoryResources,
+        )
+
+        return AgentDirectoryResources(agent_dir)
 
     def _bind_resources(self, thread_id):
         if self._resources is None:
@@ -555,6 +563,11 @@ class AgentResourceMixin:
         for thread_id, _owned in owned_threads:
             try:
                 await self._close_thread_resources(thread_id)
+            except Exception as error:
+                errors.append(error)
+        if not errors and self.backend is None and self.agent_dir is not None:
+            try:
+                self._resources.release()
             except Exception as error:
                 errors.append(error)
         if errors:

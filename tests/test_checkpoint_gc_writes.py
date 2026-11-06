@@ -162,6 +162,14 @@ def _manifest_head(store, namespace=NS, thread_id=THREAD, run_id=RUN):
     return manifest["head"]
 
 
+def _manifest_head_any(store, namespace=NS, thread_id=THREAD, run_id=RUN):
+    if isinstance(store, SQLiteCheckpointStore):
+        raw = _raw_state(store, namespace, thread_id, run_id)
+    else:
+        raw = store._data[namespace][thread_id][run_id]["state"]
+    return raw["_messages"]["manifest"]["head"]
+
+
 def _read_segment(store, namespace, thread_id, segment_ref):
     row = store._conn.execute(
         _READ_SEGMENT, (namespace, thread_id, segment_ref)
@@ -414,7 +422,7 @@ def test_large_append_traces_no_temp_live_set_and_only_delta_payload_writes(
     _assert_archive_matches_live_refs(store)
 
 
-def test_shared_alias_and_shared_root_survive_replacement_gc(sqlite_store):
+def test_shared_alias_and_shared_root_survive_append(sqlite_store):
     store = sqlite_store
     aliased = _items(300)
     aliased[1]["content"] = aliased[0]["content"]
@@ -441,14 +449,8 @@ def test_shared_alias_and_shared_root_survive_replacement_gc(sqlite_store):
     finally:
         store._conn.set_trace_callback(None)
 
-    # The sweep still reads stored keys, but neither provider rows nor pages
-    # are garbage while the second run keeps the old head reachable.
-    assert any(
+    assert not any(
         "SELECT item_ref FROM checkpoint_message_items" in statement
-        for statement in statements
-    )
-    assert any(
-        "SELECT segment_ref FROM checkpoint_manifest_segments" in statement
         for statement in statements
     )
     assert not _statements_starting(statements, "DELETE FROM checkpoint_message_items")
@@ -476,7 +478,7 @@ def test_shared_alias_and_shared_root_survive_replacement_gc(sqlite_store):
     _assert_archive_matches_live_refs(store)
 
 
-def test_preexisting_payload_and_page_garbage_is_collected_during_append(
+def test_preexisting_payload_and_page_garbage_is_collected_explicitly(
     sqlite_store,
 ):
     store = sqlite_store
@@ -504,6 +506,22 @@ def test_preexisting_payload_and_page_garbage_is_collected_during_append(
     finally:
         store._conn.set_trace_callback(None)
 
+    assert not any(
+        "SELECT item_ref FROM checkpoint_message_items" in statement
+        for statement in statements
+    )
+    assert not _statements_starting(statements, "DELETE FROM checkpoint_message_items")
+    assert orphan_payloads <= _stored_payload_refs(store)
+    assert orphan_segments <= _stored_segment_refs(store)
+    assert before_head not in _stored_segment_refs(store)
+
+    statements = []
+    store._conn.set_trace_callback(statements.append)
+    try:
+        store.collect_garbage(NS, THREAD)
+    finally:
+        store._conn.set_trace_callback(None)
+
     payload_deletes = _statements_starting(
         statements, "DELETE FROM checkpoint_message_items"
     )
@@ -527,7 +545,7 @@ def test_preexisting_payload_and_page_garbage_is_collected_during_append(
     _assert_archive_matches_live_refs(store)
 
 
-def test_more_than_one_thousand_orphans_use_bounded_parameterized_batches(
+def test_explicit_gc_batches_more_than_one_thousand_orphans(
     sqlite_store,
 ):
     store = sqlite_store
@@ -539,7 +557,7 @@ def test_more_than_one_thousand_orphans_use_bounded_parameterized_batches(
     _insert_orphan_segments(store, orphan_segments)
     tail = store.load_tail(NS, THREAD, RUN, limit=0)
 
-    with _recording_connection(store) as proxy:
+    with _recording_connection(store) as append_proxy:
         store.append_state(
             NS,
             THREAD,
@@ -548,6 +566,15 @@ def test_more_than_one_thousand_orphans_use_bounded_parameterized_batches(
             base=tail.base,
             event={"event_type": "batch_probe"},
         )
+
+    assert not any(
+        "SELECT item_ref FROM checkpoint_message_items" in sql
+        for sql, _parameters in append_proxy.calls
+    )
+    assert not _deletes(append_proxy, "checkpoint_message_items")
+
+    with _recording_connection(store) as proxy:
+        store.collect_garbage(NS, THREAD)
 
     payload_deletes = _deletes(proxy, "checkpoint_message_items")
     segment_deletes = _deletes(proxy, "checkpoint_manifest_segments")
@@ -568,7 +595,7 @@ def test_more_than_one_thousand_orphans_use_bounded_parameterized_batches(
         ref for _sql, parameters in segment_deletes for ref in parameters[2:]
     }
     assert bound_payloads == orphan_payloads
-    assert bound_segments == orphan_segments | {before_head}
+    assert bound_segments == orphan_segments
     assert not (orphan_payloads & _stored_payload_refs(store))
     assert not (orphan_segments & _stored_segment_refs(store))
     assert store.load_events(NS, THREAD, RUN) == [{"event_type": "batch_probe"}]
@@ -623,7 +650,7 @@ def test_gc_is_scoped_to_namespace_and_thread(sqlite_store):
     }
     tail = store.load_tail(NS, THREAD, RUN, limit=0)
 
-    with _recording_connection(store) as proxy:
+    with _recording_connection(store) as append_proxy:
         store.append_state(
             NS,
             THREAD,
@@ -632,6 +659,13 @@ def test_gc_is_scoped_to_namespace_and_thread(sqlite_store):
             base=tail.base,
             event={"event_type": "isolation_probe"},
         )
+
+    assert not any(
+        "SELECT item_ref FROM checkpoint_message_items" in sql
+        for sql, _parameters in append_proxy.calls
+    )
+    with _recording_connection(store) as proxy:
+        store.collect_garbage(NS, THREAD)
 
     for _sql, parameters in _deletes(proxy, "checkpoint_message_items"):
         assert parameters[:2] == (NS, THREAD)
@@ -655,7 +689,7 @@ def test_gc_is_scoped_to_namespace_and_thread(sqlite_store):
     _assert_archive_matches_live_refs(store)
 
 
-def test_quoted_stored_refs_are_bound_and_only_orphans_are_deleted(sqlite_store):
+def test_explicit_gc_binds_quoted_refs_and_deletes_only_orphans(sqlite_store):
     store = sqlite_store
     _commit_segmented(store, count=300)
     quoted_payloads = {
@@ -673,7 +707,7 @@ def test_quoted_stored_refs_are_bound_and_only_orphans_are_deleted(sqlite_store)
     _insert_orphan_segments(store, quoted_segments)
     tail = store.load_tail(NS, THREAD, RUN, limit=0)
 
-    with _recording_connection(store) as proxy:
+    with _recording_connection(store) as append_proxy:
         store.append_state(
             NS,
             THREAD,
@@ -682,6 +716,14 @@ def test_quoted_stored_refs_are_bound_and_only_orphans_are_deleted(sqlite_store)
             base=tail.base,
             event={"event_type": "quoted_probe"},
         )
+
+    assert not any(
+        "SELECT item_ref FROM checkpoint_message_items" in sql
+        for sql, _parameters in append_proxy.calls
+    )
+    assert not _deletes(append_proxy, "checkpoint_message_items")
+    with _recording_connection(store) as proxy:
+        store.collect_garbage(NS, THREAD)
 
     all_deletes = [
         *_deletes(proxy, "checkpoint_message_items"),
@@ -711,7 +753,7 @@ def test_quoted_stored_refs_are_bound_and_only_orphans_are_deleted(sqlite_store)
     _assert_archive_matches_live_refs(store)
 
 
-def test_invalid_retained_root_aborts_append_before_publication(sqlite_store):
+def test_invalid_retained_root_aborts_explicit_gc_without_deleting(sqlite_store):
     store = sqlite_store
     _commit_segmented(store, count=300)
     _commit_segmented(
@@ -731,22 +773,23 @@ WHERE namespace=? AND thread_id=? AND segment_ref=?
     )
     store._conn.commit()
 
+    tail = store.load_tail(NS, THREAD, RUN, limit=0)
+    store.append_state(
+        NS,
+        THREAD,
+        RUN,
+        [_new_item()],
+        base=tail.base,
+        event={"event_type": "append_committed"},
+    )
+
     before_state = json.dumps(_raw_state(store))
     before_payloads = _stored_payload_refs(store)
     before_segments = _stored_segment_refs(store)
     before_events = _count_events(store)
     before_commits = _count_commits(store)
-    tail = store.load_tail(NS, THREAD, RUN, limit=0)
-
     with pytest.raises(ValueError, match="missing"):
-        store.append_state(
-            NS,
-            THREAD,
-            RUN,
-            [_new_item()],
-            base=tail.base,
-            event={"event_type": "must_not_publish"},
-        )
+        store.collect_garbage(NS, THREAD)
 
     assert json.dumps(_raw_state(store)) == before_state
     assert _stored_payload_refs(store) == before_payloads
@@ -755,37 +798,39 @@ WHERE namespace=? AND thread_id=? AND segment_ref=?
     assert _count_segments(store) == len(before_segments)
     assert _count_events(store) == before_events
     assert _count_commits(store) == before_commits
-    assert store.load_events(NS, THREAD, RUN) == []
-    assert store.load_tail(NS, THREAD, RUN, limit=0).base == tail.base
+    assert store.load_events(NS, THREAD, RUN) == [{"event_type": "append_committed"}]
+    assert store.load_tail(NS, THREAD, RUN, limit=0).base.revision == 2
 
 
-def test_second_delete_batch_failure_rolls_back_append_and_earlier_batches(
+def test_second_delete_batch_failure_rolls_back_gc_only(
     sqlite_store,
 ):
     store = sqlite_store
     initial_items = _commit_segmented(store, count=300)
     orphan_payloads = {f"item_orphan_rollback_{index:04d}" for index in range(1201)}
     _insert_orphan_payloads(store, orphan_payloads)
+    tail = store.load_tail(NS, THREAD, RUN, limit=0)
+    store.append_state(
+        NS,
+        THREAD,
+        RUN,
+        [_new_item()],
+        base=tail.base,
+        event={"event_type": "append_committed"},
+    )
     before_state = json.dumps(_raw_state(store))
     before_payloads = _stored_payload_refs(store)
     before_segments = _stored_segment_refs(store)
     before_events = _count_events(store)
     before_commits = _count_commits(store)
-    tail = store.load_tail(NS, THREAD, RUN, limit=0)
+    appended_tail = store.load_tail(NS, THREAD, RUN, limit=0)
 
     with _recording_connection(store, fail_on_delete=2) as proxy:
         with pytest.raises(
             _InjectedDeleteError,
             match="injected failure in checkpoint payload delete batch",
         ):
-            store.append_state(
-                NS,
-                THREAD,
-                RUN,
-                [_new_item()],
-                base=tail.base,
-                event={"event_type": "must_not_publish"},
-            )
+            store.collect_garbage(NS, THREAD)
 
     assert proxy.delete_calls == 2
     assert json.dumps(_raw_state(store)) == before_state
@@ -795,12 +840,15 @@ def test_second_delete_batch_failure_rolls_back_append_and_earlier_batches(
     assert _count_segments(store) == len(before_segments)
     assert _count_events(store) == before_events
     assert _count_commits(store) == before_commits
-    assert store.load_state(NS, THREAD, RUN)["messages"]["items"] == initial_items
-    assert store.load_events(NS, THREAD, RUN) == []
-    assert store.load_tail(NS, THREAD, RUN, limit=0).base == tail.base
+    assert store.load_state(NS, THREAD, RUN)["messages"]["items"] == [
+        *initial_items,
+        _new_item(),
+    ]
+    assert store.load_events(NS, THREAD, RUN) == [{"event_type": "append_committed"}]
+    assert store.load_tail(NS, THREAD, RUN, limit=0).base == appended_tail.base
 
 
-def test_late_event_failure_rolls_back_gc_and_publication(sqlite_store):
+def test_late_event_failure_rolls_back_append_publication(sqlite_store):
     store = sqlite_store
     initial_items = _commit_segmented(store, count=300)
     _insert_orphan_payloads(store, ["item_late_event_dead"])
@@ -915,6 +963,7 @@ def test_memory_and_sqlite_keep_identical_replacement_gc_archive(tmp_path):
                 base=tail.base,
                 event={"event_type": "parity_probe"},
             )
+            store.collect_garbage(NS, THREAD)
 
         sqlite_state = deepcopy(sqlite_store.load_state(NS, THREAD, RUN))
         memory_state = deepcopy(memory_store.load_state(NS, THREAD, RUN))
@@ -943,3 +992,24 @@ def test_memory_and_sqlite_keep_identical_replacement_gc_archive(tmp_path):
         assert "seg_parity_dead" not in _stored_segment_refs(memory_store)
     finally:
         sqlite_store.close()
+
+
+def test_append_drops_only_an_unshared_old_partial_head(checkpoint_store):
+    store = checkpoint_store
+
+    _commit_segmented(store, run_id="unshared", count=300)
+    unshared_head = _manifest_head_any(store, run_id="unshared")
+    tail = store.load_tail(NS, THREAD, "unshared", limit=0)
+    store.append_state(NS, THREAD, "unshared", [_new_item()], base=tail.base)
+    assert unshared_head not in _stored_segment_refs(store)
+
+    shared_items = _items(300, prefix="shared")
+    _commit_segmented(store, run_id="shared-a", items=shared_items)
+    _commit_segmented(store, run_id="shared-b", items=shared_items)
+    shared_state = store.load_state(NS, THREAD, "shared-b")
+    shared_head = _manifest_head_any(store, run_id="shared-a")
+    assert shared_head == _manifest_head_any(store, run_id="shared-b")
+    tail = store.load_tail(NS, THREAD, "shared-a", limit=0)
+    store.append_state(NS, THREAD, "shared-a", [_new_item()], base=tail.base)
+    assert shared_head in _stored_segment_refs(store)
+    assert store.load_state(NS, THREAD, "shared-b") == shared_state

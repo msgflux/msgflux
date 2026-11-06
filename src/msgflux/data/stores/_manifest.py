@@ -22,7 +22,19 @@ import hashlib
 import json
 import math
 import re
-from typing import Any, Callable, Dict, Iterable, Iterator, List, Mapping, Tuple
+from typing import (
+    Any,
+    Callable,
+    Dict,
+    Iterable,
+    Iterator,
+    List,
+    Mapping,
+    MutableMapping,
+    Tuple,
+)
+
+from msgflux.data.stores._json import encode_canonical_json, is_plain_json
 
 MANIFEST_PAGE_SIZE = 128
 """Maximum number of occurrence entries stored in one manifest page."""
@@ -175,6 +187,7 @@ def append_manifest(
     entries: Iterable[Mapping[str, Any]],
     read_page: ReadPage,
     write_page: WritePage,
+    head_cache: MutableMapping[str, Dict[str, Any]] | None = None,
 ) -> Dict[str, Any]:
     """Append occurrences while reusing every complete prefix page.
 
@@ -182,17 +195,25 @@ def append_manifest(
     full archive integrity must validate it before publication. New entries
     and a partial old tail are copied, with bounded per-page working memory.
     Like ``build_manifest``, publication must stage writes or use a transaction.
+
+    ``head_cache`` maps content-addressed page refs to pages this process has
+    already validated or written. Because a ref is the digest of the page
+    bytes, a hit is exactly the stored page, so a long run does not re-read
+    and re-validate its partial head on every append. The new head is
+    recorded back into the cache.
     """
     head, count = _parse_descriptor(descriptor)
     parent = head
     chunk: List[Dict[str, Any]] = []
     if head is not None:
-        # Reuse the standard walker's head/parent count and digest checks.
-        _ref, page = next(_walk_pages(descriptor, read_page))
+        page = head_cache.get(head) if head_cache is not None else None
+        if page is None or page["count"] != count:
+            # Reuse the standard walker's head/parent count and digest checks.
+            _ref, page = next(_walk_pages(descriptor, read_page))
         last_entries = page["entries"]
         if len(last_entries) < MANIFEST_PAGE_SIZE:
             parent = page["parent"]
-            chunk = last_entries
+            chunk = list(last_entries)
     base_count = count - len(chunk)
     added = False
     for index, entry in enumerate(entries):
@@ -205,8 +226,15 @@ def append_manifest(
     if not added:
         return {"format": MANIFEST_FORMAT, "head": head, "count": count}
     if chunk:
+        page_parent = parent
         base_count += len(chunk)
         parent = _write_page(parent, base_count, chunk, write_page)
+        if head_cache is not None:
+            head_cache[parent] = {
+                "parent": page_parent,
+                "count": base_count,
+                "entries": chunk,
+            }
     return {"format": MANIFEST_FORMAT, "head": parent, "count": base_count}
 
 
@@ -312,6 +340,8 @@ def _write_page(
 
 def _canonical_json(value: Any) -> bytes:
     """Return deterministic UTF-8 JSON bytes for ``value``."""
+    if is_plain_json(value):
+        return encode_canonical_json(value)
     return json.dumps(
         value,
         ensure_ascii=False,
@@ -513,3 +543,23 @@ def replacement_needs_segment_gc(
     if not isinstance(new_manifest, Mapping):
         return True
     return new_manifest.get("head") != old_head
+
+
+def appended_orphan_head(
+    old_manifest: Mapping[str, Any],
+    new_manifest: Mapping[str, Any],
+) -> str | None:
+    """Return the only page a pure manifest append can orphan, if any.
+
+    Every page except the head is full, so only a partial head is ever
+    rewritten by :func:`append_manifest`; a full head becomes the parent of the
+    new pages and stays reachable. Item payloads are never orphaned by an
+    append. The caller must still verify no other run references the page.
+    """
+    old_head, old_count = _parse_descriptor(old_manifest)
+    new_head, _new_count = _parse_descriptor(new_manifest)
+    if old_head is None or old_head == new_head:
+        return None
+    if old_count % MANIFEST_PAGE_SIZE == 0:
+        return None
+    return old_head

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import os
 import stat
+from pathlib import Path
 from threading import RLock
 from typing import Any, Dict, List, Mapping
 
@@ -14,6 +15,7 @@ from msgflux.runtime.agent_resources import (
     AgentResources,
     BoundAgentResources,
     _agent_layout_lock,
+    _legacy_thread_databases_present,
     _prepare_database_file,
     _prepare_shared_backend_layout,
     _secure_directory,
@@ -23,6 +25,115 @@ from msgflux.runtime.approvals import SQLiteApprovalStore
 from msgflux.tasks import SQLiteTaskStore
 from msgflux.tasks.dataclasses import TaskActivity, TaskRecord
 from msgflux.tasks.records import TaskSummary
+
+
+class _SharedBackendRegistry:
+    """Own process-wide backend instances and their Agent reference counts."""
+
+    _lock = RLock()
+    _backends: dict[Path, tuple[SQLiteAgentBackend, int]] = {}
+
+    @classmethod
+    def acquire(cls, agent_dir: str | os.PathLike[str]) -> SQLiteAgentBackend:
+        key = Path(agent_dir).expanduser().resolve()
+        with cls._lock:
+            current = cls._backends.get(key)
+            if current is not None:
+                backend, references = current
+                cls._backends[key] = (backend, references + 1)
+                return backend
+            backend = SQLiteAgentBackend(key)
+            cls._backends[key] = (backend, 1)
+            return backend
+
+    @classmethod
+    def release(cls, backend: SQLiteAgentBackend) -> None:
+        key = backend.agent_dir.resolve()
+        with cls._lock:
+            current = cls._backends.get(key)
+            if current is None or current[0] is not backend:
+                raise RuntimeError("SQLite Agent backend is not registered")
+            _, references = current
+            if references > 1:
+                cls._backends[key] = (backend, references - 1)
+                return
+            # Keep the final reference registered if close fails, so a later
+            # Agent shutdown can retry without opening a second pool.
+            backend.close()
+            del cls._backends[key]
+
+
+class AgentDirectoryResources:
+    """Select shared SQLite storage for new roots and preserve legacy roots."""
+
+    def __init__(self, agent_dir: str | os.PathLike[str]) -> None:
+        self.agent_dir = AgentResources(agent_dir).agent_dir
+        self._legacy = AgentResources(self.agent_dir)
+        self._mode: str | None = None
+        self._backend: SQLiteAgentBackend | None = None
+        self._lock = RLock()
+
+    @property
+    def backend(self) -> SQLiteAgentBackend | None:
+        return self._backend
+
+    def bind(self, thread_id: str, *, namespace: str, verbose: bool = False):
+        mode = self._select_mode()
+        if mode == "legacy":
+            return self._legacy.bind(thread_id, namespace=namespace, verbose=verbose)
+        with self._lock:
+            if self._backend is None:
+                self._backend = _SharedBackendRegistry.acquire(self.agent_dir)
+            backend = self._backend
+        return backend.bind(thread_id, namespace=namespace, verbose=verbose)
+
+    def has_thread(self, thread_id: str) -> bool:
+        mode = self._select_mode()
+        if mode == "legacy":
+            return self._legacy.has_thread(thread_id)
+        backend = self._backend
+        if backend is not None:
+            return backend.has_thread(thread_id)
+        return SQLiteAgentBackend(self.agent_dir).has_thread(thread_id)
+
+    def service_store(self):
+        """Open the host-owned service journal for this agent directory."""
+        return self._legacy.service_store()
+
+    def release(self) -> None:
+        """Release this Agent's registry reference to the shared pool."""
+        with self._lock:
+            backend = self._backend
+            if backend is None:
+                return
+            _SharedBackendRegistry.release(backend)
+            self._backend = None
+
+    def _select_mode(self) -> str:
+        with self._lock:
+            if self._mode is not None:
+                return self._mode
+            try:
+                root_metadata = self.agent_dir.lstat()
+            except FileNotFoundError:
+                pass
+            else:
+                if stat.S_ISLNK(root_metadata.st_mode) or not stat.S_ISDIR(
+                    root_metadata.st_mode
+                ):
+                    raise ValueError("Agent resource path must be a real directory")
+                if root_metadata.st_uid != os.getuid():
+                    raise PermissionError(
+                        "Agent resource directories must be user-owned"
+                    )
+            with _agent_layout_lock(self.agent_dir, create=False):
+                if _shared_backend_layout_exists(self.agent_dir):
+                    self._mode = "shared"
+                elif _legacy_thread_databases_present(self.agent_dir):
+                    self._mode = "legacy"
+                else:
+                    self._mode = "shared"
+            return self._mode
 
 
 class _ThreadScopedSQLiteTaskStore(SQLiteTaskStore):

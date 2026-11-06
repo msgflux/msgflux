@@ -13,6 +13,7 @@ from typing import (
 
 import msgspec
 
+from msgflux._private.memory import release_freed_memory
 from msgflux.auto import AutoParams
 from msgflux.core.examples import Example
 from msgflux.core.message import Message
@@ -721,6 +722,8 @@ class Agent(
                 raise
             # Unwrap the hook error without chaining it back to its marker.
             raise settled_error from settled_error.__cause__
+        finally:
+            release_freed_memory()
         return response
 
     async def _aexecute_prepared_run(self, message, inputs, *, continuation=False):
@@ -756,6 +759,8 @@ class Agent(
                 raise
             # Unwrap the hook error without chaining it back to its marker.
             raise settled_error from settled_error.__cause__
+        finally:
+            release_freed_memory()
         return response
 
     @staticmethod

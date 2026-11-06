@@ -8,14 +8,19 @@ authorization credential. Full checkpoint APIs keep their existing semantics.
 from __future__ import annotations
 
 import hashlib
-import math
 import re
 from copy import deepcopy
 from dataclasses import dataclass
 from typing import Any, Callable, Iterable, Mapping
 
+import msgspec
+
+from msgflux.data.stores._json import (
+    encode_canonical_json,
+    encode_json_text,
+    is_plain_json,
+)
 from msgflux.data.stores._manifest import (
-    _canonical_json,
     _copy_json_value,
     _parse_descriptor,
     iter_manifest_suffix,
@@ -89,9 +94,8 @@ def snapshot_base(
     # bytes with their textual representation or tuples with lists on a later
     # same-revision replacement. Full store APIs keep their broader support.
     try:
-        portable = _copy_json_value(normalized, "checkpoint")
-        encoded = _canonical_json(portable)
-    except (TypeError, ValueError) as error:
+        encoded = canonical_control_bytes(normalized)
+    except (TypeError, ValueError, msgspec.EncodeError) as error:
         raise ValueError(
             "Incremental checkpoint control metadata must be JSON-compatible"
         ) from error
@@ -125,13 +129,31 @@ def recover_tail(
     return CheckpointTail(base, start, state)
 
 
-def append_control_state(
-    normalized: Mapping[str, Any],
-    items: list[Mapping[str, Any]],
-    state_updates: Mapping[str, Any] | None,
-    message_updates: Mapping[str, Any] | None,
-) -> dict[str, Any]:
-    """Prepare a bounded public tail/control state for revision preparation."""
+def canonical_control_bytes(normalized: Mapping[str, Any]) -> bytes:
+    """Canonical sorted JSON bytes used for the append-base digest.
+
+    Exact native JSON is encoded directly; other mappings are first validated
+    and converted by ``_copy_json_value``, so equal content always yields the
+    same bytes whatever container types carried it.
+    """
+    portable = (
+        normalized
+        if is_plain_json(normalized)
+        else _copy_json_value(normalized, "checkpoint")
+    )
+    return encode_canonical_json(portable)
+
+
+def item_payload_ref(payload: Any) -> str:
+    """Content address of one item payload (canonical sorted JSON)."""
+    text = encode_json_text(payload, sort_keys=True)
+    return (
+        "item_" + hashlib.sha256(text.encode("utf-8", "surrogatepass")).hexdigest()[:32]
+    )
+
+
+def validate_append_items(items: list[Mapping[str, Any]]) -> None:
+    """Require a list of mappings with explicit, unique, non-empty item ids."""
     if not isinstance(items, list):
         raise ValueError("Checkpoint append items must be a list")
     ids = set()
@@ -144,6 +166,24 @@ def append_control_state(
         if item_id in ids:
             raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
         ids.add(item_id)
+
+
+def append_control_state(
+    normalized: Mapping[str, Any],
+    items: list[Mapping[str, Any]],
+    state_updates: Mapping[str, Any] | None,
+    message_updates: Mapping[str, Any] | None,
+    *,
+    owned: bool = False,
+) -> dict[str, Any]:
+    """Prepare a bounded public tail/control state for revision preparation.
+
+    ``owned=True`` declares that ``normalized`` and every input are private
+    copies (e.g. freshly decoded from storage and frozen by the caller), so
+    they are reused instead of deep-copied again.
+    """
+    validate_append_items(items)
+    copy = (lambda value: value) if owned else deepcopy
     updates = {} if state_updates is None else state_updates
     message_updates = {} if message_updates is None else message_updates
     if not isinstance(updates, Mapping) or not isinstance(message_updates, Mapping):
@@ -155,12 +195,12 @@ def append_control_state(
     if "items" in message_updates:
         raise ValueError("Checkpoint message updates cannot replace items")
     state = {
-        key: deepcopy(value) for key, value in normalized.items() if key != "_messages"
+        key: copy(value) for key, value in normalized.items() if key != "_messages"
     }
-    state.update(deepcopy(dict(updates)))
-    messages = deepcopy(dict(normalized["_messages"]["state"]))
-    messages.update(deepcopy(dict(message_updates)))
-    messages["items"] = deepcopy(items)
+    state.update(copy(dict(updates)))
+    messages = copy(dict(normalized["_messages"]["state"]))
+    messages.update(copy(dict(message_updates)))
+    messages["items"] = copy(items)
     state["messages"] = messages
     return state
 
@@ -225,43 +265,6 @@ def same_payload_value(left: Any, right: Any) -> bool:
             for left_item, right_item in zip(left, right)
         )
     return left == right
-
-
-def is_plain_json(value: Any) -> bool:
-    """Qualify optional optimizations without copying or invoking user hooks.
-
-    Full APIs accept opaque objects and Mapping subclasses. Only exact native
-    JSON containers/scalars are eligible for automatic fingerprints, so an
-    optional optimization never calls an opaque object's iteration/conversion
-    methods. The active set is bounded by nesting depth and rejects cycles.
-    """
-    try:
-        return _plain_json_value(value, set())
-    except RecursionError:
-        return False
-
-
-def _plain_json_value(value: Any, active: set[int]) -> bool:
-    value_type = type(value)
-    if value is None or value_type is str or value_type is bool or value_type is int:
-        return True
-    if value_type is float:
-        return math.isfinite(value)
-    if value_type is not list and value_type is not dict:
-        return False
-    identity = id(value)
-    if identity in active:
-        return False
-    active.add(identity)
-    try:
-        if value_type is list:
-            return all(_plain_json_value(item, active) for item in value)
-        return all(
-            type(key) is str and _plain_json_value(item, active)
-            for key, item in value.items()
-        )
-    finally:
-        active.remove(identity)
 
 
 def optional_snapshot_base(

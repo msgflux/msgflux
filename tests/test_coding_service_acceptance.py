@@ -194,9 +194,9 @@ async def test_manifest_coding_approval_and_account_survive_restart(
             paused = await asyncio.wait_for(session.wait("patch-request"), 5)
             assert paused.status == "paused", paused.error
             assert not (workspace / "hello.txt").exists()
-            thread_state = tmp_path / "agent-state" / "threads" / receipt.thread_id
-            assert (thread_state / "checkpoints.sqlite3").is_file()
-            assert (thread_state / "approvals.sqlite3").is_file()
+            backend_state = tmp_path / "agent-state" / "runtime" / "backend"
+            assert (backend_state / "checkpoints.sqlite3").is_file()
+            assert (backend_state / "approvals.sqlite3").is_file()
             assert not (tmp_path / "threads").exists()
             assert not (runtime / "threads").exists()
             (review,) = await session.approval_reviews(receipt.run_id)
@@ -218,11 +218,7 @@ async def test_manifest_coding_approval_and_account_survive_restart(
             )
             session = await AgentSessionClient.open(client, thread_id=receipt.thread_id)
             assert (
-                tmp_path
-                / "agent-state"
-                / "threads"
-                / receipt.thread_id
-                / "checkpoints.sqlite3"
+                tmp_path / "agent-state" / "runtime" / "backend" / "checkpoints.sqlite3"
             ).is_file()
             (restored,) = await session.approval_reviews(receipt.run_id)
             assert restored == review

@@ -27,8 +27,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from copy import deepcopy
 from itertools import islice
@@ -46,6 +44,7 @@ from msgflux._private.chat_items import (
 from msgflux.data.stores._manifest import (
     MANIFEST_PAGE_SIZE,
     append_manifest,
+    appended_orphan_head,
     build_manifest,
     iter_manifest_entries,
     iter_manifest_pages,
@@ -62,6 +61,7 @@ from msgflux.data.stores.incremental import (
     CheckpointTail,
     append_control_state,
     compose_append_state,
+    item_payload_ref,
     migrate_inline_entries,
     optional_snapshot_base,
     recover_tail,
@@ -229,8 +229,6 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             # A caller mutating its inputs cannot desynchronize the ack/payloads.
             new_items = control_state["messages"]["items"]
 
-            # Strictly validate every prior payload exactly once and retain only
-            # occurrence identities, never the previous timeline.
             old_item_ids: List[str] = []
             prior = self._commit_envelope_from_state(
                 namespace,
@@ -260,6 +258,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 branch_id=branch_id,
                 head_item_id=effective_head,
                 extension_state=extension_state,
+                copy_state=False,
             )
             prepared_event = deepcopy(dict(event)) if event is not None else None
 
@@ -338,17 +337,11 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             new_base = snapshot_base(
                 self.routing_id, namespace, thread_id, run_id, normalized
             )
-            live_refs = None
-            if replacement_needs_segment_gc(previous, normalized):
-                # Preflight the post-append survivors, including staged pages,
-                # before publishing anything to the in-memory maps.
-                live_refs = self._replacement_gc_live_refs(
-                    namespace,
-                    thread_id,
-                    run_id,
-                    normalized,
-                    page_store,
-                )
+            orphan_head = (
+                appended_orphan_head(manifest, normalized["_messages"]["manifest"])
+                if inline is None and new_entries
+                else None
+            )
 
             self._publish_staged(namespace, thread_id, item_store, page_store)
             run["state"] = normalized
@@ -367,9 +360,24 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if prepared_event is not None:
                 run["events"].append(prepared_event)
-            if live_refs is not None:
-                self._prune_live_refs(namespace, thread_id, live_refs)
+            if orphan_head is not None:
+                # A pure append can orphan only the rewritten partial head page.
+                self._drop_unreferenced_head(namespace, thread_id, orphan_head)
             return CheckpointTail(new_base, old_base.item_count, deepcopy(committed))
+
+    def _drop_unreferenced_head(
+        self, namespace: str, thread_id: str, segment_ref: str
+    ) -> None:
+        for other in self._data.get(namespace, {}).get(thread_id, {}).values():
+            messages = other.get("state", {}).get("_messages")
+            manifest = (
+                messages.get("manifest") if isinstance(messages, Mapping) else None
+            )
+            if isinstance(manifest, Mapping) and manifest.get("head") == segment_ref:
+                return
+        pages = self._manifest_pages.get(namespace, {}).get(thread_id)
+        if pages is not None:
+            pages.pop(segment_ref, None)
 
     def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
         with self._lock:
@@ -653,8 +661,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     @staticmethod
     def _item_ref(item: Any) -> str:
-        payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
-        return "item_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+        return item_payload_ref(item)
 
     def _collect_live_refs(
         self,
@@ -1110,6 +1117,15 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 removals.append((ns, sid, to_delete))
                 prunes.append((ns, sid, live_items, live_segments))
         return removals, prunes
+
+    def collect_garbage(self, namespace: str, thread_id: str) -> None:
+        """Delete payloads and pages unreachable from any run in the thread.
+
+        Appends only drop the partial head page they rewrite;
+        full reachability sweeps run here, on replacements, deletes and clear.
+        """
+        with self._lock:
+            self._cleanup_orphaned_items(namespace, thread_id)
 
     def clear(
         self,

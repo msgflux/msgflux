@@ -250,6 +250,77 @@ moderation or alternative history should fork from the exact `item_id` being
 reviewed. The complete proposed operation and repeated-compaction rules live in
 [Compaction And Context Views](compaction-and-context-views.md).
 
+### Incremental saves and validation
+
+After the first full commit, eligible boundary saves append only the new
+items and updated control metadata. Existing payloads and complete manifest
+pages are reused instead of rewritten.
+
+`ChatMessages` exposes mutable items. To preserve edits, the agent builds an
+isolated checkpoint snapshot and compares a typed digest of the persisted
+prefix before choosing an append. A changed prefix falls back to a full
+commit, including changes made in place to nested values. The tracker keeps
+only a digest, item count, and commit identity, without retaining another
+conversation history.
+
+Stores validate the existing archive and occurrence-id uniqueness before
+publishing an append. Corrupted payloads or duplicate ids fail without
+advancing the revision. A tail read remains a bounded observation and does
+not prove the integrity of older items outside that window.
+
+These checks cost work proportional to the existing history. Incremental
+writes reduce rewritten data; they do not promise constant-time saves.
+
+An append only removes the previous partial manifest page, and only when no
+other run of the thread references it. A full sweep for orphaned segments, for
+example after forks or replaced runs, is explicit:
+`store.collect_garbage(namespace, thread_id)`. Run it from maintenance, not on
+the hot path.
+
+`SQLiteCheckpointStore(path)` uses WAL and `synchronous="FULL"` by default,
+preserving per-commit synchronization. Explicitly pass `synchronous="NORMAL"`
+to skip per-commit fsync while retaining WAL recovery across process crashes.
+With `NORMAL`, recent commits may be lost after an OS crash or power loss.
+
+With `group_commit=True` (the default), concurrent appends are encoded in the
+caller's thread and queued to one writer thread per store. The writer
+publishes everything queued in a single transaction, isolating each append
+in its own savepoint: a stale or invalid append fails alone, while a failed
+commit fails the whole batch. Closing the store first stops new submissions,
+drains accepted appends without holding the connection lock, and then closes
+the connection. `aappend_state` awaits that writer instead of
+holding an executor thread, so dozens of subagents do not exhaust the default
+thread pool while they wait for the connection.
+
+Every `Agent(agent_dir=...)` in a process that uses the same directory shares
+one `SQLiteAgentBackend`: one checkpoint connection and therefore one writer.
+Subagents inherit their parent's store through the execution context.
+
+The SQLite writer keeps per-save CPU and I/O low:
+
+- Plain JSON (exact `dict`/`list`/`str`/`int`/finite `float`/`bool`/`None`
+  with string keys) is encoded and decoded with msgspec. Anything else falls
+  back to the stdlib `json` with `default=str`, so stored values keep their
+  previous semantics. Existing databases stay readable: refs are never
+  recomputed on read.
+- A new item row is inserted without reading it back; only a conflicting ref
+  is re-read and compared.
+- No index duplicates a primary key, and `checkpoint_commits` is a
+  `WITHOUT ROWID` table in new databases. That cuts the WAL written per save
+  by about 17%.
+
+Item payloads are not compressed. With WAL and `synchronous=NORMAL` a save
+costs mostly CPU, not disk, and compressing would add CPU to every save.
+
+When an agent run ends, msgflux calls glibc `malloc_trim` on a background
+thread to return freed heap pages to the OS, so idle subagents do not keep
+their peak RSS. The trim is process-wide and runs at most once per second.
+Set `MSGFLUX_MALLOC_TRIM=0` to disable it. Outside glibc it is a no-op.
+
+Keep extension durable state small. It is rewritten on every save. Anything
+that is already in the timeline (for example tool outputs) should be referenced,
+not copied.
+
 ### Streaming boundary
 
 Providers emit arbitrary delta shapes, but checkpoints only accept coherent

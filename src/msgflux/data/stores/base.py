@@ -180,8 +180,14 @@ class CheckpointStore(ABC):
         branch_id,
         head_item_id,
         extension_state,
+        copy_state: bool = True,
     ) -> tuple[dict[str, Any], int]:
-        """Prepare and validate a new snapshot without publishing any writes."""
+        """Prepare and validate a new snapshot without publishing any writes.
+
+        ``copy_state=False`` lets a caller that already owns a private copy of
+        ``state`` (such as an append's prepared control state) skip a second
+        deep copy.
+        """
         checkpoint = current.get("_checkpoint", {})
         cls._validate_checkpoint_envelope(checkpoint)
         cls._validate_checkpoint_envelope(state.get("_checkpoint"))
@@ -198,7 +204,7 @@ class CheckpointStore(ABC):
                     f"Checkpoint revision conflict: expected {expected_revision}, "
                     f"found {revision}."
                 )
-        committed = deepcopy(dict(state))
+        committed = deepcopy(dict(state)) if copy_state else dict(state)
         runtime = committed.get("runtime", {})
         if not isinstance(runtime, Mapping):
             raise ValueError("Checkpoint runtime must be a mapping")

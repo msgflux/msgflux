@@ -151,7 +151,7 @@ def test_public_backend_import_does_not_depend_on_package_order(first):
     )
 
 
-def test_explicit_resource_helper_cannot_create_hidden_legacy_checkpoint(tmp_path):
+def test_explicit_resource_helper_uses_shared_checkpoint_database(tmp_path):
     from msgflux.runtime import RuntimeResources
 
     root = tmp_path / "backend"
@@ -159,8 +159,9 @@ def test_explicit_resource_helper_cannot_create_hidden_legacy_checkpoint(tmp_pat
     binding = backend.bind("known", namespace="worker")
     binding.close()
     try:
-        with pytest.raises(ValueError, match="shared SQLite"):
-            RuntimeResources(root).checkpoint_store("hidden")
+        store = RuntimeResources(root).checkpoint_store("hidden")
+        assert store.routing_id == backend._pool[0].routing_id
+        store.close()
         assert not (root / "threads" / "hidden").exists()
         assert not backend.has_thread("hidden")
     finally:

@@ -1194,6 +1194,17 @@ class ChatMessages:
 
         return result
 
+    def _last_turn_id(self) -> str | None:
+        """Return the id of the latest started turn without deriving all turns."""
+        for item in reversed(self._items):
+            if (
+                item.get("type") == "turn"
+                and item.get("event") == "start"
+                and isinstance(item.get("turn_id"), str)
+            ):
+                return item["turn_id"]
+        return None
+
     def _to_state(self) -> Mapping[str, Any]:
         return {
             "items": self._safe_copy(self._items),

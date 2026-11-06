@@ -297,8 +297,9 @@ def _validate_closed_stores(
     database_metadata = {}
     for thread_id, receipt in receipts.items():
         state_thread = managed_root / "threads" / thread_id
+        backend_dir = managed_root / "runtime" / "backend"
         integrity[thread_id] = {
-            name: _store_integrity(state_thread / filename)
+            name: _store_integrity(backend_dir / filename)
             for name, filename in (
                 ("checkpoints", "checkpoints.sqlite3"),
                 ("tasks", "tasks.sqlite3"),
@@ -307,10 +308,12 @@ def _validate_closed_stores(
             )
         }
         assert set(integrity[thread_id].values()) == {"ok"}
-        task_database = sqlite3.connect(state_thread / "tasks.sqlite3")
+        task_database = sqlite3.connect(backend_dir / "tasks.sqlite3")
         try:
             rows = task_database.execute(
-                "SELECT task_id, status, error, metadata, result FROM tasks"
+                "SELECT task_id, status, error, metadata, result FROM tasks "
+                "WHERE json_extract(metadata, '$.thread_id') = ?",
+                (thread_id,),
             ).fetchall()
         finally:
             task_database.close()
@@ -778,10 +781,7 @@ async def test_live_codex_cache_eviction_keeps_background_sqlite_and_watchers_sa
 
     samples = []
     sampler_stop = asyncio.Event()
-    task_database_paths = [
-        managed_root / "threads" / thread_id / "tasks.sqlite3"
-        for thread_id in _THREAD_IDS
-    ]
+    task_database_paths = [managed_root / "runtime" / "backend" / "tasks.sqlite3"]
     sampler = asyncio.create_task(
         _sample_processes(psutil, service, task_database_paths, sampler_stop, samples)
     )
