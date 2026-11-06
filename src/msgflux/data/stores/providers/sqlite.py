@@ -37,7 +37,6 @@ from __future__ import annotations
 
 import asyncio
 import hashlib
-import json
 import sqlite3
 import time
 from concurrent.futures import Future
@@ -65,6 +64,7 @@ from msgflux._private.chat_items import (
     split_item_occurrence,
 )
 from msgflux._private.sqlite import prepare_sqlite_file
+from msgflux.data.stores._json import decode_json_text, encode_json_text
 from msgflux.data.stores._manifest import (
     MANIFEST_PAGE_SIZE,
     append_manifest,
@@ -85,6 +85,7 @@ from msgflux.data.stores.incremental import (
     CheckpointTail,
     append_control_state,
     compose_append_state,
+    item_payload_ref,
     migrate_inline_entries,
     optional_snapshot_base,
     recover_tail,
@@ -249,8 +250,9 @@ CREATE TABLE IF NOT EXISTS checkpoint_message_items (
     PRIMARY KEY (namespace, thread_id, item_ref)
 );
 
-CREATE INDEX IF NOT EXISTS idx_checkpoint_message_items_thread
-    ON checkpoint_message_items(namespace, thread_id, item_ref);
+-- The primary key already indexes (namespace, thread_id, item_ref); an older
+-- duplicate index only cost one extra B-tree write per item.
+DROP INDEX IF EXISTS idx_checkpoint_message_items_thread;
 
 CREATE TABLE IF NOT EXISTS checkpoint_manifest_segments (
     namespace   TEXT NOT NULL,
@@ -261,8 +263,7 @@ CREATE TABLE IF NOT EXISTS checkpoint_manifest_segments (
     PRIMARY KEY (namespace, thread_id, segment_ref)
 );
 
-CREATE INDEX IF NOT EXISTS idx_checkpoint_manifest_segments_thread
-    ON checkpoint_manifest_segments(namespace, thread_id, segment_ref);
+DROP INDEX IF EXISTS idx_checkpoint_manifest_segments_thread;
 
 CREATE TABLE IF NOT EXISTS checkpoint_events (
     id          INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -290,7 +291,7 @@ CREATE TABLE IF NOT EXISTS checkpoint_commits (
     PRIMARY KEY (namespace, thread_id, run_id, stream_id, revision),
     FOREIGN KEY (namespace, thread_id, run_id)
         REFERENCES checkpoints(namespace, thread_id, run_id) ON DELETE CASCADE
-);
+) WITHOUT ROWID;
 """
 
 
@@ -363,10 +364,14 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
         same payload; malformed or different bytes fail closed.
         """
         target = executor or self._conn
-        target.execute(
+        inserted = target.execute(
             _UPSERT_MESSAGE_ITEM,
             (namespace, thread_id, item_ref, text, now, now),
-        )
+        ).rowcount
+        if inserted == 1:
+            # A fresh row holds exactly ``text``; only a conflict needs the
+            # read-back comparison below.
+            return
         row = target.execute(
             _SELECT_MESSAGE_ITEM,
             (namespace, thread_id, item_ref),
@@ -462,7 +467,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 item=item,
             )
             item_ref = self._item_ref(payload)
-            text = self._serialize(payload)
+            text = encode_json_text(payload)
             staged = payloads.get(item_ref)
             if staged is not None and not same_payload_value(
                 self._deserialize(staged), self._deserialize(text)
@@ -1030,11 +1035,11 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     @staticmethod
     def _serialize(obj: Mapping[str, Any]) -> str:
-        return json.dumps(obj, ensure_ascii=False, default=str)
+        return encode_json_text(obj)
 
     @staticmethod
     def _deserialize(text: str) -> Dict[str, Any]:
-        return json.loads(text)
+        return decode_json_text(text)
 
     def _normalize_state(
         self,
@@ -1076,7 +1081,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                     namespace,
                     thread_id,
                     item_ref,
-                    self._serialize(payload),
+                    encode_json_text(payload),
                     now,
                     now,
                 ),
@@ -1316,8 +1321,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     @staticmethod
     def _item_ref(item: Any) -> str:
-        payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
-        return "item_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+        return item_payload_ref(item)
 
     def _list_live_refs(
         self, namespace: str, thread_id: str

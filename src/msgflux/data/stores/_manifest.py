@@ -34,6 +34,8 @@ from typing import (
     Tuple,
 )
 
+from msgflux.data.stores._json import encode_canonical_json, is_plain_json
+
 MANIFEST_PAGE_SIZE = 128
 """Maximum number of occurrence entries stored in one manifest page."""
 
@@ -338,6 +340,8 @@ def _write_page(
 
 def _canonical_json(value: Any) -> bytes:
     """Return deterministic UTF-8 JSON bytes for ``value``."""
+    if is_plain_json(value):
+        return encode_canonical_json(value)
     return json.dumps(
         value,
         ensure_ascii=False,

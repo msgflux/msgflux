@@ -77,3 +77,23 @@ def test_corrupt_head_rejects_suffix_and_append():
         list(iter_manifest_suffix(descriptor, pages.__getitem__, start=299))
     with pytest.raises(ValueError, match="digest"):
         append_manifest(descriptor, entries(1, 300), pages.__getitem__, lambda *_: None)
+
+
+def test_fast_json_codec_keeps_json_semantics_for_non_plain_values():
+    import datetime
+    import json
+
+    from msgflux.data.stores._json import decode_json_text, encode_json_text
+
+    plain = {"b": [1, 2.5, None, True], "a": "ção"}
+    assert json.loads(encode_json_text(plain)) == plain
+    assert encode_json_text(plain, sort_keys=True) == json.dumps(
+        plain, ensure_ascii=False, sort_keys=True, separators=(",", ":")
+    )
+
+    when = datetime.datetime(2026, 1, 2, 3, 4, 5, tzinfo=datetime.timezone.utc)
+    odd = {"nan": float("nan"), "when": when, 1: "int key"}
+    assert encode_json_text(odd) == json.dumps(odd, ensure_ascii=False, default=str)
+
+    legacy = json.dumps({"x": float("inf")})
+    assert decode_json_text(legacy)["x"] == float("inf")

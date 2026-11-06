@@ -296,6 +296,27 @@ Every `Agent(agent_dir=...)` in a process that uses the same directory shares
 one `SQLiteAgentBackend`: one checkpoint connection and therefore one writer.
 Subagents inherit their parent's store through the execution context.
 
+The SQLite writer keeps per-save CPU and I/O low:
+
+- Plain JSON (exact `dict`/`list`/`str`/`int`/finite `float`/`bool`/`None`
+  with string keys) is encoded and decoded with msgspec. Anything else falls
+  back to the stdlib `json` with `default=str`, so stored values keep their
+  previous semantics. Existing databases stay readable: refs are never
+  recomputed on read.
+- A new item row is inserted without reading it back; only a conflicting ref
+  is re-read and compared.
+- No index duplicates a primary key, and `checkpoint_commits` is a
+  `WITHOUT ROWID` table in new databases. That cuts the WAL written per save
+  by about 17%.
+
+Item payloads are not compressed. With WAL and `synchronous=NORMAL` a save
+costs mostly CPU, not disk, and compressing would add CPU to every save.
+
+When an agent run ends, msgflux calls glibc `malloc_trim` on a background
+thread to return freed heap pages to the OS, so idle subagents do not keep
+their peak RSS. The trim is process-wide and runs at most once per second.
+Set `MSGFLUX_MALLOC_TRIM=0` to disable it. Outside glibc it is a no-op.
+
 Keep extension durable state small. It is rewritten on every save. Anything
 that is already in the timeline (for example tool outputs) should be referenced,
 not copied.

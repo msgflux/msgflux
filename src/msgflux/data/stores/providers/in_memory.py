@@ -27,8 +27,6 @@
 
 from __future__ import annotations
 
-import hashlib
-import json
 import time
 from copy import deepcopy
 from itertools import islice
@@ -63,6 +61,7 @@ from msgflux.data.stores.incremental import (
     CheckpointTail,
     append_control_state,
     compose_append_state,
+    item_payload_ref,
     migrate_inline_entries,
     optional_snapshot_base,
     recover_tail,
@@ -692,8 +691,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
 
     @staticmethod
     def _item_ref(item: Any) -> str:
-        payload = json.dumps(item, ensure_ascii=False, sort_keys=True, default=str)
-        return "item_" + hashlib.sha256(payload.encode("utf-8")).hexdigest()[:32]
+        return item_payload_ref(item)
 
     def _collect_live_refs(
         self,
