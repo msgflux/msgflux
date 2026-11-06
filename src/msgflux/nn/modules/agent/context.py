@@ -182,6 +182,7 @@ def _persist_command_receipt(state, receipt) -> None:
 
     with run._command_receipt_lock:
         expected_tracker, expected_revision = tracker_snapshot(run)
+        epoch = getattr(messages, "_epoch", None)
         state_snapshot = agent._build_checkpoint_state(messages, status="running")
         extensions = dict(run.extension_state)
         extensions["command_receipts"] = retain_command_receipts(
@@ -207,7 +208,7 @@ def _persist_command_receipt(state, receipt) -> None:
         # concurrent receipt uses the persisted revision instead of conflicting.
         advance_revision(run, committed.revision)
     try:
-        tracker = tracker_from_commit(committed, store)
+        tracker = tracker_from_commit(committed, store, epoch=epoch)
         commit_tracker(run, expected_tracker, tracker, committed.revision)
     except BaseException:
         invalidate_tracker(run, expected_tracker)

@@ -513,3 +513,23 @@ def replacement_needs_segment_gc(
     if not isinstance(new_manifest, Mapping):
         return True
     return new_manifest.get("head") != old_head
+
+
+def appended_orphan_head(
+    old_manifest: Mapping[str, Any],
+    new_manifest: Mapping[str, Any],
+) -> str | None:
+    """Return the only page a pure manifest append can orphan, if any.
+
+    Every page except the head is full, so only a partial head is ever
+    rewritten by :func:`append_manifest`; a full head becomes the parent of the
+    new pages and stays reachable. Item payloads are never orphaned by an
+    append. The caller must still verify no other run references the page.
+    """
+    old_head, old_count = _parse_descriptor(old_manifest)
+    new_head, _new_count = _parse_descriptor(new_manifest)
+    if old_head is None or old_head == new_head:
+        return None
+    if old_count % MANIFEST_PAGE_SIZE == 0:
+        return None
+    return old_head

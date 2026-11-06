@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import itertools
 from copy import deepcopy
 from threading import RLock
 from typing import TYPE_CHECKING, Any, Iterable, Iterator, List, Literal, Mapping
@@ -23,6 +24,9 @@ if TYPE_CHECKING:
     from msgflux.models.reasoning import ReasoningCodec
 
 
+_EPOCHS = itertools.count(1)
+
+
 class ChatMessages:
     """Provider-neutral interaction timeline with serialization support.
 
@@ -39,7 +43,13 @@ class ChatMessages:
         thread_id: str | None = None,
         namespace: str | None = None,
     ):
-        self._items: List[dict[str, Any]] = []
+        self._item_list: List[dict[str, Any]] = []
+        # Process-unique prefix version, replaced by every mutation that is not
+        # a pure suffix append and inherited by copies. Durable checkpoints use
+        # it to append only the new suffix without rehashing or copying the
+        # persisted prefix. Items are immutable once appended: edit them through
+        # ``messages[index] = item`` (never in place).
+        self._epoch = next(_EPOCHS)
         self._runtime_lock = RLock()
         self._stream_owner: str | None = None
         self.metadata: dict[str, Any] = {}
@@ -52,8 +62,21 @@ class ChatMessages:
         if items is not None:
             self.extend(items)
 
+    @property
+    def _items(self) -> List[dict[str, Any]]:
+        return self._item_list
+
+    @_items.setter
+    def _items(self, items: List[dict[str, Any]]) -> None:
+        self._item_list = items
+        self._touch()
+
+    def _touch(self) -> None:
+        """Record a non-append mutation of the timeline prefix."""
+        self._epoch = next(_EPOCHS)
+
     def __len__(self) -> int:
-        return len(self._items)
+        return len(self._item_list)
 
     def __iter__(self) -> Iterator[dict[str, Any]]:
         return iter(self._items)
@@ -70,9 +93,10 @@ class ChatMessages:
         existing_ids = self._item_id_set(exclude_index=index)
         self._assign_item_ids(normalized_items, existing_ids=existing_ids)
         if len(normalized_items) == 1:
-            self._items[index] = normalized_items[0]
+            self._item_list[index] = normalized_items[0]
         else:
-            self._items[index : index + 1] = normalized_items
+            self._item_list[index : index + 1] = normalized_items
+        self._touch()
 
     def __bool__(self) -> bool:
         return bool(self._items)
@@ -100,7 +124,8 @@ class ChatMessages:
             raise TypeError(f"`item` must be Mapping, given `{type(item)}`")
         normalized_items = self._normalize_item(item)
         self._assign_item_ids(normalized_items)
-        self._items[index:index] = normalized_items
+        self._item_list[index:index] = normalized_items
+        self._touch()
 
     def insert_before_active_turn(self, item: Mapping[str, Any]) -> None:
         if not isinstance(item, Mapping):
@@ -117,7 +142,8 @@ class ChatMessages:
             self.append(item)
             return
 
-        self._items[start_item_index:start_item_index] = normalized_items
+        self._item_list[start_item_index:start_item_index] = normalized_items
+        self._touch()
 
     def extend(self, items: Iterable[Mapping[str, Any]]) -> None:
         if isinstance(items, ChatMessages):
@@ -171,6 +197,7 @@ class ChatMessages:
             namespace=self.namespace,
         )
         copied.metadata = deepcopy(self.metadata)
+        copied._epoch = self._epoch
         return copied
 
     def __deepcopy__(self, memo: dict[int, Any]) -> ChatMessages:
@@ -1193,6 +1220,30 @@ class ChatMessages:
             result.append(self._chatml_message_to_response(item))
 
         return result
+
+    def _last_turn_id(self) -> str | None:
+        """Return the id of the latest started turn without deriving all turns."""
+        for item in reversed(self._item_list):
+            if (
+                item.get("type") == "turn"
+                and item.get("event") == "start"
+                and isinstance(item.get("turn_id"), str)
+            ):
+                return item["turn_id"]
+        return None
+
+    def _checkpoint_state(self) -> dict[str, Any]:
+        """Return a checkpoint view that shares the immutable item dicts.
+
+        Unlike ``_to_state`` this does not deep-copy the history: stores
+        serialize the items synchronously and appended items are immutable.
+        """
+        return {
+            "items": list(self._item_list),
+            "metadata": self._safe_copy(self.metadata),
+            "thread_id": self.thread_id,
+            "namespace": self.namespace,
+        }
 
     def _to_state(self) -> Mapping[str, Any]:
         return {

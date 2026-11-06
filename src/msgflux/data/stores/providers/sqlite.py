@@ -56,6 +56,7 @@ from msgflux._private.sqlite import prepare_sqlite_file
 from msgflux.data.stores._manifest import (
     MANIFEST_PAGE_SIZE,
     append_manifest,
+    appended_orphan_head,
     build_manifest,
     iter_manifest_entries,
     iter_manifest_pages,
@@ -128,6 +129,8 @@ WHERE namespace=? AND thread_id=? AND segment_ref=?
 """
 
 _ITEM_BATCH_SIZE = 500
+_BASE_CACHE_SIZE = 1024
+_SYNCHRONOUS_MODES = frozenset({"OFF", "NORMAL", "FULL", "EXTRA"})
 
 _DELETE_RUN = "DELETE FROM checkpoints WHERE namespace=? AND thread_id=? AND run_id=?"
 
@@ -450,9 +453,16 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 )
             previous = self._deserialize(row[0])
             self._validate_checkpoint_envelope(previous.get("_checkpoint"))
-            old_base = snapshot_base(
-                self.routing_id, namespace, thread_id, run_id, previous
-            )
+            run_key = (namespace, thread_id, run_id)
+            cached = self._base_cache.get(run_key)
+            if cached is not None and cached[0] == row[0]:
+                # The base is a pure function of the exact stored text, so the
+                # one computed by the previous write can be reused safely.
+                old_base = cached[1]
+            else:
+                old_base = snapshot_base(
+                    self.routing_id, namespace, thread_id, run_id, previous
+                )
             if old_base != base:
                 raise CheckpointConflictError(
                     "Checkpoint base is stale or does not match the persisted snapshot"
@@ -472,24 +482,38 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             # A caller mutating its inputs cannot desynchronize the ack/payloads.
             new_items = control_state["messages"]["items"]
 
-            # Strictly validate every prior payload exactly once and retain only
-            # occurrence identities, never the previous timeline.
-            old_item_ids: List[str] = []
-            prior = self._commit_envelope_from_state(
-                namespace,
-                thread_id,
-                previous,
-                collect_item_ids=old_item_ids,
-            )
-            if len(old_item_ids) != old_base.item_count:
-                raise ValueError("Checkpoint manifest occurrence count is corrupted")
             incoming_ids = [item["item_id"] for item in new_items]
-            old_id_set = set(old_item_ids)
-            if len(old_id_set) != len(old_item_ids):
-                raise ValueError("Checkpoint archive contains duplicate item IDs")
-            for item_id in incoming_ids:
-                if item_id in old_id_set:
-                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+            old_item_ids: List[str] = []
+            if inline is not None:
+                # A bounded inline layout is validated in full; legacy entries
+                # may also need their deterministic occurrence ids.
+                prior = self._commit_envelope_from_state(
+                    namespace,
+                    thread_id,
+                    previous,
+                    collect_item_ids=old_item_ids,
+                )
+                if len(old_item_ids) != old_base.item_count:
+                    raise ValueError(
+                        "Checkpoint manifest occurrence count is corrupted"
+                    )
+                old_id_set = set(old_item_ids)
+                if len(old_id_set) != len(old_item_ids):
+                    raise ValueError("Checkpoint archive contains duplicate item IDs")
+                for item_id in incoming_ids:
+                    if item_id in old_id_set:
+                        raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+            else:
+                # O(delta) append: the base CAS (revision + envelope digest)
+                # proves the archive is the one the caller extends, so the
+                # immutable prefix is not re-read. Archive integrity and
+                # occurrence-id uniqueness are enforced when the full history
+                # is loaded and by full commits.
+                prior = (
+                    {"_checkpoint": previous["_checkpoint"]}
+                    if "_checkpoint" in previous
+                    else {}
+                )
 
             effective_head = (
                 head_item_id
@@ -503,6 +527,7 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 branch_id=branch_id,
                 head_item_id=effective_head,
                 extension_state=extension_state,
+                copy_state=False,
             )
             prepared_event = deepcopy(dict(event)) if event is not None else None
 
@@ -569,7 +594,11 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 self.routing_id, namespace, thread_id, run_id, normalized
             )
             payload = self._serialize(normalized)
-            gc_segments = replacement_needs_segment_gc(previous, normalized)
+            orphan_head = (
+                appended_orphan_head(manifest, normalized["_messages"]["manifest"])
+                if inline is None and new_entries
+                else None
+            )
             cur.execute(
                 _UPSERT_STATE,
                 (
@@ -582,10 +611,12 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                     now,
                 ),
             )
-            if gc_segments:
-                # Changed-head append on the same run: reuse the existing
-                # reachability sweep inside this atomic publication.
-                self._cleanup_orphaned_items(namespace, thread_id)
+            if orphan_head is not None:
+                # A pure append can orphan only the rewritten partial head
+                # page; no item payload becomes unreachable. Drop just that
+                # page when no other run still points at it, instead of a full
+                # reachability sweep over every run in the thread.
+                self._drop_unreferenced_head(cur, namespace, thread_id, orphan_head)
             if prepared_event is not None:
                 cur.execute(
                     _INSERT_EVENT,
@@ -617,10 +648,35 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
                 ),
             )
             self._conn.commit()
+            self._remember_base(run_key, payload, new_base)
             return CheckpointTail(new_base, old_base.item_count, committed)
         except BaseException as error:
             self._rollback_preserving_error(error)
             raise
+
+    def _remember_base(
+        self, run_key: tuple[str, str, str], text: str, base: CheckpointBase
+    ) -> None:
+        cache = self._base_cache
+        cache.pop(run_key, None)
+        cache[run_key] = (text, base)
+        while len(cache) > _BASE_CACHE_SIZE:
+            cache.pop(next(iter(cache)))
+
+    @staticmethod
+    def _drop_unreferenced_head(
+        cur: Any, namespace: str, thread_id: str, segment_ref: str
+    ) -> None:
+        referenced = cur.execute(
+            "SELECT 1 FROM checkpoints WHERE namespace=? AND thread_id=? "
+            "AND json_extract(state, '$._messages.manifest.head') = ? LIMIT 1",
+            (namespace, thread_id, segment_ref),
+        ).fetchone()
+        if referenced is None:
+            cur.execute(
+                _DELETE_MANIFEST_SEGMENTS_BY_REF.format(placeholders="?"),
+                (namespace, thread_id, segment_ref),
+            )
 
     @_locked
     def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
@@ -657,13 +713,34 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             self._rollback_preserving_error(error)
             raise
 
-    def __init__(self, path: str = ".msgflux/checkpoints.sqlite3") -> None:
+    def __init__(
+        self,
+        path: str = ".msgflux/checkpoints.sqlite3",
+        *,
+        synchronous: str = "NORMAL",
+    ) -> None:
+        """Open (or create) a WAL-mode SQLite checkpoint database.
+
+        ``synchronous`` is the SQLite ``PRAGMA synchronous`` level. The default
+        ``NORMAL`` keeps every committed checkpoint durable across process
+        crashes (WAL mode) and skips the per-commit fsync; use ``"FULL"`` to
+        also survive OS crashes or power loss at the cost of one fsync per
+        checkpoint.
+        """
+        mode = synchronous.upper() if isinstance(synchronous, str) else None
+        if mode not in _SYNCHRONOUS_MODES:
+            raise ValueError(
+                f"synchronous must be one of {sorted(_SYNCHRONOUS_MODES)}, "
+                f"given {synchronous!r}"
+            )
         self.path = path
         self._lock = RLock()
+        self._base_cache: Dict[tuple[str, str, str], tuple[str, CheckpointBase]] = {}
         Path(path).parent.mkdir(parents=True, exist_ok=True)
         prepare_sqlite_file(path)
         self._conn = sqlite3.connect(path, check_same_thread=False)
         self._conn.execute("PRAGMA journal_mode=WAL")
+        self._conn.execute(f"PRAGMA synchronous={mode}")
         self._conn.execute("PRAGMA foreign_keys=ON")
         self._conn.executescript(_CREATE_TABLES)
         self._conn.execute(
@@ -1548,6 +1625,23 @@ class SQLiteCheckpointStore(CheckpointStore, CheckpointStoreType):
             self._cleanup_orphaned_items(namespace, thread_id)
             self._conn.commit()
             return bool(deleted)
+        except BaseException as error:
+            self._rollback_preserving_error(error)
+            raise
+
+    @_locked
+    def collect_garbage(self, namespace: str, thread_id: str) -> None:
+        """Delete payloads and pages unreachable from any run in the thread.
+
+        Appends are O(delta) and only drop the partial head page they rewrite,
+        so a full reachability sweep is never paid per checkpoint. Garbage left
+        by crashes or external writes is reclaimed here, by full replacements,
+        ``delete_run`` and ``clear``. The sweep is atomic.
+        """
+        try:
+            self._conn.execute("BEGIN IMMEDIATE")
+            self._cleanup_orphaned_items(namespace, thread_id)
+            self._conn.commit()
         except BaseException as error:
             self._rollback_preserving_error(error)
             raise

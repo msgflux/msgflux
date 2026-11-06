@@ -250,6 +250,40 @@ moderation or alternative history should fork from the exact `item_id` being
 reviewed. The complete proposed operation and repeated-compaction rules live in
 [Compaction And Context Views](compaction-and-context-views.md).
 
+### Incremental saves cost O(new items)
+
+After the first full commit, every boundary save of a long run is an append
+of only the items added since the previous save. Neither the agent nor the
+store re-reads, re-hashes, or deep-copies the prefix, so the cost per save
+stays flat as the history grows. Dozens of subagents can therefore checkpoint
+on every tool loop without CPU or RSS growing with conversation length.
+
+This rests on one contract: **timeline items are immutable once appended.**
+
+- Each `ChatMessages` carries an in-process *epoch*. `append` and `extend`
+  keep it. Replacing the prefix (`messages[i] = {...}`, `insert`, assigning
+  `_items`, hydrating) starts a new epoch. Copies inherit the epoch.
+- A save is planned as an append only if the epoch is unchanged, the
+  previously saved boundary `item_id` is still in place, and the new suffix is
+  plain JSON. Otherwise the agent writes a full commit.
+- To edit an item, replace it with `messages[i] = {**messages[i], ...}`. That
+  keeps its `item_id` and forces a full commit. Mutating an item dict in place
+  is not detected and is unsupported.
+
+The full timeline is still validated whenever it is loaded (payload decoding
+and duplicate ids) and on every full commit.
+
+An append only removes the previous partial manifest page, and only when no
+other run of the thread references it. A full sweep for orphaned segments, for
+example after forks or replaced runs, is explicit:
+`store.collect_garbage(namespace, thread_id)`. Run it from maintenance, not on
+the hot path.
+
+`SQLiteCheckpointStore(path, synchronous="NORMAL")` uses WAL and
+`synchronous=NORMAL` by default. In that mode committed checkpoints survive a
+process crash without one fsync per save. Pass `synchronous="FULL"` when they
+must also survive an OS crash or power loss.
+
 ### Streaming boundary
 
 Providers emit arbitrary delta shapes, but checkpoints only accept coherent

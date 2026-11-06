@@ -49,19 +49,24 @@ def _corrupt_first_payload(store):
         items[next(iter(items))] = b"\xc1"
 
 
-def test_suffix_does_not_claim_cold_integrity_but_append_remains_strict(
-    checkpoint_store,
-):
+def test_segmented_append_defers_cold_integrity_until_full_load(checkpoint_store):
     store = checkpoint_store
     store.commit_state(NS, THREAD, RUN, _state(), expected_revision=0)
     before = store.load_tail(NS, THREAD, RUN, limit=3)
     _corrupt_first_payload(store)
     assert store.load_tail(NS, THREAD, RUN, limit=3) == before
-    with pytest.raises((ValueError, TypeError)):
-        store.append_state(NS, THREAD, RUN, [_new_item()], base=before.base)
-    assert store.load_tail(NS, THREAD, RUN, limit=3) == before
-    assert store.load_events(NS, THREAD, RUN) == []
-    with pytest.raises((ValueError, TypeError)):
+    acknowledgment = store.append_state(
+        NS,
+        THREAD,
+        RUN,
+        [_new_item()],
+        base=before.base,
+        event={"event_type": "integrity_deferred"},
+    )
+    assert acknowledgment.base.item_count == 301
+    assert acknowledgment.base.revision == 2
+    assert store.load_events(NS, THREAD, RUN) == [{"event_type": "integrity_deferred"}]
+    with pytest.raises((ValueError, TypeError, KeyError)):
         store.load_state(NS, THREAD, RUN)
 
 
@@ -85,7 +90,7 @@ def _crash_append(path, phase):
         def crash(*_args, **_kwargs):
             os._exit(77)
 
-        store._cleanup_orphaned_items = crash
+        store._drop_unreferenced_head = crash
     store.append_state(
         NS,
         THREAD,

@@ -1351,12 +1351,11 @@ class AgentConversationMixin:
         if checkpoint_store is None or not isinstance(messages, ChatMessages):
             return
 
-        turns = messages.turns
-        if not turns:
+        run_id = messages._last_turn_id()
+        if run_id is None:
             return
 
         thread_id = messages.thread_id or new_thread_id()
-        run_id = turns[-1]["turn_id"]
         namespace = self.get_module_name()
         event = {"event_type": "checkpoint", "status": status}
         run = None
@@ -1368,6 +1367,7 @@ class AgentConversationMixin:
                 expected_tracker, expected_revision = tracker_snapshot(run)
             # Bind the body to the revision observed before constructing it.
             # A newer commit during preparation must conflict, never be adopted.
+            epoch = messages._epoch
             state = self._build_checkpoint_state(
                 messages, status=status, task_result=task_result
             )
@@ -1383,6 +1383,7 @@ class AgentConversationMixin:
                     thread_id=thread_id,
                     run_id=run_id,
                     expected_revision=expected_revision,
+                    epoch=epoch,
                 )
                 if plan is not None:
                     tail = checkpoint_store.append_state(
@@ -1415,7 +1416,9 @@ class AgentConversationMixin:
                         head_item_id=run.head_item_id,
                     )
                     advance_revision(run, committed.revision)
-                    replacement = tracker_from_commit(committed, checkpoint_store)
+                    replacement = tracker_from_commit(
+                        committed, checkpoint_store, epoch=epoch
+                    )
                     commit_tracker(
                         run, expected_tracker, replacement, committed.revision
                     )
@@ -1440,12 +1443,11 @@ class AgentConversationMixin:
         if checkpoint_store is None or not isinstance(messages, ChatMessages):
             return
 
-        turns = messages.turns
-        if not turns:
+        run_id = messages._last_turn_id()
+        if run_id is None:
             return
 
         thread_id = messages.thread_id or new_thread_id()
-        run_id = turns[-1]["turn_id"]
         namespace = self.get_module_name()
         event = {"event_type": "checkpoint", "status": status}
         run = None
@@ -1457,6 +1459,7 @@ class AgentConversationMixin:
                 expected_tracker, expected_revision = tracker_snapshot(run)
             # Bind the body to the revision observed before constructing it.
             # A newer commit during preparation must conflict, never be adopted.
+            epoch = messages._epoch
             state = self._build_checkpoint_state(
                 messages, status=status, task_result=task_result
             )
@@ -1472,6 +1475,7 @@ class AgentConversationMixin:
                     thread_id=thread_id,
                     run_id=run_id,
                     expected_revision=expected_revision,
+                    epoch=epoch,
                 )
                 if plan is not None:
                     tail = await self._aappend_checkpoint_state(
@@ -1499,7 +1503,9 @@ class AgentConversationMixin:
                         event=event,
                     )
                     advance_revision(run, committed.revision)
-                    replacement = tracker_from_commit(committed, checkpoint_store)
+                    replacement = tracker_from_commit(
+                        committed, checkpoint_store, epoch=epoch
+                    )
                     commit_tracker(
                         run, expected_tracker, replacement, committed.revision
                     )
@@ -1650,9 +1656,7 @@ class AgentConversationMixin:
             if receipts:
                 run.set_extension(
                     "command_receipts",
-                    mark_tool_outputs_recorded(
-                        receipts, messages._to_state().get("items", [])
-                    ),
+                    mark_tool_outputs_recorded(receipts, messages._items),
                 )
                 runtime_state = run.durable_state()
         if workspace_reference is not None:
@@ -1673,7 +1677,7 @@ class AgentConversationMixin:
                 else None
             ),
             "status": status,
-            "messages": messages._to_state(),
+            "messages": messages._checkpoint_state(),
             "runtime": runtime_state,
             "scope": scope.to_dict(),
             "model_preference": context.get("model_preference"),

@@ -211,7 +211,8 @@ def test_prefix_mutation_falls_back_and_reseeds(checkpoint_store, asynchronous):
     assert len(manual.appends) == 1
     assert manual.revision() == seed_revision + 1
 
-    manual.messages[1]["content"] = "mutated prefix"
+    # Items are immutable once appended; prefix edits go through the API.
+    manual.messages[1] = {**manual.messages[1], "content": "mutated prefix"}
     manual.messages.append({"role": "user", "content": "next"})
     mutation_revision = manual.revision()
     manual.save()
@@ -238,11 +239,11 @@ def test_plan_rejects_scope_routing_and_revision_mismatch():
         },
     }
     committed = store.commit_state(NS, THREAD, RUN, state, expected_revision=0)
-    tracker = seed_tracker(committed.base, committed.state)
+    tracker = seed_tracker(committed.base, committed.state, epoch=1)
     run = AgentRun(namespace=NS, thread_id=THREAD, run_id=RUN, revision=1)
 
     def plan(**overrides):
-        values = {"namespace": NS, "thread_id": THREAD, "run_id": RUN}
+        values = {"namespace": NS, "thread_id": THREAD, "run_id": RUN, "epoch": 1}
         values.update(overrides)
         return plan_append(store, run, state, tracker, **values)
 
@@ -259,9 +260,11 @@ def test_plan_rejects_scope_routing_and_revision_mismatch():
             namespace=NS,
             thread_id=THREAD,
             run_id=RUN,
+            epoch=1,
         )
         is None
     )
+    assert plan(epoch=2) is None
     run.revision = 2
     assert plan() is None
 
@@ -351,8 +354,8 @@ def test_late_full_commit_seed_does_not_overwrite_newer_tracker(
     original = conversation_module.tracker_from_commit
     installed = []
 
-    def delayed(committed, store):
-        replacement = original(committed, store)
+    def delayed(committed, store, **kwargs):
+        replacement = original(committed, store, **kwargs)
         assert replacement is not None
         newer = replace(
             replacement,

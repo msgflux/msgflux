@@ -134,9 +134,9 @@ def test_typed_prefix_change_forces_full_checkpoint(checkpoint_store, monkeypatc
     store = checkpoint_store
     calls = _observe_append(store, monkeypatch)
     with _checkpoint_context(store) as (agent, messages, _run):
-        messages._items[1]["metadata"] = {"flag": 1}
+        messages[1] = {**messages[1], "metadata": {"flag": 1}}
         _save(agent, messages)
-        messages._items[1]["metadata"]["flag"] = True
+        messages[1] = {**messages[1], "metadata": {"flag": True}}
         messages.add_assistant("new")
         _save(agent, messages)
         assert calls == []
@@ -245,7 +245,7 @@ def test_optional_planning_never_iterates_opaque_legacy_mappings(
         if position == "container":
             messages.metadata["opaque"] = Opaque()
         else:
-            messages._items[1]["metadata"] = {"opaque": Opaque()}
+            messages[1] = {**messages[1], "metadata": {"opaque": Opaque()}}
         messages.add_assistant("new")
         from msgflux.data.stores import InMemoryCheckpointStore
 

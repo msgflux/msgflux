@@ -46,6 +46,7 @@ from msgflux._private.chat_items import (
 from msgflux.data.stores._manifest import (
     MANIFEST_PAGE_SIZE,
     append_manifest,
+    appended_orphan_head,
     build_manifest,
     iter_manifest_entries,
     iter_manifest_pages,
@@ -229,24 +230,38 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             # A caller mutating its inputs cannot desynchronize the ack/payloads.
             new_items = control_state["messages"]["items"]
 
-            # Strictly validate every prior payload exactly once and retain only
-            # occurrence identities, never the previous timeline.
-            old_item_ids: List[str] = []
-            prior = self._commit_envelope_from_state(
-                namespace,
-                thread_id,
-                previous,
-                collect_item_ids=old_item_ids,
-            )
-            if len(old_item_ids) != old_base.item_count:
-                raise ValueError("Checkpoint manifest occurrence count is corrupted")
             incoming_ids = [item["item_id"] for item in new_items]
-            old_id_set = set(old_item_ids)
-            if len(old_id_set) != len(old_item_ids):
-                raise ValueError("Checkpoint archive contains duplicate item IDs")
-            for item_id in incoming_ids:
-                if item_id in old_id_set:
-                    raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+            old_item_ids: List[str] = []
+            if inline is not None:
+                # A bounded inline layout is validated in full; legacy entries
+                # may also need their deterministic occurrence ids.
+                prior = self._commit_envelope_from_state(
+                    namespace,
+                    thread_id,
+                    previous,
+                    collect_item_ids=old_item_ids,
+                )
+                if len(old_item_ids) != old_base.item_count:
+                    raise ValueError(
+                        "Checkpoint manifest occurrence count is corrupted"
+                    )
+                old_id_set = set(old_item_ids)
+                if len(old_id_set) != len(old_item_ids):
+                    raise ValueError("Checkpoint archive contains duplicate item IDs")
+                for item_id in incoming_ids:
+                    if item_id in old_id_set:
+                        raise ValueError(f"Duplicate ChatMessages item_id `{item_id}`.")
+            else:
+                # O(delta) append: the base CAS (revision + envelope digest)
+                # proves the archive is the one the caller extends, so the
+                # immutable prefix is not re-read. Archive integrity and
+                # occurrence-id uniqueness are enforced when the full history
+                # is loaded and by full commits.
+                prior = (
+                    {"_checkpoint": previous["_checkpoint"]}
+                    if "_checkpoint" in previous
+                    else {}
+                )
 
             effective_head = (
                 head_item_id
@@ -260,6 +275,7 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 branch_id=branch_id,
                 head_item_id=effective_head,
                 extension_state=extension_state,
+                copy_state=False,
             )
             prepared_event = deepcopy(dict(event)) if event is not None else None
 
@@ -338,17 +354,11 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             new_base = snapshot_base(
                 self.routing_id, namespace, thread_id, run_id, normalized
             )
-            live_refs = None
-            if replacement_needs_segment_gc(previous, normalized):
-                # Preflight the post-append survivors, including staged pages,
-                # before publishing anything to the in-memory maps.
-                live_refs = self._replacement_gc_live_refs(
-                    namespace,
-                    thread_id,
-                    run_id,
-                    normalized,
-                    page_store,
-                )
+            orphan_head = (
+                appended_orphan_head(manifest, normalized["_messages"]["manifest"])
+                if inline is None and new_entries
+                else None
+            )
 
             self._publish_staged(namespace, thread_id, item_store, page_store)
             run["state"] = normalized
@@ -367,9 +377,24 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
             )
             if prepared_event is not None:
                 run["events"].append(prepared_event)
-            if live_refs is not None:
-                self._prune_live_refs(namespace, thread_id, live_refs)
+            if orphan_head is not None:
+                # A pure append can orphan only the rewritten partial head page.
+                self._drop_unreferenced_head(namespace, thread_id, orphan_head)
             return CheckpointTail(new_base, old_base.item_count, deepcopy(committed))
+
+    def _drop_unreferenced_head(
+        self, namespace: str, thread_id: str, segment_ref: str
+    ) -> None:
+        for other in self._data.get(namespace, {}).get(thread_id, {}).values():
+            messages = other.get("state", {}).get("_messages")
+            manifest = (
+                messages.get("manifest") if isinstance(messages, Mapping) else None
+            )
+            if isinstance(manifest, Mapping) and manifest.get("head") == segment_ref:
+                return
+        pages = self._manifest_pages.get(namespace, {}).get(thread_id)
+        if pages is not None:
+            pages.pop(segment_ref, None)
 
     def read_commits(self, namespace, thread_id, run_id, *, after=None, limit=100):
         with self._lock:
@@ -1110,6 +1135,15 @@ class InMemoryCheckpointStore(CheckpointStore, CheckpointStoreType):
                 removals.append((ns, sid, to_delete))
                 prunes.append((ns, sid, live_items, live_segments))
         return removals, prunes
+
+    def collect_garbage(self, namespace: str, thread_id: str) -> None:
+        """Delete payloads and pages unreachable from any run in the thread.
+
+        Appends are O(delta) and only drop the partial head page they rewrite;
+        full reachability sweeps run here, on replacements, deletes and clear.
+        """
+        with self._lock:
+            self._cleanup_orphaned_items(namespace, thread_id)
 
     def clear(
         self,
