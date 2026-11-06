@@ -450,7 +450,8 @@ result storage directly. Constructing it does not create directories:
 
 This explicit layout is host-side infrastructure, not a filesystem mount or
 permission grant to a model. For a standard Agent, prefer the managed setup
-above, which owns stores together under `agent_dir/threads/<thread_id>/`.
+above, which shares stores under `agent_dir/runtime/backend/` for new roots
+and preserves per-thread storage for existing legacy roots.
 
 ### Configure the Local Layout
 
@@ -498,6 +499,39 @@ the parent's thread and checkpoint store, with separate namespaces/run IDs;
 they do not require a separate SQLite file. An explicitly configured child store
 overrides inheritance. Durable background scheduling additionally needs a durable
 task store; this layout alone does not restore in-memory task records.
+
+### Checkpoint Durability and Group Commit
+
+```python
+from msgflux.data.stores import SQLiteCheckpointStore
+
+checkpoints = SQLiteCheckpointStore(
+    "./runtime-data/checkpoints.sqlite3",
+    synchronous="FULL",
+    group_commit=True,
+)
+try:
+    checkpoints.commit_state(
+        "main", "thd_example", "run_example", {"status": "running"},
+        expected_revision=0,
+    )
+finally:
+    checkpoints.close()
+```
+
+This opens a WAL database with the default `FULL` synchronization and group
+commit enabled. Concurrent appends share a writer and can commit in one
+transaction, while each append retains its own validation and conflict result.
+`close()` stops new submissions, drains accepted appends, and closes the
+connection. Finish active Agent runs before shutting down their stores.
+
+Choose `synchronous="NORMAL"` explicitly when process-crash recovery is enough
+and losing recent commits after an OS crash or power loss is acceptable. Set
+`group_commit=False` to publish appends directly in the calling thread.
+Incremental appends reuse stored payloads, but validate the existing archive;
+their validation cost still grows with history length. Agent checkpoint
+selection detects edits to existing mutable messages, including nested edits,
+and uses a full commit when the saved prefix changed.
 
 ### Direct SQLite Adapter Files
 

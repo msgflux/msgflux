@@ -250,28 +250,26 @@ moderation or alternative history should fork from the exact `item_id` being
 reviewed. The complete proposed operation and repeated-compaction rules live in
 [Compaction And Context Views](compaction-and-context-views.md).
 
-### Incremental saves cost O(new items)
+### Incremental saves and validation
 
-After the first full commit, every boundary save of a long run is an append
-of only the items added since the previous save. Neither the agent nor the
-store re-reads, re-hashes, or deep-copies the prefix, so the cost per save
-stays flat as the history grows. Dozens of subagents can therefore checkpoint
-on every tool loop without CPU or RSS growing with conversation length.
+After the first full commit, eligible boundary saves append only the new
+items and updated control metadata. Existing payloads and complete manifest
+pages are reused instead of rewritten.
 
-This rests on one contract: **timeline items are immutable once appended.**
+`ChatMessages` exposes mutable items. To preserve edits, the agent builds an
+isolated checkpoint snapshot and compares a typed digest of the persisted
+prefix before choosing an append. A changed prefix falls back to a full
+commit, including changes made in place to nested values. The tracker keeps
+only a digest, item count, and commit identity, without retaining another
+conversation history.
 
-- Each `ChatMessages` carries an in-process *epoch*. `append` and `extend`
-  keep it. Replacing the prefix (`messages[i] = {...}`, `insert`, assigning
-  `_items`, hydrating) starts a new epoch. Copies inherit the epoch.
-- A save is planned as an append only if the epoch is unchanged, the
-  previously saved boundary `item_id` is still in place, and the new suffix is
-  plain JSON. Otherwise the agent writes a full commit.
-- To edit an item, replace it with `messages[i] = {**messages[i], ...}`. That
-  keeps its `item_id` and forces a full commit. Mutating an item dict in place
-  is not detected and is unsupported.
+Stores validate the existing archive and occurrence-id uniqueness before
+publishing an append. Corrupted payloads or duplicate ids fail without
+advancing the revision. A tail read remains a bounded observation and does
+not prove the integrity of older items outside that window.
 
-The full timeline is still validated whenever it is loaded (payload decoding
-and duplicate ids) and on every full commit.
+These checks cost work proportional to the existing history. Incremental
+writes reduce rewritten data; they do not promise constant-time saves.
 
 An append only removes the previous partial manifest page, and only when no
 other run of the thread references it. A full sweep for orphaned segments, for
@@ -279,16 +277,18 @@ example after forks or replaced runs, is explicit:
 `store.collect_garbage(namespace, thread_id)`. Run it from maintenance, not on
 the hot path.
 
-`SQLiteCheckpointStore(path, synchronous="NORMAL")` uses WAL and
-`synchronous=NORMAL` by default. In that mode committed checkpoints survive a
-process crash without one fsync per save. Pass `synchronous="FULL"` when they
-must also survive an OS crash or power loss.
+`SQLiteCheckpointStore(path)` uses WAL and `synchronous="FULL"` by default,
+preserving per-commit synchronization. Explicitly pass `synchronous="NORMAL"`
+to skip per-commit fsync while retaining WAL recovery across process crashes.
+With `NORMAL`, recent commits may be lost after an OS crash or power loss.
 
 With `group_commit=True` (the default), concurrent appends are encoded in the
 caller's thread and queued to one writer thread per store. The writer
 publishes everything queued in a single transaction, isolating each append
 in its own savepoint: a stale or invalid append fails alone, while a failed
-commit fails the whole batch. `aappend_state` awaits that writer instead of
+commit fails the whole batch. Closing the store first stops new submissions,
+drains accepted appends without holding the connection lock, and then closes
+the connection. `aappend_state` awaits that writer instead of
 holding an executor thread, so dozens of subagents do not exhaust the default
 thread pool while they wait for the connection.
 
