@@ -14,6 +14,7 @@ from msgflux.models.chat_capabilities import (
 )
 from msgflux.models.http_transport import HTTPTransport
 from msgflux.models.model_credentials import (
+    BearerTokenCredentialResolver,
     ModelCredentialResolver,
     ResolvedModelCredentials,
 )
@@ -33,12 +34,12 @@ from msgflux.models.reasoning import (
 from msgflux.models.registry import register_model
 
 
-class OllamaCredentialResolver(ModelCredentialResolver):
+class OllamaCredentialResolver(BearerTokenCredentialResolver):
     """Preserve native optional auth and compatible-mode bearer auth."""
 
     def resolve(self, owner: Any) -> ResolvedModelCredentials:
         if getattr(owner, "api_mode", None) == "ollama_chat":
-            key = getenv("OLLAMA_API_KEY")
+            key = getenv(owner.api_key_env)
             headers = {"Authorization": f"Bearer {key}"} if key else {}
         else:
             headers = {"Authorization": f"Bearer {owner._get_api_key()}"}
@@ -63,7 +64,10 @@ class _BaseOllama(ProviderEnvBase):
         Returns:
             ModelProfile if found, None otherwise
         """
-        return get_model_profile(self.model_id, provider_id=self.provider)
+        return get_model_profile(
+            self.model_id,
+            provider_id=getattr(self, "profile_provider", None) or self.provider,
+        )
 
 
 class OllamaChatAPI(OpenAIChatCompletionsAPI):
@@ -109,7 +113,7 @@ class OllamaChatCompletion(_BaseOllama, OpenAICompatibleChatCompletion):
         return super()._build_generation_params(messages, *args, **kwargs)
 
     def _get_base_url(self):
-        base_url = getenv("OLLAMA_BASE_URL", "http://localhost:11434")
+        base_url = super()._get_base_url()
         if self.api_mode == "chat_completions":
             return (
                 base_url

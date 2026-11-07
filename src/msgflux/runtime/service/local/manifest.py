@@ -18,6 +18,7 @@ from msgflux.coding.config import (
     validate_coding_catalog,
     validate_model_path,
 )
+from msgflux.models.catalog import ProviderCatalog, ProviderConfig
 from msgflux.nn.extensions.discovery import AgentExtensionCatalog, ExtensionConfig
 from msgflux.runtime.service.http.config import ServiceHTTPConfig
 from msgflux.runtime.service.store import validate_identifier
@@ -29,6 +30,7 @@ __all__ = [
     "initialize_service_config",
     "load_factory",
     "load_extension_catalog",
+    "load_provider_catalog",
     "load_service_manifest",
     "validate_factory_path",
 ]
@@ -91,6 +93,7 @@ class _ServiceConfig(msgspec.Struct, forbid_unknown_fields=True):
     defaults: _DefaultsConfig
     agents: dict[str, _AgentConfig]
     extensions: dict[str, ExtensionConfig] = msgspec.field(default_factory=dict)
+    providers: dict[str, ProviderConfig] = msgspec.field(default_factory=dict)
     http: ServiceHTTPConfig = msgspec.field(default_factory=ServiceHTTPConfig)
 
 
@@ -101,6 +104,7 @@ class ServiceManifest(msgspec.Struct, frozen=True):
     agents: dict[str, _AgentConfig]
     coding_catalog: CodingAgentCatalog
     extension_catalog: AgentExtensionCatalog
+    provider_catalog: ProviderCatalog = msgspec.field(default_factory=ProviderCatalog)
     http: ServiceHTTPConfig = msgspec.field(default_factory=ServiceHTTPConfig)
 
 
@@ -218,6 +222,18 @@ def load_extension_catalog(path: Path) -> AgentExtensionCatalog:
     return AgentExtensionCatalog(extensions)
 
 
+def load_provider_catalog(path: Path) -> ProviderCatalog:
+    """Read trusted provider declarations without requiring an agent or model."""
+    manifest_path, _, document = _read_config_document(path)
+    try:
+        providers = msgspec.convert(
+            document.get("providers", {}), type=dict[str, ProviderConfig], strict=True
+        )
+        return ProviderCatalog(providers)
+    except (msgspec.ValidationError, ValueError, TypeError) as exc:
+        raise ValueError(f"Invalid service config {manifest_path}: {exc}") from exc
+
+
 def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceManifest:
     """Parse and resolve the config without importing user factories."""
     manifest_path, raw, document = _read_config_document(path, cwd=cwd)
@@ -241,6 +257,7 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
     if config.defaults.agent not in config.agents:
         raise ValueError("defaults.agent must reference a declared agent")
 
+    provider_catalog = ProviderCatalog(config.providers)
     extension_catalog = AgentExtensionCatalog(config.extensions)
     for agent_id, agent in config.agents.items():
         validate_identifier(agent_id, "agent_id")
@@ -250,7 +267,7 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
         for name in agent.extensions:
             extension_catalog.resolve(name)
     coding_options = _resolve_coding_options(
-        config, manifest_path.parent, manifest_path
+        config, manifest_path.parent, manifest_path, provider_catalog
     )
     coding_catalog = CodingAgentCatalog(agents=coding_options)
     validate_coding_catalog(coding_catalog)
@@ -262,12 +279,16 @@ def load_service_manifest(path: Path, *, cwd: Path | None = None) -> ServiceMani
         agents=config.agents,
         coding_catalog=coding_catalog,
         extension_catalog=extension_catalog,
+        provider_catalog=provider_catalog,
         http=config.http,
     )
 
 
 def _resolve_coding_options(
-    config: _ServiceConfig, config_dir: Path, config_path: Path
+    config: _ServiceConfig,
+    config_dir: Path,
+    config_path: Path,
+    provider_catalog: ProviderCatalog,
 ) -> dict[str, CodingAgentOptions]:
     options_by_id = {}
     for agent_id, agent in config.agents.items():
@@ -300,6 +321,7 @@ def _resolve_coding_options(
                 else None
             ),
             preset=agent.preset,
+            provider_catalog=provider_catalog,
             description=agent.description,
             prompt_file=prompt_file,
             subagents=tuple(agent.subagents),

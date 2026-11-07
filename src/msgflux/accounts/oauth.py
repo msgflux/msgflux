@@ -47,13 +47,30 @@ _AUTH_OVERRIDES = (
 async def login(
     accounts: Any, provider: str, *, account_name: str = "default"
 ) -> OAuthCredential:
-    """Run Codex CLI login in an isolated home and publish its OAuth grant."""
-    if provider != "openai-codex":
+    """Run the provider's OAuth login and publish its grant under its own
+    provider/account namespace (never the base provider's).
+    """
+    from msgflux.accounts.providers import get_provider_auth  # noqa: PLC0415
+
+    spec = get_provider_auth(
+        provider, provider_catalog=getattr(accounts, "provider_catalog", None)
+    )
+    if spec.method != "oauth":
         raise ValueError(f"OAuth login is not supported for provider {provider!r}")
-    return await login_codex(accounts, account_name)
+    if spec.oauth_adapter != "codex":
+        raise ValueError(
+            f"OAuth login is not implemented for provider {provider!r}; "
+            "use a provider with a supported account login flow"
+        )
+    return await login_codex(accounts, account_name, provider=spec.provider)
 
 
-async def login_codex(accounts: Any, account_name: str = "default") -> OAuthCredential:
+async def login_codex(
+    accounts: Any,
+    account_name: str = "default",
+    *,
+    provider: str = "openai-codex",
+) -> OAuthCredential:
     """Authenticate an account through Codex CLI without touching user Codex data."""
     executable = shutil.which("codex")
     if executable is None:
@@ -121,6 +138,7 @@ async def login_codex(accounts: Any, account_name: str = "default") -> OAuthCred
                 accounts,
                 payload,
                 account_name,
+                provider,
             )
         )
         try:
@@ -132,9 +150,11 @@ async def login_codex(accounts: Any, account_name: str = "default") -> OAuthCred
         shutil.rmtree(staging, ignore_errors=True)
 
 
-def _publish_login(accounts, payload: dict, account_name: str):
-    with accounts.locked("openai-codex", account_name=account_name):
-        return accounts.set_oauth("openai-codex", payload, account_name=account_name)
+def _publish_login(
+    accounts, payload: dict, account_name: str, provider: str = "openai-codex"
+):
+    with accounts.locked(provider, account_name=account_name):
+        return accounts.set_oauth(provider, payload, account_name=account_name)
 
 
 def resolve_codex_credentials(
@@ -142,10 +162,16 @@ def resolve_codex_credentials(
     account_name: str = "default",
     *,
     now: float | None = None,
+    provider: str = "openai-codex",
 ) -> CodexOAuthCredentials:
-    """Resolve a managed Codex grant, refreshing and persisting rotation safely."""
-    with accounts.locked("openai-codex", account_name=account_name):
-        payload = _oauth_payload(accounts, account_name)
+    """Resolve a managed Codex grant, refreshing and persisting rotation safely.
+
+    ``provider`` selects the credential namespace; OAuth aliases of the Codex
+    base pass their own provider so grants are never shared with (or read
+    from) the base provider's account.
+    """
+    with accounts.locked(provider, account_name=account_name):
+        payload = _oauth_payload(accounts, account_name, provider)
         current = time.time() if now is None else now
         credential = _validate_refreshable_payload(payload)
         if (
@@ -154,7 +180,7 @@ def resolve_codex_credentials(
         ):
             return credential
         rotated = _refresh(payload)
-        accounts.set_oauth("openai-codex", rotated, account_name=account_name)
+        accounts.set_oauth(provider, rotated, account_name=account_name)
         return _validate_refreshable_payload(rotated)
 
 
@@ -163,10 +189,17 @@ async def aresolve_codex_credentials(
     account_name: str = "default",
     *,
     now: float | None = None,
+    provider: str = "openai-codex",
 ) -> CodexOAuthCredentials:
     """Run file locking and HTTP refresh off-loop; finish commit if cancelled."""
     worker = asyncio.create_task(
-        asyncio.to_thread(resolve_codex_credentials, accounts, account_name, now=now)
+        asyncio.to_thread(
+            resolve_codex_credentials,
+            accounts,
+            account_name,
+            now=now,
+            provider=provider,
+        )
     )
     try:
         return await asyncio.shield(worker)
@@ -179,8 +212,10 @@ async def aresolve_codex_credentials(
         raise
 
 
-def _oauth_payload(accounts: Any, account_name: str) -> dict[str, Any]:
-    record = accounts.get_oauth("openai-codex", account_name=account_name)
+def _oauth_payload(
+    accounts: Any, account_name: str, provider: str = "openai-codex"
+) -> dict[str, Any]:
+    record = accounts.get_oauth(provider, account_name=account_name)
     payload = getattr(record, "payload", None)
     if not isinstance(payload, dict):
         raise ValueError(

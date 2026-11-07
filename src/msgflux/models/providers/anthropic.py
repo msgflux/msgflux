@@ -17,8 +17,7 @@ from msgflux.models.chat_capabilities import (
 )
 from msgflux.models.http_transport import HTTPTransport
 from msgflux.models.model_credentials import (
-    ModelCredentialResolver,
-    ResolvedModelCredentials,
+    APIKeyCredentialResolver,
 )
 from msgflux.models.openai_compatible import OpenAICompatibleChatCompletion
 from msgflux.models.provider_env import ProviderEnvBase
@@ -60,11 +59,11 @@ class _BaseAnthropic(ProviderEnvBase):
     base_url: str = "https://api.anthropic.com"
 
 
-class AnthropicCredentialResolver(ModelCredentialResolver):
+class AnthropicCredentialResolver(APIKeyCredentialResolver):
     """Resolve Anthropic's API key using its native header."""
 
-    def resolve(self, owner: Any) -> ResolvedModelCredentials:
-        return ResolvedModelCredentials(headers={"x-api-key": owner._get_api_key()})
+    header_name = "x-api-key"
+    value_prefix = ""
 
 
 class AnthropicMessagesAPI(ChatAPIAdapter):

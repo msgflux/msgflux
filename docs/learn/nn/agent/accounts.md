@@ -2,7 +2,9 @@
 
 Use `Accounts` to keep provider credentials in named local bundles. Each
 account selects one credential for each provider. The default account is named
-`default`; other names can represent distinct users or environments.
+`default`; other names can represent distinct users or environments. Dynamic
+provider aliases defined in a provider catalog work the same way, under their
+own namespace — see [Dynamic Chat Providers](../../models/dynamic-providers.md).
 
 ## Store an API Key
 

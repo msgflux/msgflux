@@ -68,12 +68,27 @@ class _StoredAPIKey(msgspec.Struct, frozen=True):
 class Accounts:
     """Read and write account bundles under a private root directory."""
 
-    def __init__(self, root: str | Path | None = None):
+    def __init__(
+        self,
+        root: str | Path | None = None,
+        *,
+        provider_catalog=None,
+    ):
         self.root = (
             Path(root).expanduser()
             if root is not None
             else Path.home() / ".msgflux" / "accounts"
         )
+        # Catalog used for provider auth lookups; when None, the active
+        # catalog (if any) is consulted at lookup time. Stored credentials
+        # are always namespaced by the requested provider, never its base.
+        self.provider_catalog = provider_catalog
+
+    def _auth(self, provider: str):
+        return get_provider_auth(provider, provider_catalog=self.provider_catalog)
+
+    def _api_key_env(self, provider: str) -> str:
+        return get_api_key_env(provider, provider_catalog=self.provider_catalog)
 
     @staticmethod
     def _validate_name(value: str, what: str) -> str:
@@ -102,10 +117,10 @@ class Accounts:
         os.chmod(path, 0o700)
         return path
 
-    @staticmethod
-    def _provider_name(provider: str) -> str:
+    def _provider_name(self, provider: str) -> str:
         try:
-            return get_provider_auth(provider).provider
+            resolved = self._auth(provider).provider
+            return self._validate_name(resolved, "provider")
         except ValueError as exc:
             raise ProviderNotFoundError(str(exc)) from exc
 
@@ -121,9 +136,7 @@ class Accounts:
             raise AccountError("Provider path must be a real directory")
         os.chmod(directory, 0o700)
         filename = (
-            "auth.json"
-            if get_provider_auth(provider).method == "oauth"
-            else "credential.json"
+            "auth.json" if self._auth(provider).method == "oauth" else "credential.json"
         )
         return directory / filename
 
@@ -141,9 +154,7 @@ class Accounts:
         if provider_dir.is_symlink():
             raise AccountError("Provider path must be a real directory")
         filename = (
-            "auth.json"
-            if get_provider_auth(provider).method == "oauth"
-            else "credential.json"
+            "auth.json" if self._auth(provider).method == "oauth" else "credential.json"
         )
         return provider_dir / filename
 
@@ -185,7 +196,7 @@ class Accounts:
         self, provider: str, value: str, account_name: str = "default"
     ) -> AccountCredential:
         provider = self._provider_name(provider)
-        env_name = get_api_key_env(provider)
+        env_name = self._api_key_env(provider)
         if not isinstance(value, str) or not value.strip():
             raise AccountError("API key must be a non-empty string")
         credential = AccountCredential(provider, "api_key", env_name, value)
@@ -204,7 +215,7 @@ class Accounts:
         self, provider: str, payload: dict[str, Any], account_name: str = "default"
     ) -> OAuthCredential:
         provider = self._provider_name(provider)
-        if get_provider_auth(provider).method != "oauth":
+        if self._auth(provider).method != "oauth":
             raise AccountError(f"Provider {provider!r} does not use OAuth")
         try:
             payload = msgspec.convert(payload, type=dict[str, Any])
@@ -231,7 +242,7 @@ class Accounts:
             raw_data = json.loads(path.read_text(encoding="utf-8"))
         except (OSError, ValueError) as exc:
             raise AccountError(f"Invalid credential record for {provider!r}") from exc
-        if get_provider_auth(provider).method == "api_key":
+        if self._auth(provider).method == "api_key":
             try:
                 data = msgspec.convert(raw_data, type=_StoredAPIKey)
             except (msgspec.ValidationError, TypeError) as exc:
@@ -239,7 +250,7 @@ class Accounts:
             if (
                 data.provider != provider
                 or data.kind != "api_key"
-                or data.env_name != get_api_key_env(provider)
+                or data.env_name != self._api_key_env(provider)
                 or not data.value.strip()
             ):
                 raise AccountError(f"Invalid API key record for {provider!r}")
@@ -301,7 +312,7 @@ class Accounts:
             if provider_dir.is_symlink() or not provider_dir.is_dir():
                 continue
             try:
-                method = get_provider_auth(provider_dir.name).method
+                method = self._auth(provider_dir.name).method
             except ValueError:
                 continue
             path = provider_dir / (
