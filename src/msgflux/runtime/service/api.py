@@ -102,6 +102,8 @@ class AgentSession:
         scope_factory: Callable[[ExecutionScope], ExecutionScope] | None = None,
         approval_reviewer: str | None = None,
         on_close: Callable[[], Any] | None = None,
+        extension_catalog=None,
+        extension_import_root: str | Path | None = None,
     ) -> None:
         managed = getattr(agent, "agent_dir", None) is not None
         if managed and any(
@@ -110,6 +112,10 @@ class AgentSession:
             raise ValueError(
                 "agent_dir cannot be combined with explicit session stores"
             )
+        self.extension_catalog = extension_catalog
+        self.extension_import_root = extension_import_root
+        self._extension_revision = 0
+        self._extension_available = {}
         self._managed = managed
         self._thread_id = None
         self._host_on_close = on_close
@@ -260,6 +266,7 @@ class AgentService:
         self._producer_tasks: dict[asyncio.Task, _Worker] = {}
         self._workers: dict[tuple[str, str], _Worker] = {}
         self._maintenance_tasks: dict[str, asyncio.Task] = {}
+        self._extension_updates: dict[str, asyncio.Task] = {}
         self._watchers = set()
         self._lock = asyncio.Lock()
         self._closed = False
@@ -449,9 +456,12 @@ class AgentService:
         if self._agent_is_loaded(session):
             raise ServiceConflictError("Factories must isolate Agents by thread")
 
-    async def _create_session(self, thread_id: str) -> AgentSession:
+    async def _create_session(
+        self, thread_id: str, *, extension_selection=None, strict_extensions=True
+    ) -> AgentSession:
         self._require_open()
         thread = self.store.thread(thread_id)
+        selection = extension_selection or self.store.extension_selection(thread_id)
         factory = self._factories[thread.agent_id]
         session = factory(thread)
         if inspect.isawaitable(session):
@@ -461,6 +471,16 @@ class AgentService:
         if self._agent_is_loaded(session):
             raise ServiceConflictError("Factories must isolate Agents by thread")
         try:
+            from msgflux.runtime.service.extension_controls import (  # noqa: PLC0415
+                agent_tree,
+                apply_selection,
+            )
+
+            session._extension_available = {
+                path: tuple(agent.extensions)
+                for path, _parent, agent in agent_tree(session.agent)
+            }
+            await apply_selection(session, selection, strict=strict_extensions)
             scope = session.scope(thread_id)
             stored = self.store.workspace_policy(thread_id)
             selected = stored or initial_policy(thread_id, scope.workspace)
@@ -494,9 +514,23 @@ class AgentService:
         """Pin trusted live dependencies until the returned lease is closed."""
         self._require_open()
         self.store.thread(thread_id)
-        lease = await self._cache.acquire(thread_id)
+        for _attempt in range(3):
+            if thread_id in self._extension_updates:
+                raise ServiceBusyError("The thread extensions are being updated")
+            lease = await self._cache.acquire(thread_id)
+            try:
+                session = lease.session
+                current_revision = self.store.extension_revision(thread_id)
+            except BaseException:
+                await lease.aclose()
+                raise
+            if session._extension_revision == current_revision:
+                break
+            await lease.aclose()
+            await self._cache.release(thread_id)
+        else:
+            raise ServiceConflictError("The extension configuration keeps changing")
         try:
-            session = lease.session
             state = session.workspace_policy_state
             saved = (
                 self.store.workspace_policy(thread_id) if state is not None else None
@@ -550,6 +584,40 @@ class AgentService:
         self._require_open()
         self.store.thread(thread_id)
         return await self._cache.release(thread_id)
+
+    async def thread_extensions(self, thread_id: str):
+        """Inspect the actual composed tree, not Agent display-name guesses."""
+        from msgflux.runtime.service.extension_controls import (  # noqa: PLC0415
+            inventory,
+        )
+
+        async with self._use_session(thread_id) as session:
+            return inventory(self, thread_id, session)
+
+    async def update_extensions(
+        self,
+        thread_id: str,
+        *,
+        scope=None,
+        agent_ids=None,
+        enable=(),
+        disable=(),
+        expected_revision=None,
+    ):
+        """Reconstruct a stopped session with registered extension selections."""
+        from msgflux.runtime.service.extension_controls import (  # noqa: PLC0415
+            update_extensions,
+        )
+
+        return await update_extensions(
+            self,
+            thread_id,
+            scope=scope,
+            agent_ids=agent_ids,
+            enable=enable,
+            disable=disable,
+            expected_revision=expected_revision,
+        )
 
     async def workspace_policy(self, thread_id: str) -> WorkspacePolicy:
         """Read this thread's effective policy without creating default rows."""
@@ -617,7 +685,9 @@ class AgentService:
             return None, None
         record, error = ready_approval_resume(self, session, thread_id)
         if record is not None:
-            record = self.store.prepare_resume(record)
+            record = self.store.prepare_resume(
+                record, extension_revision=session._extension_revision
+            )
             self._schedule(record, session)
         return record, error
 
@@ -899,12 +969,15 @@ class AgentService:
             session.namespace,
             account_name=account_name or self.default_account,
             check_account=account_name is not None,
+            extension_revision=session._extension_revision,
         )
         if record.receipt.status == "accepted":
             self._schedule(record, session)
         return record.receipt
 
     def _require_no_maintenance(self, thread_id):
+        if thread_id in self._extension_updates:
+            raise ServiceBusyError("The thread extensions are being updated")
         if thread_id in self._maintenance_tasks:
             raise ServiceBusyError("The thread is being compacted")
 
@@ -1440,7 +1513,9 @@ class AgentService:
                 if record.owner_id != self._owner_id and not worker_stopped:
                     record = self._recover_approval_owner(session, record)
                 state = self._recovery_checkpoint(session, record.receipt)
-                record = self.store.prepare_resume(record)
+                record = self.store.prepare_resume(
+                    record, extension_revision=session._extension_revision
+                )
                 if state.get("status") in {"completed", "interrupted"}:
                     if not self.store.claim(record, self._owner_id):
                         raise ServiceConflictError("Another worker claimed recovery")
@@ -1543,11 +1618,15 @@ class AgentService:
         await asyncio.shield(task)
 
     async def _shutdown(self) -> None:
-        maintenance = tuple(self._maintenance_tasks.values())
+        maintenance = (
+            *self._maintenance_tasks.values(),
+            *self._extension_updates.values(),
+        )
         for task in maintenance:
             task.cancel()
         if maintenance:
             await asyncio.gather(*maintenance, return_exceptions=True)
+        self._extension_updates.clear()
         workers = tuple(self._producer_tasks.values())
         for worker in workers:
             worker.scope.abort_signal.abort("AgentService shutdown")

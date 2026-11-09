@@ -7,7 +7,7 @@ from collections.abc import AsyncIterator, Callable
 from contextlib import asynccontextmanager
 from uuid import uuid4
 
-from litestar import Litestar, Request, Response, get, post, put
+from litestar import Litestar, Request, Response, get, patch, post, put
 from litestar.background_tasks import BackgroundTask
 from litestar.config.cors import CORSConfig
 from litestar.exceptions import HTTPException, ValidationException
@@ -30,6 +30,7 @@ from msgflux.runtime.service.http.records import (
     ApprovalReviewsResponse,
     CompactRequest,
     ErrorResponse,
+    ExtensionUpdateRequest,
     HealthRecord,
     InterruptResponse,
     OpenThreadRequest,
@@ -237,6 +238,25 @@ def create_service_app(  # noqa: C901
         )
         return _response(policy)
 
+    @get("/v1/threads/{thread_id:str}/extensions")
+    async def thread_extensions(thread_id: PathValue) -> Response:
+        return _response(await service.thread_extensions(thread_id))
+
+    @patch("/v1/threads/{thread_id:str}/extensions")
+    async def update_extensions(
+        thread_id: PathValue, data: ExtensionUpdateRequest
+    ) -> Response:
+        return _response(
+            await service.update_extensions(
+                thread_id,
+                scope=data.scope,
+                agent_ids=data.agent_ids,
+                enable=data.enable,
+                disable=data.disable,
+                expected_revision=data.expected_revision,
+            )
+        )
+
     @get("/v1/threads/{thread_id:str}/snapshot")
     async def get_snapshot(thread_id: PathValue) -> Response:
         return _response(await service.snapshot(thread_id), encoder=encode_snapshot)
@@ -417,6 +437,8 @@ def create_service_app(  # noqa: C901
         open_thread,
         get_workspace_policy,
         update_workspace_policy,
+        thread_extensions,
+        update_extensions,
         get_snapshot,
         list_runs,
         run_activity,
@@ -444,7 +466,7 @@ def create_service_app(  # noqa: C901
         cors_config=(
             CORSConfig(
                 allow_origins=list(http_config.cors_allow_origins),
-                allow_methods=["GET", "POST", "PUT", "OPTIONS"],
+                allow_methods=["GET", "POST", "PUT", "PATCH", "OPTIONS"],
                 allow_headers=[
                     "Authorization",
                     "Content-Type",
