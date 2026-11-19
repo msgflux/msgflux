@@ -46,6 +46,7 @@ from msgflux.nn.modules.tool.runtime import (
 from msgflux.nn.modules.tool.runtime import (
     ToolDefinition as RuntimeToolDefinition,
 )
+from msgflux.nn.parameter import Parameter
 from msgflux.runtime.agent_inbox import (
     AgentInbox,
     InMemoryAgentInboxStore,
@@ -242,8 +243,7 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             return definition
         metadata = definition.metadata
         if metadata.get("declared_usage_guidance") is not None or (
-            "declared_usage_guidance" not in metadata
-            and definition.usage_guidance is not None
+            definition.usage_guidance is not None
             and not isinstance(
                 getattr(definition.executor, "impl", definition.executor), ToolBucket
             )
@@ -573,7 +573,7 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
         if not isinstance(executor, Tool):
             raise RuntimeError(f"Tool `{definition.name}` has no compiled executor")
         bucket.validate_capture(definition)
-        ref = self.registry.add(definition)
+        ref = self.registry.add(definition, captured=True)
         self.captured_executors[definition.name] = executor
 
         # Buckets retain only stable references; the library owns the executor.
@@ -608,6 +608,7 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             self.captured_executors.pop(tool_name)
             self.library[tool_name] = executor
             raise
+        self.registry.capture(tool_name)
 
     def _remove_from_bucket(self, bucket_name: str, tool_name: str) -> Tool:
         bucket_tool = self.library[bucket_name]
@@ -623,7 +624,7 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             try:
                 self._sync_bucket_presentation(bucket_name, bucket)
             except Exception:
-                self.registry.add(definition)
+                self.registry.add(definition, captured=True)
                 self.captured_executors[tool_name] = executor
                 bucket.add(ref)
                 self._sync_bucket_presentation(bucket_name, bucket)
@@ -871,6 +872,25 @@ class ToolLibrary(ToolLibraryExecutionMixin, Module, metaclass=AutoParams):
             None,
             require_thread=False,
         ).annotations
+
+    def text_parameter(self, name: str, field: str) -> Parameter:
+        """Return local tool text by its logical tool and field names."""
+        if name not in self.library:
+            raise ValueError(f"No directly registered local tool named {name!r}")
+        return self.registry.text_parameter(name, field)
+
+    def description_parameter(self, name: str) -> Parameter:
+        """Text sent to the model in the tool schema."""
+        return self.text_parameter(name, "description")
+
+    def usage_guidance_parameter(self, name: str) -> Parameter:
+        """Text injected into the runtime prompt when the tool is available."""
+        return self.text_parameter(name, "usage_guidance")
+
+    def named_tool_text_parameters(self):
+        for name, field, parameter in self.registry.named_text_parameters():
+            if name in self.library:
+                yield name, field, parameter
 
     def get_tool_definition(self, tool_name: str) -> RuntimeToolDefinition:
         """Return the canonical definition for a public or bucket-captured tool."""

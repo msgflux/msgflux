@@ -15,8 +15,13 @@ import msgspec
 
 from msgflux.core.examples import Example
 from msgflux.nn import Agent, Module
+from msgflux.nn.modules.tool import ToolLibrary
+from msgflux.nn.modules.tool.registry import ToolRegistry
 from msgflux.optim.evaluation import Score, normalize_score, predict
-from msgflux.optim.tool_target import get_tool_description, set_tool_description
+from msgflux.optim.tool_target import (
+    get_tool_text_parameter,
+    set_tool_text,
+)
 
 
 @dataclass(frozen=True)
@@ -39,30 +44,67 @@ class ProgramResult:
     metric_calls: int
 
 
-class TextTarget(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
-    """Address one Agent instruction or local tool in a registered module tree."""
+class TextTarget(
+    msgspec.Struct, frozen=True, forbid_unknown_fields=True, omit_defaults=True
+):
+    """Address an agent instruction, a local tool description or a module parameter."""
 
     module: str = ""
     tool: str | None = None
+    parameter: str | None = None
+    field: Literal["description", "usage_guidance"] = "description"
 
-    def _agent(self, program: Module) -> Agent:
-        agent = program.get_submodule(self.module)
-        if not isinstance(agent, Agent):
+    def __post_init__(self):
+        if self.field not in ("description", "usage_guidance") or (
+            self.tool is None and self.field != "description"
+        ):
+            raise ValueError(
+                "Specify a tool with a description or usage_guidance field"
+            )
+        if self.parameter is not None and (
+            self.tool is not None or not self.parameter or "." in self.parameter
+        ):
+            raise ValueError("Specify a single local parameter name or a tool")
+
+    def _owner(self, program: Module) -> Module:
+        owner = program.get_submodule(self.module)
+        if self.parameter is None and not isinstance(owner, Agent):
             raise TypeError(f"Target module {self.module!r} must be an Agent")
-        return agent
+        if self.parameter is not None and isinstance(owner, ToolRegistry):
+            raise ValueError("Address a tool description with TextTarget(tool=...)")
+        return owner
+
+    def _parameter(self, program):
+        owner = self._owner(program)
+        if self.tool is not None:
+            return get_tool_text_parameter(owner, self.tool, self.field)
+        return owner.get_parameter(self.parameter or "system_prompt")
 
     def read(self, program: Module) -> str:
-        agent = self._agent(program)
-        if self.tool is None:
-            return agent.get_task_instruction()
-        return get_tool_description(agent, self.tool)
+        owner = self._owner(program)
+        if self.tool is not None:
+            return get_tool_text_parameter(owner, self.tool, self.field).data
+        if isinstance(owner, Agent) and self.parameter in (None, "system_prompt"):
+            return owner.get_task_instruction()
+        return owner.get_parameter(self.parameter).data
 
     def write(self, program: Module, text: str) -> None:
-        agent = self._agent(program)
-        if self.tool is None:
-            agent.set_task_instruction(text)
+        owner = self._owner(program)
+        if self.tool is not None:
+            set_tool_text(owner, self.tool, self.field, text)
+        elif isinstance(owner, Agent) and self.parameter in (None, "system_prompt"):
+            owner.set_task_instruction(text)
         else:
-            set_tool_description(agent, self.tool, text)
+            parameter = owner.get_parameter(self.parameter)
+            if not parameter.requires_grad:
+                raise ValueError(f"The parameter {self.parameter!r} is frozen")
+            if (
+                not isinstance(parameter.data, str)
+                or not isinstance(text, str)
+                or not text.strip()
+            ):
+                raise ValueError("A non-empty text parameter is required")
+            parameter.copy_to_data(text)
 
 
 class OptimizationArtifact(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
@@ -138,15 +180,9 @@ def _save_artifact(artifact, path):
 def _check_distinct(program, targets):
     locations = set()
     for target in targets:
-        agent = target._agent(program)
-        owner = (
-            agent.system_prompt
-            if target.tool is None
-            else getattr(agent.tool_library, "registry", None)
-        )
-        key = (id(owner), target.tool)
+        key = id(target._parameter(program))
         if key in locations:
-            raise ValueError("Multiple targets refer to the same prompt or tool")
+            raise ValueError("Multiple targets refer to the same text parameter")
         locations.add(key)
 
 
@@ -166,7 +202,7 @@ class CompilationResult:
         self.artifact.save(path)
 
 
-def _agents(program):
+def _training_modules(program):
     pending = [("", program)]
     seen = set()
     while pending:
@@ -174,8 +210,9 @@ def _agents(program):
         if id(module) in seen:
             continue
         seen.add(id(module))
-        if isinstance(module, Agent):
-            yield path, module
+        if isinstance(module, ToolLibrary):
+            continue
+        yield path, module
         for name, child in reversed(module._modules.items()):
             if child is not None:
                 pending.append((f"{path}.{name}" if path else name, child))
@@ -183,8 +220,9 @@ def _agents(program):
 
 async def _close_agents(program: Module) -> None:
     async with AsyncExitStack() as stack:
-        for _, agent in _agents(program):
-            stack.push_async_callback(agent.aclose)
+        for module in program.modules():
+            if isinstance(module, Agent):
+                stack.push_async_callback(module.aclose)
 
 
 def _record_calls(calls):
@@ -205,20 +243,52 @@ def _trial(factory):
         asyncio.run(_close_agents(program))
 
 
+def _trainable_targets(program):
+    for path, module in _training_modules(program):
+        for name, parameter in module.named_parameters(recurse=False):
+            if not parameter.requires_grad:
+                continue
+            if isinstance(module, Agent) and name == "system_prompt":
+                target = TextTarget(module=path)
+                key = path or "instruction"
+            else:
+                target = TextTarget(module=path, parameter=name)
+                key = f"{path}.{name}" if path else name
+            text = target.read(program)
+            if isinstance(text, str) and text.strip():
+                yield key, target, parameter
+        if isinstance(module, Agent) and module.tool_library is not None:
+            texts = module.tool_library.named_tool_text_parameters()
+            for name, field, parameter in texts:
+                if parameter.requires_grad and (parameter.data or "").strip():
+                    key = f"tools.{name}.{field}"
+                    yield (
+                        f"{path}.{key}" if path else key,
+                        TextTarget(module=path, tool=name, field=field),
+                        parameter,
+                    )
+
+
 def _resolve_targets(program, target, targets):
-    if target is None and targets is None and isinstance(program, Agent):
-        target = TextTarget()
     if target is not None:
         components = {"instruction": target}
     elif targets is not None:
         components = dict(targets)
     else:
-        components = {
-            path: TextTarget(module=path)
-            for path, agent in _agents(program)
-            if agent.system_prompt.requires_grad
-            and agent.get_task_instruction().strip()
-        }
+        components = {}
+        seen = set()
+        for name, item, parameter in _trainable_targets(program):
+            if id(parameter) in seen:
+                continue
+            if name in components:
+                raise ValueError(
+                    f"Ambiguous discovered target {name!r}. Supply explicit targets."
+                )
+            seen.add(id(parameter))
+            components[name] = item
+        if isinstance(program, Agent) and len(components) == 1:
+            target = next(iter(components.values()))
+            components = {"instruction": target}
     if not components:
         raise ValueError("No trainable text targets in the program")
     if any(
@@ -241,7 +311,7 @@ def _prepare_trial(trial, stack, components, seeds, texts, capture_calls):
         item.write(trial, texts[name])
         if capture_calls:
             calls = []
-            handle = item._agent(trial).register_forward_hook(_record_calls(calls))
+            handle = item._owner(trial).register_forward_hook(_record_calls(calls))
             stack.callback(handle.remove)
             traces[name] = calls
     return traces

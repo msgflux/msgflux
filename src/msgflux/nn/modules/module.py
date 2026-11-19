@@ -2588,7 +2588,7 @@ class Module:
             if module is not None:
                 module_prefix = prefix + name + "."
                 module_dict = {
-                    k.replace(module_prefix, ""): v
+                    k.removeprefix(module_prefix): v
                     for k, v in state_dict.items()
                     if k.startswith(module_prefix)
                 }
@@ -2626,10 +2626,10 @@ class Module:
         for module_prefix, module in modules:
             members = get_members_fn(module)
             for k, v in members:
-                if v is None or v in memo:
+                if v is None or id(v) in memo:
                     continue
                 if remove_duplicate:
-                    memo.add(v)
+                    memo.add(id(v))
                 name = module_prefix + ("." if module_prefix else "") + k
                 yield name, v
 
@@ -2770,8 +2770,8 @@ class Module:
         """
         memo = set()
         for name, module in self._modules.items():
-            if module is not None and module not in memo:
-                memo.add(module)
+            if module is not None and id(module) not in memo:
+                memo.add(id(module))
                 yield name, module
 
     def modules(self) -> Iterator["Module"]:
@@ -2821,19 +2821,22 @@ class Module:
             Duplicate modules are returned only once. In the following
             example, ``l`` will be returned only once.
         """
-        if memo is None:
-            memo = set()
-        if self not in memo:
+        # Mapping modules can be unhashable, and module equality is user-defined.
+        seen = {id(module) for module in memo} if memo is not None else set()
+
+        def visit(path, module):
+            if id(module) in seen:
+                return
             if remove_duplicate:
-                memo.add(self)
-            yield prefix, self
-            for name, module in self._modules.items():
-                if module is None:
-                    continue
-                submodule_prefix = prefix + ("." if prefix else "") + name
-                yield from module.named_modules(
-                    memo, submodule_prefix, remove_duplicate=remove_duplicate
-                )
+                seen.add(id(module))
+                if memo is not None:
+                    memo.add(module)
+            yield path, module
+            for name, child in module._modules.items():
+                if child is not None:
+                    yield from visit(f"{path}.{name}" if path else name, child)
+
+        yield from visit(prefix, self)
 
     def train(self: T, *, mode: Optional[bool] = True) -> T:
         """Set the module in training mode.

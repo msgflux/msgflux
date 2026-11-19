@@ -1,33 +1,23 @@
-"""Read and update the portable description owned by one Agent's tool registry."""
+"""Resolve editable tool text through the owning agent's local registry."""
 
-import msgspec
-
-from msgflux.nn import Agent, MCPTool
-from msgflux.tools.types import ToolBucket
+from msgflux.nn import Agent
 
 
-def _local_definition(agent: Agent, name: str):
-    library = agent.tool_library
-    if library is None or name not in library.library:
+def get_tool_text_parameter(agent: Agent, name: str, field: str):
+    if agent.tool_library is None:
         raise ValueError(f"No directly registered local tool named {name!r}")
-    definition = library.get_tool_definition(name)
-    if (
-        isinstance(definition.executor, MCPTool)
-        or isinstance(getattr(definition.executor, "impl", None), ToolBucket)
-        or definition.native_bindings
-    ):
-        raise ValueError(f"Tool {name!r} requires a portable local declaration")
-    return definition
+    return agent.tool_library.text_parameter(name, field)
 
 
 def get_tool_description(agent: Agent, name: str) -> str:
-    return _local_definition(agent, name).description or ""
+    return get_tool_text_parameter(agent, name, "description").data
 
 
 def set_tool_description(agent: Agent, name: str, text: str) -> None:
+    set_tool_text(agent, name, "description", text)
+
+
+def set_tool_text(agent: Agent, name: str, field: str, text: str) -> None:
     if not isinstance(text, str) or not text.strip():
-        raise ValueError("A non-empty tool description is required")
-    definition = _local_definition(agent, name)
-    agent.tool_library.registry.replace(
-        msgspec.structs.replace(definition, description=text)
-    )
+        raise ValueError(f"A non-empty tool {field} is required")
+    get_tool_text_parameter(agent, name, field).copy_to_data(text)
