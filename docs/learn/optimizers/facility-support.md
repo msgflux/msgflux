@@ -59,7 +59,7 @@ DSPY_CACHEDIR=./facility-run/reference-cache \
 
 The DSPy control executes the pinned notebook's program, score and feedback functions. It keeps round-robin predictor updates, Pareto selection and disabled merges. Per-example predictions allow both scorers to be checked on identical outputs, independently of model sampling.
 
-After both searches and holdout evaluations finish, run the offline comparison against the same files. It recomputes both frameworks' scores for each holdout prediction and checks each saved msgFlux instruction against the validation scores of all its accepted candidates. The resulting `comparison.json` includes scores for individual test requests.
+After both searches and holdout evaluations finish, run the offline comparison against the same files. It recomputes both frameworks' scores for each holdout prediction and checks each saved msgFlux instruction against the validation scores of all its accepted candidates. The resulting `comparison.json` includes scores for individual test requests. Its `paired_metrics` section uses the named-metric evaluator to report the mean change, improvement and regression counts, ties and per-request deltas for overall score, urgency, sentiment and categories. Deltas follow the holdout order. In the joint run, sentiment improved on 22 requests and regressed on three. Urgency and categories tied on all 68.
 
 ```bash
 uv run --with-editable "$DSPY" --with litellm --extra optimizers \

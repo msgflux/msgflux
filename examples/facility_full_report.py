@@ -13,6 +13,8 @@ from facility_full_native import prediction_key
 from facility_full_reference import notebook_definitions
 from reproduce_facility_support import FIELDS, field_metric, load_splits
 
+from msgflux.optim import ComparisonResult, Evaluate, MetricSet
+
 
 def cached_prediction(conn, instruction, example):
     key = prediction_key(instruction, example.inputs["request"])
@@ -109,6 +111,22 @@ def audit_joint(directory, validation, holdout):
     }
 
 
+def evaluate_saved(evaluator, rows):
+    # The saved predictions follow the same holdout order as the evaluator.
+    if len(rows) != len(evaluator.dataset):
+        raise ValueError("Expected one saved prediction per holdout example")
+    predictions = iter(row["prediction"] for row in rows)
+    result = evaluator(lambda **_: next(predictions))
+    for entry, stored in zip(result.rows, rows, strict=True):
+        component_mean = fmean(entry.metric_values[f][0] for f in FIELDS)
+        if not (
+            math.isclose(component_mean, entry.score, rel_tol=0, abs_tol=1e-12)
+            and math.isclose(component_mean, stored["score"], rel_tol=0, abs_tol=1e-12)
+        ):
+            raise ValueError("Holdout prediction and recorded metrics disagree")
+    return result
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("notebook", type=Path)
@@ -128,6 +146,18 @@ def main():
         field: json.loads((args.out / field / "holdout.json").read_text())
         for field in FIELDS
     }
+
+    def notebook_metric(example, prediction):
+        return defs["metric"](
+            {"answer": json.dumps(example.labels)}, SimpleNamespace(**prediction)
+        )
+
+    metrics = MetricSet(
+        {"overall": notebook_metric, **{f: field_metric(f) for f in FIELDS}},
+        primary="overall",
+    )
+    evaluator = Evaluate(dataset=examples, metric=metrics)
+    paired_metrics = {}
     summary = {}
     checks = 0
     paired = {}
@@ -135,6 +165,7 @@ def main():
     if args.joint_dir:
         backends.append("msgflux_joint")
     for backend in backends:
+        arms = {}
         paired[backend] = {}
         for arm in ("baseline", "optimized"):
             if backend in {"dspy", "msgflux_joint"}:
@@ -152,32 +183,22 @@ def main():
                     }
                     for entries in zip(*by_field, strict=True)
                 ]
-            scores = []
-            parts = {field: [] for field in FIELDS}
-            for ex, row in zip(examples, rows, strict=True):
-                predicted = row["prediction"]
-                for field in FIELDS:
-                    parts[field].append(field_metric(field)(ex, predicted)[0])
-                msgflux_score = fmean(parts[field][-1] for field in FIELDS)
-                notebook_score = defs["metric"](
-                    {"answer": json.dumps(ex.labels)}, SimpleNamespace(**predicted)
-                )
-                if not (
-                    math.isclose(
-                        msgflux_score, notebook_score, rel_tol=0, abs_tol=1e-12
-                    )
-                    and math.isclose(
-                        msgflux_score, row["score"], rel_tol=0, abs_tol=1e-12
-                    )
-                ):
-                    raise ValueError("Holdout prediction and recorded metrics disagree")
-                checks += 1
-                scores.append(msgflux_score)
-            summary[f"{backend}_{arm}"] = {
-                "overall": fmean(scores),
-                **{f: fmean(vals) for f, vals in parts.items()},
+            result = evaluate_saved(evaluator, rows)
+            arms[arm] = result
+            checks += len(rows)
+            summary[f"{backend}_{arm}"] = result.mean_scores
+            paired[backend][arm] = result.scores
+        comparison = ComparisonResult.pair(arms["baseline"], arms["optimized"])
+        paired_metrics[backend] = {}
+        for name in metrics.metrics:
+            view = comparison.for_metric(name)
+            paired_metrics[backend][name] = {
+                "mean_delta": view.mean_delta,
+                "improved": len(view.improved),
+                "unchanged": len(view.unchanged),
+                "regressed": len(view.regressed),
+                "deltas": view.deltas,
             }
-            paired[backend][arm] = scores
     report = {
         "metrics_verified": checks,
         "dspy_search": json.loads((reference / "search.json").read_text()),
@@ -193,6 +214,7 @@ def main():
         "native_engine_evaluations": {f: native[f]["metric_calls"] for f in FIELDS},
         "test_means": summary,
         "paired_scores": paired,
+        "paired_metrics": paired_metrics,
     }
     if args.joint_dir:
         report["joint_selection"] = audit_joint(args.joint_dir, validation, examples)

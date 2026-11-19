@@ -6,6 +6,7 @@ from .evaluation import (
     Evaluate,
     EvaluationResult,
     EvaluationRow,
+    MetricSet,
     evaluate,
 )
 from .gepa import GEPA
@@ -23,6 +24,7 @@ __all__ = [
     "ComparisonResult",
     "ComparisonRow",
     "Evaluate",
+    "MetricSet",
     "EvaluationRow",
     "EvaluationResult",
     "evaluate",

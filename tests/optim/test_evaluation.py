@@ -9,7 +9,13 @@ import pytest
 import msgflux as mf
 from msgflux import nn
 from msgflux.models.response import ModelResponse
-from msgflux.optim import ComparisonResult, Evaluate, EvaluationResult, evaluate
+from msgflux.optim import (
+    ComparisonResult,
+    Evaluate,
+    EvaluationResult,
+    MetricSet,
+    evaluate,
+)
 from msgflux.optim.evaluation import example_identity
 
 
@@ -263,3 +269,26 @@ assert comparison.mean_delta == 0.0
 assert sys.modules['gepa'] is None
 """
     subprocess.run([sys.executable, "-c", script], check=True)  # noqa: S603
+
+
+def test_pairing_rejects_different_objectives_and_diagnostics():
+    metrics = {"accuracy": queue_accuracy, "constant": lambda *_: 1.0}
+    evaluator = Evaluate(dataset=holdout_examples())
+    baseline = evaluator(str, metric=MetricSet(metrics, primary="accuracy"))
+    for other in (
+        MetricSet(metrics, primary="constant"),
+        MetricSet({"accuracy": queue_accuracy}, primary="accuracy"),
+        queue_accuracy,
+    ):
+        with pytest.raises(ValueError, match="same metric"):
+            ComparisonResult.pair(baseline, evaluator(str, metric=other))
+
+
+def test_named_metrics_snapshot_configuration_and_validate_secondary_scores():
+    metrics = {"accuracy": queue_accuracy, "aux": lambda *_: float("nan")}
+    configured = MetricSet(metrics, primary="accuracy")
+    del metrics["aux"]
+    with pytest.raises(ValueError, match="finite"):
+        evaluate(str, holdout_examples(), configured)
+    with pytest.raises(ValueError, match="primary"):
+        MetricSet(metrics, primary="missing")

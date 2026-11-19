@@ -73,8 +73,11 @@ The model routes invoice tickets once the instruction mentions `invoice`, but pa
 | `mean_score` | Arithmetic mean of the row scores |
 | `scores` | Row scores as a tuple |
 | `predictions` | Row predictions as a tuple |
+| `mean_scores` | Mean of each named metric, or `{}` for a plain metric |
+| `primary_metric` | Name of the optimizing metric, or `None` |
+| `for_metric(name)` | The same rows projected onto one named metric |
 
-Each `EvaluationRow` exposes `example`, the `prediction` the program produced, the numeric `score` and the `feedback` dictionary returned by the metric. A metric that returns a bare number produces an empty feedback dictionary. Metrics must return a finite score; `nan` and `inf` raise `ValueError`.
+Each `EvaluationRow` exposes `example`, the `prediction` the program produced, the numeric `score` and the `feedback` dictionary returned by the metric. A metric that returns a bare number produces an empty feedback dictionary. Metrics must return a finite score; `nan` and `inf` raise `ValueError`. `row.metric_values` holds the score and feedback of every named metric when the evaluator was given a `MetricSet`, and is empty otherwise.
 
 ## Compare a baseline with a candidate
 
@@ -126,6 +129,8 @@ The written instruction fixes both failing queues, so two examples improve and t
 | `deltas` | Per-example deltas as a tuple |
 | `mean_delta` | Mean of the per-example deltas |
 | `improved` / `regressed` / `unchanged` | Rows grouped by `outcome` |
+| `primary_metric` | Name of the optimizing metric, or `None` |
+| `for_metric(name)` | A scalar `ComparisonResult` built from one named metric |
 
 !!! note "Pairing uses inputs and labels"
     `Example` is a mutable dataclass, and its generated equality also compares
@@ -134,6 +139,44 @@ The written instruction fixes both failing queues, so two examples improve and t
     `inputs` and `labels` of each row instead, through
     `msgflux.optim.evaluation.example_identity()`, so independently built
     examples still pair.
+
+## Optimize one objective and track other metrics
+
+A better router may send tickets to specialists who spend more time on them. Use routing accuracy to select a prompt and a second metric to track estimated handling time. This example reuses the agents, held-out tickets and accuracy metric defined above.
+
+```python
+from msgflux.optim import Evaluate, MetricSet
+
+minutes_by_queue = {"general": 1, "access": 2, "billing": 5}
+
+
+def efficiency(example, prediction):
+    minutes = minutes_by_queue[prediction]
+    return 1 - minutes / 10, {"estimated_minutes": minutes}
+
+
+metrics = MetricSet(
+    {"accuracy": queue_accuracy, "efficiency": efficiency}, primary="accuracy"
+)
+evaluator = Evaluate(dataset=holdout, metric=metrics)
+comparison = evaluator.compare(
+    build_agent("Route the ticket."),
+    build_agent("Route invoice tickets to billing and password tickets to access."),
+)
+for name in metrics.metrics:
+    view = comparison.for_metric(name)
+    print(name, round(view.baseline_mean_score, 2), round(view.candidate_mean_score, 2),
+          len(view.improved), len(view.regressed))
+```
+
+```text
+accuracy 0.33 1.0 2 0
+efficiency 0.9 0.73 0 2
+```
+
+Two tickets reached the correct specialist and took longer under the example's time estimates. Inspect `comparison.for_metric("efficiency").regressed` for those tickets and their feedback. Higher scores indicate better outcomes, so the efficiency score decreases with the estimated time.
+
+Pass the same `MetricSet` as `metric=` to `GEPA.compile`. During search, GEPA calls only the primary metric and sends its feedback to the reflector. During evaluation, each program runs once per example and all metrics score that prediction. `result.mean_scores` gives the mean for each name. `result.for_metric(name)` and `comparison.for_metric(name)` reuse stored predictions and scores. Pairing independently evaluated results requires the same names and primary objective.
 
 ## Reuse one evaluator
 

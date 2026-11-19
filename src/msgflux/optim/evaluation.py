@@ -2,14 +2,17 @@
 
 import math
 from collections.abc import Callable, Mapping, Sequence
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from statistics import fmean
+from types import MappingProxyType
 from typing import Any, Literal
 
 from msgflux.core.examples import Example
 from msgflux.models.response import ModelResponse
 
 Score = float | tuple[float, dict[str, Any]]
+Metric = Callable[[Example, Any], Score]
+MetricValue = tuple[float, dict[str, Any]]
 Outcome = Literal["improved", "regressed", "unchanged"]
 
 
@@ -56,16 +59,75 @@ def resolve_metric(metric: Callable[[Example, Any], Score]):
 
 
 @dataclass(frozen=True)
+class MetricSet:
+    """Use one objective for search and all named metrics for evaluation."""
+
+    metrics: Mapping[str, Metric]
+    primary: str = field(kw_only=True)
+
+    def __post_init__(self):
+        if not isinstance(self.metrics, Mapping) or not self.metrics:
+            raise ValueError("metrics must be a non-empty mapping")
+        metrics = dict(self.metrics)
+        for name, metric in metrics.items():
+            if not isinstance(name, str) or not name.strip():
+                raise ValueError("Metric names must be non-empty strings")
+            resolve_metric(metric)
+        if self.primary not in metrics:
+            raise ValueError(f"Unknown primary metric: {self.primary!r}")
+        object.__setattr__(self, "metrics", MappingProxyType(metrics))
+
+    def __call__(self, example: Example, prediction: Any) -> Score:
+        return self.metrics[self.primary](example, prediction)
+
+    def _score_all(self, example: Example, prediction: Any) -> dict[str, MetricValue]:
+        return {
+            name: normalize_score(metric(example, prediction))
+            for name, metric in self.metrics.items()
+        }
+
+
+@dataclass(frozen=True)
 class EvaluationRow:
     example: Example
     prediction: Any
     score: float
     feedback: dict[str, Any]
+    metric_values: dict[str, MetricValue] = field(default_factory=dict)
 
 
 @dataclass(frozen=True)
 class EvaluationResult:
     rows: tuple[EvaluationRow, ...]
+    primary_metric: str | None = None
+
+    @property
+    def mean_scores(self) -> dict[str, float]:
+        """Mean validation or holdout score for each named metric."""
+        if not self.rows:
+            return {}
+        return {
+            name: fmean(row.metric_values[name][0] for row in self.rows)
+            for name in self.rows[0].metric_values
+        }
+
+    def for_metric(self, name: str) -> "EvaluationResult":
+        """Project the stored predictions and feedback onto one metric."""
+        if not self.rows or name not in self.rows[0].metric_values:
+            raise KeyError(f"Unknown evaluation metric: {name!r}")
+        rows = []
+        for row in self.rows:
+            score, feedback = row.metric_values[name]
+            rows.append(
+                EvaluationRow(
+                    row.example,
+                    row.prediction,
+                    score,
+                    feedback,
+                    {name: (score, feedback)},
+                )
+            )
+        return EvaluationResult(tuple(rows), name)
 
     @property
     def mean_score(self) -> float:
@@ -109,6 +171,13 @@ class ComparisonResult:
     """Paired per-example deltas between a baseline and a candidate program."""
 
     rows: tuple[ComparisonRow, ...]
+    primary_metric: str | None = None
+
+    def for_metric(self, name: str) -> "ComparisonResult":
+        """Compare the saved rows using one named metric."""
+        return ComparisonResult.pair(
+            self.baseline.for_metric(name), self.candidate.for_metric(name)
+        )
 
     @classmethod
     def pair(
@@ -128,15 +197,26 @@ class ComparisonResult:
             for row in rows
         ):
             raise ValueError("Comparison requires the same examples in the same order")
-        return cls(rows)
+        if baseline.primary_metric != candidate.primary_metric or any(
+            row.baseline.metric_values.keys() != row.candidate.metric_values.keys()
+            for row in rows
+        ):
+            raise ValueError(
+                "Comparison requires the same metric names and primary metric"
+            )
+        return cls(rows, baseline.primary_metric)
 
     @property
     def baseline(self) -> EvaluationResult:
-        return EvaluationResult(tuple(row.baseline for row in self.rows))
+        return EvaluationResult(
+            tuple(row.baseline for row in self.rows), self.primary_metric
+        )
 
     @property
     def candidate(self) -> EvaluationResult:
-        return EvaluationResult(tuple(row.candidate for row in self.rows))
+        return EvaluationResult(
+            tuple(row.candidate for row in self.rows), self.primary_metric
+        )
 
     @property
     def baseline_mean_score(self) -> float:
@@ -178,9 +258,16 @@ def evaluate(
     rows = []
     for example in examples:
         prediction = predict(program, example)
-        score, feedback = normalize_score(metric(example, prediction))
-        rows.append(EvaluationRow(example, prediction, score, feedback))
-    return EvaluationResult(tuple(rows))
+        if isinstance(metric, MetricSet):
+            values = metric._score_all(example, prediction)
+            score, feedback = values[metric.primary]
+        else:
+            values = {}
+            score, feedback = normalize_score(metric(example, prediction))
+        rows.append(EvaluationRow(example, prediction, score, feedback, values))
+    return EvaluationResult(
+        tuple(rows), metric.primary if isinstance(metric, MetricSet) else None
+    )
 
 
 class Evaluate:
@@ -248,6 +335,7 @@ __all__ = [
     "Evaluate",
     "EvaluationResult",
     "EvaluationRow",
+    "MetricSet",
     "Score",
     "evaluate",
     "example_identity",
