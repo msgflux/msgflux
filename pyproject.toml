@@ -84,6 +84,7 @@ Documentation = "https://github.com/msgflux/msgflux"
 Repository = "https://github.com/msgflux/msgflux"
 
 [project.optional-dependencies]
+optimizers = ["gepa>=0.1.4,<0.2; python_version < '3.15'"]
 plot = [
     "code2mermaid>=0.3.0",
     "mermaid-py>=0.8.0",

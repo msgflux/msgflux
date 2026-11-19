@@ -92,6 +92,10 @@ jobs:
       - name: Run tests
         run: uv run --python ${{ matrix.python-version }} --extra service pytest -v --ignore=tests/integration --cov=src/msgflux --cov-report=xml --cov-report=term
 
+      - name: Exercise the optional optimizer backend
+        if: matrix.python-version == '3.12'
+        run: uv run --extra optimizers pytest -q tests/optim
+
       - name: Upload coverage
         uses: codecov/codecov-action@v6
         if: matrix.python-version == '3.12'
