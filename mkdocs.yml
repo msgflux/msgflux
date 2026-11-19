@@ -158,6 +158,7 @@ nav:
     - ✓ Verifiers: learn/verifiers.md
     - Optimizers and evaluation: learn/optimizers/gepa.md
     - Evaluating programs: learn/optimizers/evaluation.md
+    - Tracking with MLflow: learn/optimizers/mlflow.md
     - Reproducing DSPy Facility Support: learn/optimizers/facility-support.md
     - ⟢ Modules:
       - Module:
