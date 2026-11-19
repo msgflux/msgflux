@@ -99,11 +99,12 @@ from msgflux.optim import OptimizationArtifact, evaluate
     subprocess.run([sys.executable, "-c", script], check=True)  # noqa: S603
 
 
-def test_documented_offline_triage_example():
-    pytest.importorskip("gepa")
-    from examples.optimize_triage import main
+def test_documented_queue_metric_requires_one_label():
+    from examples.optimize_triage import queue_accuracy
 
-    assert main().mean_score == 1.0
+    example = Example("Invoice is missing", "billing")
+    assert queue_accuracy(example, "Billing")[0] == 1
+    assert queue_accuracy(example, "billing or access")[0] == 0
 
 
 def test_signature_state_snapshot_retains_editable_text():

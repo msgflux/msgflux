@@ -9,34 +9,18 @@ The evaluator is part of the base package. It needs no extra dependency and does
 ```python
 import msgflux as mf
 from msgflux import nn
-from msgflux.models.response import ModelResponse
 from msgflux.optim import Evaluate
 
-
-class TriageModel:
-    """A deterministic chat model so this example runs without API keys."""
-
-    model_type = "chat_completion"
-
-    def __call__(self, *, messages, system_prompt, **_kwargs):
-        ticket = messages[-1]["content"].lower()
-        queue = "general"
-        if "invoice" in ticket and "invoice" in system_prompt:
-            queue = "billing"
-        if "password" in ticket and "password" in system_prompt:
-            queue = "access"
-        response = ModelResponse()
-        response.set_response_type("text_generation")
-        response.add(queue)
-        return response
+mf.load_dotenv()
+model = mf.Model.chat_completion("openai/gpt-6-luna")
 
 
 def build_agent(instruction):
-    return nn.Agent(name="triage", model=TriageModel(), system_prompt=instruction)
+    return nn.Agent(name="triage", model=model, system_prompt=instruction)
 
 
 def queue_accuracy(example, prediction):
-    return float(prediction == example.labels), {
+    return float(str(prediction).strip().casefold() == example.labels), {
         "feedback": f"Expected {example.labels}, predicted {prediction}."
     }
 
@@ -55,15 +39,7 @@ print([row.score for row in report.rows])
 print(report.rows[1].feedback)
 ```
 
-Run the script to see the accuracy, the per-example scores and the metric's feedback:
-
-```text
-0.67
-[1.0, 0.0, 1.0]
-{'feedback': 'Expected access, predicted general.'}
-```
-
-The model routes invoice tickets once the instruction mentions `invoice`, but password tickets still fall back to `general`. The second example therefore scores zero and carries the diagnostic that explains why.
+Set `OPENAI_API_KEY` before running this example. The script prints the overall accuracy, each ticket's score and the feedback from the second ticket. The expected label is fixed. The live agent's answer can vary.
 
 `Evaluate.__call__` returns an `EvaluationResult`:
 
@@ -97,17 +73,7 @@ for row in comparison.rows:
 print(f"Mean delta: {comparison.mean_delta:+.2f}")
 ```
 
-The call returns a `ComparisonResult` whose rows hold the pre- and post-optimization evaluation of each example. The output is deterministic:
-
-```text
-0.33 -> 1.00
-Invoice is missing: improved (+1.00)
-Reset my password: improved (+1.00)
-Where is my badge?: unchanged (+0.00)
-Mean delta: +0.67
-```
-
-The written instruction fixes both failing queues, so two examples improve and the third was already correct. A paired report shows that kind of per-example movement, which a pair of means hides.
+The call returns a `ComparisonResult`. Each row pairs the two responses to one ticket so you can inspect which change improved or regressed a prediction. For a measured comparison on 68 held-out examples with published per-example scores, see [the Facility Support reproduction](facility-support.md).
 
 `ComparisonRow` provides:
 
@@ -142,39 +108,24 @@ The written instruction fixes both failing queues, so two examples improve and t
 
 ## Optimize one objective and track other metrics
 
-A better router may send tickets to specialists who spend more time on them. Use routing accuracy to select a prompt and a second metric to track estimated handling time. This example reuses the agents, held-out tickets and accuracy metric defined above.
+Use routing accuracy to select a prompt and a second metric to measure whether the response follows the one-label output contract. Both metrics inspect the same prediction.
 
 ```python
-from msgflux.optim import Evaluate, MetricSet
+from msgflux.optim import MetricSet
 
-minutes_by_queue = {"general": 1, "access": 2, "billing": 5}
+def valid_queue(example, prediction):
+    return float(str(prediction).strip().casefold() in {"billing", "access", "general"})
 
-
-def efficiency(example, prediction):
-    minutes = minutes_by_queue[prediction]
-    return 1 - minutes / 10, {"estimated_minutes": minutes}
-
-
-metrics = MetricSet(
-    {"accuracy": queue_accuracy, "efficiency": efficiency}, primary="accuracy"
-)
+metrics = MetricSet({"accuracy": queue_accuracy, "valid_queue": valid_queue}, primary="accuracy")
 evaluator = Evaluate(dataset=holdout, metric=metrics)
 comparison = evaluator.compare(
     build_agent("Route the ticket."),
-    build_agent("Route invoice tickets to billing and password tickets to access."),
+    build_agent("Return only billing for invoices, access for credentials, otherwise general."),
 )
 for name in metrics.metrics:
     view = comparison.for_metric(name)
-    print(name, round(view.baseline_mean_score, 2), round(view.candidate_mean_score, 2),
-          len(view.improved), len(view.regressed))
+    print(name, view.baseline_mean_score, view.candidate_mean_score, len(view.regressed))
 ```
-
-```text
-accuracy 0.33 1.0 2 0
-efficiency 0.9 0.73 0 2
-```
-
-Two tickets reached the correct specialist and took longer under the example's time estimates. Inspect `comparison.for_metric("efficiency").regressed` for those tickets and their feedback. Higher scores indicate better outcomes, so the efficiency score decreases with the estimated time.
 
 Pass the same `MetricSet` as `metric=` to `GEPA.compile`. During search, GEPA calls only the primary metric and sends its feedback to the reflector. During evaluation, each program runs once per example and all metrics score that prediction. `result.mean_scores` gives the mean for each name. `result.for_metric(name)` and `comparison.for_metric(name)` reuse stored predictions and scores. Pairing independently evaluated results requires the same names and primary objective.
 
@@ -183,31 +134,13 @@ Pass the same `MetricSet` as `metric=` to `GEPA.compile`. During search, GEPA ca
 The constructor arguments are optional so a single instance can serve either role:
 
 ```python
-import msgflux as mf
-from msgflux.optim import Evaluate
-
-holdout = [mf.Example("Invoice is missing", "billing")]
-
-
-def constant(example, prediction):
-    return 1.0
-
-
-# Dataset stored, metric supplied per call.
-report = Evaluate(dataset=holdout)(str.lower, metric=constant)
-
-# Metric stored, dataset supplied per call.
-report = Evaluate(metric=constant)(str.lower, dataset=holdout)
-
-# Both stored, so the call only names the program.
-evaluator = Evaluate(dataset=holdout, metric=constant)
-report = evaluator(str.lower)
-print(len(evaluator.dataset), report.mean_score)
+agent = build_agent("Return only the queue label.")
+report = Evaluate(dataset=holdout)(agent, metric=queue_accuracy)
+report = Evaluate(metric=queue_accuracy)(agent, dataset=holdout)
+report = Evaluate(dataset=holdout, metric=queue_accuracy)(agent)
 ```
 
-```text
-1 1.0
-```
+Each form evaluates the agent against the same labeled tickets.
 
 `dataset` is copied into a tuple at construction time, so later mutations of the caller's list do not change the evaluation. `evaluator.dataset` and `evaluator.metric` expose the stored values; both are `None` when omitted. Calling the evaluator without either a stored or a supplied dataset or metric raises `ValueError`. A dataset that is not a sequence, an empty dataset, a non-callable metric and a non-callable program raise an error before any example is scored.
 
@@ -224,39 +157,29 @@ tickets = [
     mf.Example({"ticket": "Reset my password"}, "access"),
 ]
 
-report = Evaluate(dataset=tickets, metric=lambda ex, p: float(p == ex.labels))(
-    lambda ticket: "access" if "password" in ticket else "general"
-)
-print(len(report.rows), report.predictions)
-```
-
-```text
-2 ('general', 'access')
+agent = build_agent("Return the ticket queue as a single word.")
+report = Evaluate(dataset=tickets, metric=queue_accuracy)(lambda ticket: agent(ticket))
+print(report.predictions)
 ```
 
 Because the evaluator calls the supplied program once per example, pass an object that is safe to reuse. When a module keeps conversation or tool state across inputs, pass a callable that builds a fresh instance per call, or call the evaluator several times with separate programs.
 
-Comparing a compiled program only needs the artifact saved from an optimizer. This snippet reuses `build_agent`, `holdout` and `queue_accuracy` from the first section and expects the `CompilationResult.save("triage.optim.json")` file from [Optimizers and evaluation](gepa.md):
+## Compare a saved artifact
+
+The tool-description example writes `receipts.optim.json`. From the repository root, reuse its original factory, metric and held-out reference. The source digest in the artifact checks that the instruction and lookup description match the originals before applying the selected texts.
 
 ```python
-from msgflux.optim import Evaluate, OptimizationArtifact
+from examples.optimize_tool_description import build_agent as build_receipt_agent
+from examples.optimize_tool_description import exact_receipt, receipt
+from msgflux.optim import OptimizationArtifact
 
-artifact = OptimizationArtifact.load("triage.optim.json")
-
-
-def compiled():
-    program = build_agent("Route the ticket.")
-    artifact.apply(program)
-    return program
-
-
-comparison = Evaluate(dataset=holdout, metric=queue_accuracy).compare(
-    build_agent("Route the ticket."), compiled()
+baseline = build_receipt_agent(model)
+candidate = build_receipt_agent(model)
+OptimizationArtifact.load("receipts.optim.json").apply(candidate)
+comparison = Evaluate(dataset=[receipt("KR17")], metric=exact_receipt).compare(
+    baseline, candidate
 )
+print(comparison.mean_delta)
 ```
 
-Both programs must run with the same models and inference settings for the deltas to describe the instruction change alone.
-
-## Where it fits
-
-`Evaluate` reports what a metric measured; it does not search. Use it after `GEPA.compile()` or `optimize_text()` to compare the selected program with the initial one, as described in [Optimizers and evaluation](gepa.md). A tracker or experiment log can consume `comparison.rows` directly, since each row carries the example, both scores and both feedback dictionaries.
+Use the same task model and inference settings to attribute differences to the text update. [Tracking optimization with MLflow](mlflow.md).

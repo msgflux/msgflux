@@ -157,3 +157,15 @@ def test_non_text_and_empty_descriptions_are_rejected(text):
         set_tool_description(agent, "lookup", text)
 
     assert get_tool_description(agent, "lookup") == DECLARED
+
+
+def test_documented_factory_opts_in_only_the_requested_tool_fields():
+    from examples.optimize_tool_description import build_agent
+
+    plain = build_agent(_model()).tool_library
+    assert plain.description_parameter("lookup").requires_grad
+    assert not plain.usage_guidance_parameter("lookup").requires_grad
+    guided = build_agent(_model(), train_usage_guidance=True)
+    parameter = guided.tool_library.usage_guidance_parameter("lookup")
+    assert parameter.requires_grad
+    assert parameter.data in guided.get_system_prompt()

@@ -1129,8 +1129,43 @@ agents directly. If you want the model to see only one public
         )
         ```
 
+## Choosing which agent prompts to optimize
+
+When you pass a worker in `tools=[worker]`, the caller can delegate to it at inference time. Automatic optimizer discovery stops at the tool library. The caller's instruction is trainable by default, the worker keeps its own `requires_grad` setting, and the description presented to the caller is frozen by default.
+
+For joint training, register the same worker as a named child of your program. The following factory gives GEPA two instructions to select against the final answer. Any change to the worker also reaches the instance used for delegation.
+
+```python
+import msgflux as mf
+from msgflux import nn
+
+
+class SupportDesk(nn.Module):
+    def __init__(self, model):
+        super().__init__()
+        self.billing = nn.Agent(
+            name="billing", model=model, system_prompt="Resolve billing questions.",
+            description="Look up charges and explain invoices.",
+        )
+        self.desk = nn.Agent(
+            name="desk", model=model,
+            system_prompt="Answer support requests. Delegate billing to the specialist.",
+            tools=[self.billing],
+        )
+
+    def forward(self, request):
+        return self.desk(request)
+
+
+def build_desk():
+    return SupportDesk(mf.Model.chat_completion("openai/gpt-6-luna"))
+```
+
+Pass `build_desk` to `optimizer.compile(...)` to discover both agents. Use `target=TextTarget(module="billing")` to train just the worker. To optimize how the desk describes the worker alongside both prompts, call `self.desk.tool_library.description_parameter("billing").requires_grad_(requires_grad=True)` inside the constructor and give the tool a nonempty starting description. A direct registration and a grouped dispatch tool expose different catalog entries. The latter builds its description from its member list.
+
 ## Next Topics
 
+- [Optimize a local tool description](../../../optimizers/gepa.md#optimize-a-tool-description)
 - [Tool Config](config.md)
 - [Builtin Tools](builtin.md)
 - [Tool Search](tool-search.md)

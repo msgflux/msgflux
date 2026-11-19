@@ -20,7 +20,7 @@ from msgflux.optim.evaluation import example_identity
 
 
 class EchoModel:
-    """A deterministic chat model that routes tickets by keyword."""
+    """Test-only fixture: route a ticket by keyword, with no client reachable."""
 
     model_type = "chat_completion"
 
@@ -218,23 +218,20 @@ def test_evaluate_and_compare_validate_their_inputs():
         )
 
 
-def test_documented_offline_comparison_example():
-    """Mirror docs/learn/optimizers/evaluation.md and its documented output."""
-    holdout = holdout_examples()
-    evaluator = Evaluate(dataset=holdout, metric=queue_accuracy)
+def test_compare_reports_each_example_once_against_the_shared_dataset():
+    evaluator = Evaluate(dataset=holdout_examples(), metric=queue_accuracy)
     comparison = evaluator.compare(
         build_agent("Route the ticket."),
         build_agent("Route invoice tickets to billing and password tickets to access."),
     )
-    summary = (
+    assert (
         f"{comparison.baseline_mean_score:.2f} -> {comparison.candidate_mean_score:.2f}"
+        == "0.33 -> 1.00"
     )
-    rows = [
+    assert [
         (row.example.inputs, row.outcome, f"{row.delta:+.2f}")
         for row in comparison.rows
-    ]
-    assert summary == "0.33 -> 1.00"
-    assert rows == [
+    ] == [
         ("Invoice is missing", "improved", "+1.00"),
         ("Reset my password", "improved", "+1.00"),
         ("Where is my badge?", "unchanged", "+0.00"),

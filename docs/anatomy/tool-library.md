@@ -55,6 +55,8 @@ provider response path or of a `ToolFlowControl`.
 modules. Executor ownership belongs to the `ToolLibrary` facade so one module
 has exactly one place in the module tree and `state_dict`.
 
+Each directly exposed portable tool has separate description and usage-guidance parameters local to its registry. A tool declaration supplies the initial text. Catalog projections and runtime prompt assembly read the current text when the catalog is requested, so the next model call sees optimizer edits and restored state. Registrations of the same function on two agents can therefore carry different descriptions. [Optimizing tool descriptions](../learn/optimizers/gepa.md#optimize-a-tool-description).
+
 The current facade keeps directly exposed executors in its public `ModuleDict`.
 Bucket-captured definitions are indexed by the same registry, while their
 executors move to a separate library-owned `ModuleDict`. Buckets retain only

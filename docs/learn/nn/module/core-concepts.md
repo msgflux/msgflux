@@ -25,6 +25,8 @@ print(Workflow().state_dict())
 # {'instructions': 'Be helpful and concise'}
 ```
 
+A text parameter participates in automatic optimizer discovery when it has a nonempty value and `requires_grad=True` (the default). The attribute name identifies the parameter. Its `spec` describes its purpose. To optimize only the example's instruction, pass `target=TextTarget(parameter="instructions")` to `optimizer.compile`. For a nested module, also supply its registered path, for example `TextTarget(module="writer", parameter="instructions")`. The program's `forward` method must consume the parameter for changing it to affect the metric. [Compile and evaluate a program](../../optimizers/gepa.md).
+
 **Buffers** are constant values that should be serialized but not optimized:
 
 ```python

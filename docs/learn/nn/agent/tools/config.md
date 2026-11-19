@@ -989,6 +989,8 @@ The guidance is injected into the system prompt when you render it with
 
 ## Default usage guidance (opt-in)
 
+For a directly exposed portable local tool, `agent.tool_library.usage_guidance_parameter(name)` returns the guidance owned by that agent's registry. Its initial training flag is false. Call `.requires_grad_(requires_grad=True)` on a nonempty guidance parameter inside your program factory to train it alongside the agent's instruction. The next eligible model call sees the updated guidance in the system prompt. The tool's description remains a separate parameter. [Optimize runtime usage guidance](../../../optimizers/gepa.md#optimize-runtime-usage-guidance).
+
 Tools can declare `default_usage_guidance` alongside their implementation. The
 attribute is a suggested instruction, not an automatically active prompt section.
 Creating a `ToolLibrary` or an `Agent` leaves defaults unused. Explicit
