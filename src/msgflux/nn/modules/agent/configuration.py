@@ -1,6 +1,7 @@
 # ruff: noqa: A002
 
 from inspect import cleandoc
+from string import Formatter
 from typing import (
     TYPE_CHECKING,
     Any,
@@ -15,6 +16,7 @@ from typing import (
 )
 
 import msgspec
+from jinja2 import Environment
 
 from msgflux.core.dotdict import dotdict
 from msgflux.core.examples import Example
@@ -39,6 +41,7 @@ from msgflux.runtime.context import (
     get_execution_context,
 )
 from msgflux.tools.catalog import ToolCatalogView
+from msgflux.utils.common import has_format_placeholder, is_jinja_template
 from msgflux.utils.msgspec import StructFactory, is_optional_field
 from msgflux.utils.validation import is_subclass_of
 
@@ -169,23 +172,79 @@ class AgentConfigurationMixin:
     def model(self, value: Union[ChatCompletionModel, ModelGateway, "Generator", str]):
         self._set_model(value)
 
-    def _set_system_prompt(self, system_prompt: Optional[str] = None):
+    def _compose_system_prompt(self, instruction, suffix):
+        body = "\n\n".join(part for part in (instruction, *suffix) if part)
+        schema = getattr(self.generation_schema, "system_prompt", None)
+        return (
+            "\n\n".join(
+                cleandoc(part)
+                for part in (schema, body)
+                if isinstance(part, str) and part.strip()
+            )
+            or None
+        )
+
+    def _set_system_prompt(self, system_prompt: Optional[str] = None, *, suffix=()):
         if not isinstance(system_prompt, (str, type(None))):
             raise TypeError(
                 "`system_prompt` requires a string or None "
                 f"given `{type(system_prompt)}`"
             )
-
-        prompt_parts = []
-        schema_prompt = getattr(self.generation_schema, "system_prompt", None)
-        if isinstance(schema_prompt, str) and schema_prompt.strip():
-            prompt_parts.append(cleandoc(schema_prompt))
-        if isinstance(system_prompt, str) and system_prompt.strip():
-            prompt_parts.append(cleandoc(system_prompt))
+        self.register_buffer("task_instruction", system_prompt)
+        self._instruction_suffix = suffix
         self.system_prompt = Parameter(
-            "\n\n".join(prompt_parts) or None,
-            PromptSpec.SYSTEM_PROMPT,
+            self._compose_system_prompt(system_prompt, suffix), PromptSpec.SYSTEM_PROMPT
         )
+
+    def get_task_instruction(self) -> str:
+        """Return the editable source of the Agent's composed system prompt."""
+        expected = self._compose_system_prompt(
+            self.task_instruction, self._instruction_suffix
+        )
+        if self.system_prompt.data != expected:
+            if not self._instruction_suffix and not getattr(
+                self.generation_schema, "system_prompt", None
+            ):
+                return self.system_prompt.data or ""
+            raise ValueError(
+                "The composed system prompt changed outside the instruction API"
+            )
+        return self.task_instruction or ""
+
+    @staticmethod
+    def _instruction_placeholders(text: str):
+        if is_jinja_template(text):
+            # Keep template expressions and control flow when editing the prose.
+            tokens = Environment(autoescape=True).lex(text)
+            return tuple(
+                (kind, value)
+                for _, kind, value in tokens
+                if kind not in {"data", "whitespace"}
+            )
+        if has_format_placeholder(text):
+            return tuple(
+                (name, spec, conversion)
+                for _, name, spec, conversion in Formatter().parse(text)
+                if name is not None
+            )
+        return ()
+
+    def set_task_instruction(self, text: str) -> None:
+        """Replace task text while preserving the Signature and generation contract."""
+        if not isinstance(text, str) or not text.strip():
+            raise ValueError("A non-empty task instruction is required")
+        if not self.system_prompt.requires_grad:
+            raise ValueError("The system prompt parameter is frozen")
+        source = self.get_task_instruction()
+        if source == text:
+            return
+        if self._instruction_placeholders(source) != self._instruction_placeholders(
+            text
+        ):
+            raise ValueError("The task instruction must preserve template variables")
+        composed = self._compose_system_prompt(text, self._instruction_suffix)
+        self.register_buffer("task_instruction", text)
+        self.system_prompt.copy_to_data(composed)
 
     def _set_messages(self, messages: Optional[str] = None):
         if isinstance(messages, str) or messages is None:
@@ -424,10 +483,14 @@ class AgentConfigurationMixin:
             expected_output = SignatureFactory.get_expected_output_from_signature(
                 inputs_info, outputs_info
             )
-            prompt_parts = (system_prompt, signature_instructions, expected_output)
-            self._set_system_prompt(
-                "\n\n".join(part for part in prompt_parts if part) or None
-            )
+            if system_prompt:
+                self._set_system_prompt(
+                    system_prompt, suffix=(signature_instructions, expected_output)
+                )
+            else:
+                self._set_system_prompt(
+                    signature_instructions, suffix=(expected_output,)
+                )
 
             # Generate and set annotations from signature inputs
             generated_annotations = generate_annotations_from_signature(
