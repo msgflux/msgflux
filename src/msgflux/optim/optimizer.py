@@ -15,9 +15,8 @@ import msgspec
 
 from msgflux.core.examples import Example
 from msgflux.nn import Agent, Module
-
-from .evaluation import Score, normalize_score, predict
-from .tool_target import get_tool_description, set_tool_description
+from msgflux.optim.evaluation import Score, normalize_score, predict
+from msgflux.optim.tool_target import get_tool_description, set_tool_description
 
 
 @dataclass(frozen=True)

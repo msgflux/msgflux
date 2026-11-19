@@ -1,6 +1,6 @@
 """Offline optimizers for free text and msgFlux modules."""
 
-from .evaluation import (
+from msgflux.optim.evaluation import (
     ComparisonResult,
     ComparisonRow,
     Evaluate,
@@ -9,8 +9,8 @@ from .evaluation import (
     MetricSet,
     evaluate,
 )
-from .gepa import GEPA
-from .optimizer import (
+from msgflux.optim.gepa import GEPA
+from msgflux.optim.optimizer import (
     CompilationResult,
     OptimizationArtifact,
     Optimizer,

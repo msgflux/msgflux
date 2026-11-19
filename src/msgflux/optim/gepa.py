@@ -4,8 +4,7 @@ import sys
 from typing import Literal
 
 from msgflux.models.response import ModelResponse
-
-from .optimizer import Optimizer, ProgramResult, TextResult
+from msgflux.optim.optimizer import Optimizer, ProgramResult, TextResult
 
 
 class GEPA(Optimizer):
