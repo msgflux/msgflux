@@ -750,3 +750,12 @@ The first side contains the user-side trajectory. The label side starts at the
 first assistant-owned item and retains reasoning and tool activity in their
 original order. No copy of `vars`, named signature inputs, assistant output, or
 provider response type is created solely for example generation.
+
+## Optimize Signature instructions
+
+An Agent can use a Signature's docstring as its initial task instruction.
+When you supply an explicit `system_prompt`, the optimizer targets that text
+and preserves the Signature guidance and generated output format. A string
+Signature such as `"ticket: str -> queue: str"` can be paired with an explicit
+prompt to give the optimizer an initial instruction. See
+[Optimizers and evaluation](../../optimizers/gepa.md) for compilation and deployment.

@@ -156,6 +156,9 @@ nav:
     - ◈ dotdict: learn/dotdict.md
     - ⊕ Inline: learn/inline.md
     - ✓ Verifiers: learn/verifiers.md
+    - Optimizers and evaluation: learn/optimizers/gepa.md
+    - Evaluating programs: learn/optimizers/evaluation.md
+    - Reproducing DSPy Facility Support: learn/optimizers/facility-support.md
     - ⟢ Modules:
       - Module:
         - learn/nn/module/index.md

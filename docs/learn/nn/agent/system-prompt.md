@@ -93,3 +93,11 @@ handle.remove()
 
 Do not pass both `examples=` and an explicitly registered extension named
 `few_shot_examples`.
+
+## Optimize and persist the instruction
+
+Use `agent.get_task_instruction()` to read the task text and
+`agent.set_task_instruction(text)` to replace it while retaining the generated
+schema guidance. A state dictionary includes both the editable instruction and
+the composed system prompt. To learn an instruction from scored examples and
+deploy it as a versioned JSON artifact, see [Optimizers and evaluation](../../optimizers/gepa.md).
