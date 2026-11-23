@@ -81,6 +81,7 @@ class ConversationContext(AgentContext):
     """Conversation prepared for one model request."""
 
     messages: Any
+    model_preference: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -97,6 +98,7 @@ class ToolCatalogContext(AgentContext):
 
     catalog: ToolCatalogView
     messages: Any = None
+    model_preference: str | None = None
 
 
 @dataclass(frozen=True, kw_only=True)

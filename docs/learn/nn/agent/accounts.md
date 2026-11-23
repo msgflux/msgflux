@@ -111,6 +111,40 @@ request is sent. For an Agent managed by `AgentService`, attach a resolver
 without a fixed `account_name`; the service's immutable execution scope then
 selects the account for each run.
 
+## Pin a Deployment to Another Account
+
+A model-specific account can intentionally differ from the execution's admitted
+account. Opt in explicitly when constructing its resolver:
+
+```python
+model = mf.Model.chat_completion(
+    "openai/gpt-4.1-mini",
+    credential_resolver=accounts.resolver(
+        "openai",
+        account_name="work",
+        allow_account_override=True,
+    ),
+)
+```
+
+This model always resolves the `work` account, including inside a run admitted
+under `default`. The immutable execution scope is unchanged. Without
+`allow_account_override=True`, conflicting fixed and execution accounts still
+raise an error. Enabling the flag requires an explicit `account_name`.
+
+For the coding harness, declare `account_name` on a named model deployment in
+[TOML](service-local.md#selectable-models-for-subagents); the trusted factory
+configures this opt-in. An omitted deployment account inherits the run's
+account. The model-facing selector accepts configured aliases, not arbitrary
+account names or credential values.
+
+Managed resolvers expose a non-secret `cache_identity(owner)` describing their
+effective account, provider, and storage root. Response caching uses this
+identity so the same request under two deployment accounts cannot reuse one
+another's cached answers. Resolving this identity does not load keys or refresh
+OAuth tokens. Custom credential resolvers can implement the same method; its
+default is `None`, which preserves ordinary execution-account cache partitioning.
+
 ## Use the Accounts CLI
 
 The `accounts login` command accepts a hidden prompt by default. `--stdin`

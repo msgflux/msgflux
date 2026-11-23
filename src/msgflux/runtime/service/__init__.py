@@ -6,6 +6,7 @@ from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AgentConfiguration,
     AgentInspection,
+    AgentModelDeployment,
     ApprovalReview,
     EventRecord,
     RunActivity,
@@ -28,6 +29,7 @@ from msgflux.runtime.service.store import SQLiteServiceStore
 __all__ = [
     "AgentService",
     "AgentConfiguration",
+    "AgentModelDeployment",
     "AgentInspection",
     "AgentSession",
     "SessionLease",

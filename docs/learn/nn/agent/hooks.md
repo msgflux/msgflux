@@ -147,6 +147,11 @@ boundary. Use `transform_tool_catalog` when an extension needs to change the
 request tool surface; the transformed catalog is used both for prompt guidance
 and provider compilation.
 
+`ConversationContext.model_preference` and `ToolCatalogContext.model_preference`
+report the requested Gateway alias (`None` means the default). A context or
+catalog transform can use this value to tailor the request to the selected
+model. Choose the alias through the Agent call's `model_preference` argument.
+
 `ToolCatalogContext.catalog` is an immutable `ToolCatalogView`. Filter its
 regular entries with `with_tools(...)` instead of rebuilding schemas:
 

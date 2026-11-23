@@ -133,8 +133,8 @@ thread.
 
 A coding entry can override `model` and `reasoning_effort` at agent level.
 Otherwise it inherits the declared defaults; omitted `reasoning_effort` uses
-`medium`. The runtime does not select another
-model or account when a request fails. Credentials are not copied into the TOML
+`medium`. Model fallback is disabled unless explicitly enabled for a model
+gateway below. Missing credentials never select another account. Credentials are not copied into the TOML
 file.
 
 `defaults.account` selects the account for new prompt executions and defaults to
@@ -170,6 +170,91 @@ run and its account. Resume uses the recorded account even if
 `defaults.account` has changed. Admissions created before account selection was
 persisted keep an unknown account; managed authentication reports that identity
 cannot be recovered and requires a new execution with an explicit selection.
+
+### Selectable Models for Subagents
+
+Declare named deployments once in `[models]`, then list the aliases available to
+each coding agent. The names and `description` match `ModelGateway`: the table
+key supplies `model_name`, and `model` is the provider/model-id.
+
+```toml
+[defaults]
+agent = "coding"
+model = "opencode-go/deepseek-v4.1-flash"
+account = "default"
+
+[models.fast]
+model = "opencode-go/deepseek-v4.1-flash"
+description = "Explore files and handle small, well-defined changes."
+account_name = "work"
+
+[models.deep]
+model = "openai-codex/gpt-6-sol"
+description = "Investigate concurrency bugs and architectural changes."
+account_name = "default"
+reasoning_effort = "high"
+
+[agents.coding]
+preset = "coding"
+subagents = ["explorer", "builder"]
+
+[agents.explorer]
+preset = "explorer"
+models = ["fast", "deep"]
+
+[agents.builder]
+preset = "builder"
+models = ["deep", "fast"]
+model_fallback = false
+```
+
+This complete configuration gives the explorer `fast` as its default and the
+builder `deep`. Configure the listed providers in those account bundles before
+running; model availability depends on the provider. The factory builds a
+`ModelGateway` for each agent with `models`, and `AgentTool` presents that agent's
+aliases and descriptions to the parent. The parent can delegate with
+`agent(name="builder", message="Investigate the race", model="deep")`.
+
+- `model` and `models` are mutually exclusive on an agent. When neither is set,
+  it inherits `defaults.model` and retains single-model behavior.
+- `models` must be nonempty, ordered, and contain unique, declared aliases. Every
+  deployment needs a nonempty `description`. The first alias is the default.
+- A deployment's `reasoning_effort` overrides the agent/default setting.
+- Explicit `account_name` pins that deployment to the named account. Omitting it
+  inherits the execution's admitted account, including `--account-name`.
+- `model_fallback` defaults to `false`. A failed selected deployment does not try
+  another model. Setting it to `true` opts into normal Gateway fallback among
+  the configured deployments; missing credentials still never switch a
+  deployment to another account.
+
+Alias selection stays local to each execution. Concurrent delegations can choose
+different models without changing a shared Agent or its tool instances. With
+fallback disabled, default workspace tools are projected for the selected model:
+OpenAI uses `apply_patch`; other model families use `edit`, `write`, and `delete`.
+Explicit tool selections and delegated workspace permissions still apply. Image
+reading follows the selected deployment's capabilities. With fallback enabled,
+the catalog includes the configured tool union and image reading requires vision
+support from every fallback deployment.
+
+A pending run records its selected deployment's model, effective reasoning
+setting, and effective account reference in checkpointed extension state. Resume
+checks that binding before pending work executes. If the selected alias now
+points to another model or account, restore the original configuration before
+resuming; a new run can use the updated configuration. With fallback enabled,
+the binding also covers the ordered fallback list. Credentials themselves are
+resolved at request time and never enter checkpoints, so rotating a key within
+the same account does not change the binding.
+
+A new thread's explicit `--model provider/model-id` overrides the root model,
+including when that path matches the pool's default. Child agents retain their
+configured model lists. Without an explicit override, a gateway thread keeps
+`model = null` in its thread metadata: the factory resolves its configured
+catalog and validates the pending run's binding. The first deployment shown by
+`agents inspect` is its configured default; response metadata identifies the
+model that actually answered. `msgflux agents inspect
+builder` shows available aliases, descriptions, default selection, reasoning
+settings, and configured account references without instantiating models or
+reading keys. An omitted account is shown as inherited.
 
 ### Browser Access
 
