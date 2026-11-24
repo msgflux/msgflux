@@ -23,6 +23,8 @@ from msgflux.runtime.workspace.docker_executor import (
     DockerWorkspaceBackend,
 )
 from msgflux.runtime.workspace.process_capture import ProcessOutputLimitError
+from msgflux.runtime.workspace.receipts import bind_command_receipt_persist
+from msgflux.tools.builtin import BashTool
 
 
 def _container_exists(executor, name):
@@ -391,3 +393,29 @@ async def test_opened_workspace_shares_files_and_docker_execution_without_contex
     await workspace.aclose()
     with pytest.raises(PermissionError, match="binding"):
         await workspace.aread_text("note.txt")
+
+
+@pytest.mark.asyncio
+async def test_real_bash_timeout_records_termination_and_allows_next_command(
+    docker_scope,
+):
+    scope, _root = docker_scope
+    scope = replace(scope, thread_id="thread", run_id="run")
+    executor = scope.workspace._environment.process_executor
+    receipts = []
+    bash = BashTool()
+    with execution_context(scope=scope), bind_command_receipt_persist(receipts.append):
+        result = await bash.acall(
+            "sleep 30", timeout_ms=2000, workspace=scope.workspace
+        )
+        assert result.results[0].status == "timed_out"
+        terminal = receipts[-1]
+        assert terminal.state == "terminated"
+        assert terminal.returncode is not None
+        assert not _container_exists(executor, terminal.resource["name"])
+        assert (
+            await executor.inspect_command(terminal)
+        ).returncode == terminal.returncode
+        result = await bash.acall("pwd", workspace=scope.workspace)
+        assert result.results[0].returncode == 0
+        assert result.results[0].stdout.strip() == "/workspace"
