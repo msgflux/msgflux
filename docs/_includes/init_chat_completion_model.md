@@ -65,12 +65,13 @@
 
         Authenticate with `OPENCODE_GO_API_KEY`. Chat Completions is the default
         protocol; `api_mode="responses"` selects the OpenAI-compatible
-        Responses endpoint and `api_mode="anthropic_messages"` selects the
-        native Anthropic Messages backend. All three use Bearer authentication
+        Responses endpoint, `api_mode="anthropic_messages"` selects the
+        native Anthropic Messages backend, and `api_mode="interactions"`
+        selects the native Google Interactions backend for Gemini models
+        such as `gemini-4-argon`. All four use Bearer authentication
         and the `opencode-go/model` namespace. `OPENCODE_GO_BASE_URL` overrides
         the OpenAI-compatible base URL
-        (`https://opencode.ai/inference/go/openai/v1`). Google/Interactions is
-        not supported.
+        (`https://opencode.ai/inference/go/openai/v1`).
 
         ```python
         import msgflux as mf
@@ -84,20 +85,25 @@
             "opencode-go/claude-haiku-5-5",
             api_mode="anthropic_messages",
         )
+        gemini_model = mf.Model.chat_completion(
+            "opencode-go/gemini-4-argon",
+            api_mode="interactions",
+        )
         ```
 
     === "OpenCode Zen"
 
         Authenticate with `OPENCODE_ZEN_API_KEY` for OpenCode's paid,
         pay-as-you-go Console gateway. Chat Completions is the default protocol;
-        `api_mode="responses"` selects the OpenAI-compatible Responses endpoint
-        and `api_mode="anthropic_messages"` selects the native Anthropic
-        Messages backend. All three use Bearer authentication and the
-        `opencode-zen/model` namespace. `OPENCODE_ZEN_BASE_URL` overrides the
+        `api_mode="responses"` selects the OpenAI-compatible Responses endpoint,
+        `api_mode="anthropic_messages"` selects the native Anthropic
+        Messages backend, and `api_mode="interactions"` selects the native
+        Google Interactions backend for Gemini models. All four use Bearer
+        authentication and the `opencode-zen/model` namespace.
+        `OPENCODE_ZEN_BASE_URL` overrides the
         OpenAI-compatible base URL
         (`https://opencode.ai/inference/openai/v1`). Credentials do not fall
-        back to `OPENCODE_GO_API_KEY`, `OPENCODE_API_KEY`, or `OPENAI_API_KEY`,
-        and native Google/Interactions is not supported.
+        back to `OPENCODE_GO_API_KEY`, `OPENCODE_API_KEY`, or `OPENAI_API_KEY`.
 
         ```python
         import msgflux as mf
@@ -110,6 +116,10 @@
         anthropic_model = mf.Model.chat_completion(
             "opencode-zen/claude-haiku-5-5",
             api_mode="anthropic_messages",
+        )
+        gemini_model = mf.Model.chat_completion(
+            "opencode-zen/gemini-4-argon",
+            api_mode="interactions",
         )
         ```
 

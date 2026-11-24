@@ -494,7 +494,7 @@ fixtures rather than the live Haiku validation matrix.
 
 ### OpenCode Go
 
-OpenCode Go exposes selected coding models through three gateway protocols.
+OpenCode Go exposes selected coding models through four gateway protocols.
 The `opencode-go` provider supports them explicitly and keeps Chat Completions
 as the default. For the paid, pay-as-you-go Console gateway, see
 [OpenCode Zen](#opencode-zen) below.
@@ -504,18 +504,20 @@ as the default. For the paid, pay-as-you-go Console gateway, see
 | `"chat_completions"` (default) | `https://opencode.ai/inference/go/openai/v1` | OpenAI-compatible Chat Completions. |
 | `"responses"` | `https://opencode.ai/inference/go/openai/v1` | OpenAI-compatible Responses. |
 | `"anthropic_messages"` | `https://opencode.ai/inference/go/anthropic` | Native Anthropic Messages with signed thinking history. |
+| `"interactions"` | `https://opencode.ai/inference/go/google/v1beta` | Native Google Interactions for Gemini models such as `gemini-4-argon`. |
 
 Select the protocol explicitly instead of guessing from a model name. msgFlux
 does not keep a model allowlist; a model ID that the service does not expose
 through the selected protocol fails at OpenCode rather than in the provider.
 Check the [OpenCode Go documentation](https://opencode.ai/v2/docs/console/go/)
-for model availability and protocol compatibility. Native Google/Interactions
-is not part of this provider: OpenCode's Google gateway endpoint does not use
-the Interactions protocol implemented by msgFlux's `gemini` provider.
+for model availability and protocol compatibility. The `interactions` mode
+speaks the same native Google Interactions protocol as msgFlux's `gemini`
+provider, mounted below OpenCode's `/google/v1beta` gateway path; use it for
+Gemini models such as `gemini-4-argon`.
 
-Authenticate with `OPENCODE_GO_API_KEY`. All three protocols use
-`Authorization: Bearer`; the native Anthropic mode never sends
-`ANTHROPIC_API_KEY` or an `x-api-key` header.
+Authenticate with `OPENCODE_GO_API_KEY`. All four protocols use
+`Authorization: Bearer`; the native Anthropic and Google modes never send
+`ANTHROPIC_API_KEY`, `GEMINI_API_KEY`, or their native key headers.
 
 ```python
 import msgflux as mf
@@ -531,14 +533,21 @@ anthropic_model = mf.Model.chat_completion(
     api_mode="anthropic_messages",
     reasoning_effort="low",
 )
+gemini_model = mf.Model.chat_completion(
+    "opencode-go/gemini-4-argon",
+    api_mode="interactions",
+    reasoning_effort="low",
+)
 ```
 
 The first model uses the default Chat Completions endpoint. The second uses the
 Responses protocol for the same provider namespace. The third selects the
 native Anthropic Messages converter, including its signed thinking replay and
-tool handling. Replace the model IDs with ones that OpenCode exposes through the
+tool handling. The fourth selects the native Google Interactions converter for
+Gemini models, including thought summaries, thought signatures, and tool
+replay. Replace the model IDs with ones that OpenCode exposes through the
 selected protocol. The same synchronous, asynchronous, streaming, and tool
-interfaces apply to all three.
+interfaces apply to all four.
 
 OpenCode controls which models are available and which protocol serves each
 model. msgFlux does not discover or switch protocols automatically, and an
@@ -556,6 +565,12 @@ The provider derives it from the same override: a trailing `/openai/v1`
 becomes `/anthropic`, and any other trailing `/v1` is removed. A base without
 either suffix is used verbatim as the Anthropic host base.
 
+Native Google Interactions needs the host base below which
+`/v1beta/interactions` is mounted. The provider derives it with the same
+rule: a trailing `/openai/v1` becomes `/google` and any other trailing
+`/v1` is removed. A base without either suffix is used verbatim as the
+Google host base.
+
 ```python
 mf.set_envs(
     OPENCODE_GO_API_KEY="...",
@@ -568,7 +583,9 @@ This example sends Chat Completions to
 `https://gateway.example/openai/v1/chat/completions`; selecting
 `api_mode="anthropic_messages"` with the same environment sends native
 Anthropic requests to
-`https://gateway.example/anthropic/v1/messages`.
+`https://gateway.example/anthropic/v1/messages`, and selecting
+`api_mode="interactions"` sends native Google Interactions requests to
+`https://gateway.example/google/v1beta/interactions`.
 
 #### Session and client identity
 
@@ -585,8 +602,9 @@ Use an Agent thread or `ChatMessages.thread_id` in normal application code.
 Explicit header overrides refer to headers supplied by host request
 configuration; `extra_headers` is not a constructor or per-call Model option.
 
-The same contract applies to Chat Completions, Responses, and native Anthropic
-Messages, in synchronous, asynchronous, streaming, and non-streaming calls.
+The same contract applies to Chat Completions, Responses, native Anthropic
+Messages, and native Google Interactions, in synchronous, asynchronous,
+streaming, and non-streaming calls.
 The fallback is reused for standalone calls on the same instance and is
 isolated between instances. It is not part of the serialized public
 configuration and is not restored: a model recreated with
@@ -645,6 +663,40 @@ the signed state needed for faithful replay. Anthropic cache counters are
 aggregated into the canonical usage report so cached input tokens and
 cache-hit percentages remain meaningful.
 
+#### Gemini models and native Interactions history
+
+The `interactions` mode keeps Google's native step history, including opaque
+thought signatures, in canonical history and replays it verbatim on the next
+turn, exactly as the [Gemini Interactions](#gemini-interactions) provider
+does. Requests are stateless by default (`store=False`), so local checkpoints
+stay authoritative.
+
+```python
+import msgflux as mf
+
+mf.set_envs(OPENCODE_GO_API_KEY="...")
+model = mf.Model.chat_completion(
+    "opencode-go/gemini-4-argon", api_mode="interactions"
+)
+
+messages = mf.ChatMessages(
+    [{"role": "user", "content": "Look up stock for BOLT-17."}],
+    thread_id="opencode-gemini",
+)
+response = model(messages, tool_catalog=catalog)
+outcomes = library.execute_intents(response.get_tool_intents())
+messages.extend(response.history_items)
+messages.extend(response.render_tool_outcomes(outcomes))
+print(model(messages, tool_catalog=catalog).consume())
+```
+
+This example executes a local function and supplies its result on the next
+native Interactions call. Keep the returned `history_items` and rendered
+outcomes when saving a conversation: they carry the thought signatures that
+Google validates on replay. Reasoning effort maps to the native
+`thinking_level`, and thought summaries are requested automatically when
+reasoning is returned.
+
 ### OpenCode Zen
 
 OpenCode Zen is OpenCode's paid, pay-as-you-go model gateway. Current OpenCode
@@ -657,7 +709,7 @@ can fall back to that balance when Extra Usage is enabled. The dedicated
 `OPENCODE_ZEN_*` variables isolate msgFlux configuration; they do not select a
 plan or change what OpenCode bills.
 
-The `opencode-zen` provider exposes three explicit gateway protocols and keeps
+The `opencode-zen` provider exposes four explicit gateway protocols and keeps
 Chat Completions as the default:
 
 | `api_mode` | Endpoint base | Notes |
@@ -665,6 +717,7 @@ Chat Completions as the default:
 | `"chat_completions"` (default) | `https://opencode.ai/inference/openai/v1` | OpenAI-compatible Chat Completions. |
 | `"responses"` | `https://opencode.ai/inference/openai/v1` | OpenAI-compatible Responses. |
 | `"anthropic_messages"` | `https://opencode.ai/inference/anthropic` | Native Anthropic Messages with signed thinking history. |
+| `"interactions"` | `https://opencode.ai/inference/google/v1beta` | Native Google Interactions for Gemini models. |
 
 These are the current Console paths. They differ from OpenCode Go's
 `/inference/go/openai/v1` and `/inference/go/anthropic` bases; msgFlux does not
@@ -677,9 +730,10 @@ does not serve through the selected protocol fails at OpenCode rather than in
 the provider. Check the [OpenCode inference endpoints](https://opencode.ai/v2/docs/console/api/inference/)
 and [model list](https://opencode.ai/v2/docs/console/models/) for availability.
 
-Authenticate with `OPENCODE_ZEN_API_KEY`. All three protocols use
-`Authorization: Bearer`; the native Anthropic mode never reads
-`ANTHROPIC_API_KEY` or sends an `x-api-key` header. There is no fallback to
+Authenticate with `OPENCODE_ZEN_API_KEY`. All four protocols use
+`Authorization: Bearer`; the native Anthropic and Google modes never read
+`ANTHROPIC_API_KEY` or `GEMINI_API_KEY`, and never send an `x-api-key` or
+`x-goog-api-key` header. There is no fallback to
 `OPENCODE_GO_API_KEY`, `OPENCODE_API_KEY`, `OPENAI_API_KEY`, or another
 provider's credential. An absent key or empty `OPENCODE_ZEN_BASE_URL` raises
 locally instead of routing with a different provider's configuration.
@@ -698,25 +752,33 @@ anthropic_model = mf.Model.chat_completion(
     api_mode="anthropic_messages",
     reasoning_effort="low",
 )
+gemini_model = mf.Model.chat_completion(
+    "opencode-zen/gemini-4-argon",
+    api_mode="interactions",
+    reasoning_effort="low",
+)
 ```
 
 The first model uses the default Chat Completions endpoint. The second selects
 OpenAI-compatible Responses. The third selects the native Anthropic Messages
-converter, including signed thinking replay and tool handling. Replace the
-model IDs with ones that OpenCode exposes through the selected protocol. The
-same synchronous, asynchronous, streaming, and tool interfaces apply to all
-three.
+converter, including signed thinking replay and tool handling. The fourth
+selects the native Google Interactions converter for Gemini models, with the
+same thought signature and tool replay as [OpenCode Go](#opencode-go). Replace
+the model IDs with ones that OpenCode exposes through the selected protocol.
+The same synchronous, asynchronous, streaming, and tool interfaces apply to
+all four.
 
 !!! note
     OpenCode limits free-tier chat models to its own client; a direct gateway
     request can return HTTP `403` even with a valid key. Use paid Zen models or
     OpenCode Go for direct API calls.
 
-Zen lists Gemini models with a native Google `generateContent` endpoint and can
-translate text models across the OpenAI and Anthropic APIs. msgFlux implements
-only the three gateway protocols above: it does not implement `generateContent`,
-and `api_mode="interactions"` is unsupported. Do not treat `opencode-zen` as a
-native Google provider.
+Zen lists Gemini models with a native Google endpoint and can translate text
+models across the OpenAI and Anthropic APIs. msgFlux speaks the native Google
+Interactions protocol through `api_mode="interactions"` for Gemini models; it
+does not implement `generateContent`. OpenCode controls which models each
+protocol serves, so a non-Gemini model through `interactions` fails at OpenCode
+rather than in the provider.
 
 #### Model factory and serialization
 
@@ -728,8 +790,9 @@ provider listing.
 
 Serialized state retains `provider`, `model_id`, and the selected `api_mode`.
 `Model.from_serialized` restores the matching backend; an
-`anthropic_messages` model is restored as the native Anthropic backend rather
-than as the Chat Completions facade. Credentials and the per-instance session
+`anthropic_messages` model is restored as the native Anthropic backend and an
+`interactions` model as the native Google Interactions backend, rather than as
+the Chat Completions facade. Credentials and the per-instance session
 fallback are not serialized.
 
 #### Base URL override
@@ -744,6 +807,10 @@ trailing `/openai/v1` becomes `/anthropic`, and any other trailing `/v1` is
 removed. A base without either suffix is used verbatim as the Anthropic host
 base.
 
+Native Google Interactions follows the same rule for the host base below which
+`/v1beta/interactions` is mounted: a trailing `/openai/v1` becomes `/google`
+and any other trailing `/v1` is removed.
+
 ```python
 import msgflux as mf
 
@@ -757,7 +824,9 @@ model = mf.Model.chat_completion("opencode-zen/deepseek-v4.1-flash")
 This example sends Chat Completions to
 `https://gateway.example/openai/v1/chat/completions`; selecting
 `api_mode="anthropic_messages"` with the same environment sends native
-Anthropic requests to `https://gateway.example/anthropic/v1/messages`.
+Anthropic requests to `https://gateway.example/anthropic/v1/messages`, and
+selecting `api_mode="interactions"` sends native Google Interactions
+requests to `https://gateway.example/google/v1beta/interactions`.
 
 #### Session and client identity
 
