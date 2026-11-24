@@ -914,6 +914,9 @@ class GeminiChatCompletion(_BaseGemini, OpenAICompatibleChatCompletion):
         params.pop("provider_tools", None)
         params.pop("tool_catalog", None)
         params.pop("prefilling", None)
+        # Transport-level header plumbing (e.g. gateway session headers),
+        # never a native request field.
+        params.pop("extra_headers", None)
         rejected = [
             f"`{name}`"
             for name in _UNSUPPORTED_REQUEST_PARAMETERS

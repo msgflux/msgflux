@@ -10,10 +10,11 @@ from msgflux.chat_messages import ChatMessages
 from msgflux.models.chat_transport import HTTPChatTransport
 from msgflux.models.http_transport import HTTPTransport
 from msgflux.models.providers.anthropic import AnthropicChatCompletion
+from msgflux.models.providers.gemini import GeminiChatCompletion
 from msgflux.runtime.context import thread_context
 from msgflux.tools import ToolCatalog, ToolOutcome
 
-API_MODES = ("chat_completions", "responses", "anthropic_messages")
+API_MODES = ("chat_completions", "responses", "anthropic_messages", "interactions")
 
 
 @dataclass(frozen=True)
@@ -24,8 +25,10 @@ class _ProviderCase:
     base_url_env: str
     base_url: str
     anthropic_base: str
+    google_base: str
     facade_name: str
     backend_name: str
+    gemini_backend_name: str
 
 
 GO = _ProviderCase(
@@ -35,8 +38,10 @@ GO = _ProviderCase(
     base_url_env="OPENCODE_GO_BASE_URL",
     base_url="https://opencode.ai/inference/go/openai/v1",
     anthropic_base="https://opencode.ai/inference/go/anthropic",
+    google_base="https://opencode.ai/inference/go/google",
     facade_name="OpenCodeGoChatCompletion",
     backend_name="_OpenCodeGoAnthropicMessages",
+    gemini_backend_name="_OpenCodeGoGeminiInteractions",
 )
 ZEN = _ProviderCase(
     provider="opencode-zen",
@@ -45,8 +50,10 @@ ZEN = _ProviderCase(
     base_url_env="OPENCODE_ZEN_BASE_URL",
     base_url="https://opencode.ai/inference/openai/v1",
     anthropic_base="https://opencode.ai/inference/anthropic",
+    google_base="https://opencode.ai/inference/google",
     facade_name="OpenCodeZenChatCompletion",
     backend_name="_OpenCodeZenAnthropicMessages",
+    gemini_backend_name="_OpenCodeZenGeminiInteractions",
 )
 PROVIDER_CASES = [pytest.param(GO, id=GO.provider), pytest.param(ZEN, id=ZEN.provider)]
 
@@ -61,6 +68,12 @@ def _classes(case):
     return getattr(opencode, case.facade_name), getattr(opencode, case.backend_name)
 
 
+def _gemini_backend(case):
+    from msgflux.models.providers import opencode
+
+    return getattr(opencode, case.gemini_backend_name)
+
+
 @pytest.fixture(autouse=True)
 def opencode_env(monkeypatch):
     """Keep every provider's environment isolated before each test."""
@@ -72,6 +85,7 @@ def opencode_env(monkeypatch):
         "OPENCODE_API_KEY",
         "OPENAI_API_KEY",
         "ANTHROPIC_API_KEY",
+        "GEMINI_API_KEY",
     ):
         monkeypatch.delenv(env_name, raising=False)
 
@@ -101,6 +115,22 @@ def _native_model(provider, *, client=None, async_client=None, **kwargs):
     model = facade(
         model_id="anthropic/claude-sonnet-4-6",
         api_mode="anthropic_messages",
+        retry=False,
+        **kwargs,
+    )
+    model.http_transport = HTTPTransport(
+        client=client,
+        async_client=async_client,
+        max_retries=0,
+    )
+    return model
+
+
+def _gemini_model(provider, *, client=None, async_client=None, **kwargs):
+    facade, _ = _classes(provider)
+    model = facade(
+        model_id="gemini-4-argon",
+        api_mode="interactions",
         retry=False,
         **kwargs,
     )
@@ -166,6 +196,153 @@ def _anthropic_completion(
         "stop_reason": stop_reason,
         "usage": usage or {"input_tokens": 3, "output_tokens": 2},
     }
+
+
+GEMINI_THOUGHT_SIGNATURE = "sig-opencode-gemini"
+
+
+def _interactions_usage():
+    return {
+        "total_tokens": 41,
+        "total_input_tokens": 36,
+        "total_output_tokens": 5,
+        "total_thought_tokens": 0,
+        "total_cached_tokens": 0,
+    }
+
+
+def _interactions_completion(text="OK", *, steps=None, status="completed"):
+    return {
+        "object": "interaction",
+        "status": status,
+        "model": "gemini-4-argon",
+        "steps": steps
+        or [
+            {"type": "thought", "signature": GEMINI_THOUGHT_SIGNATURE},
+            {"type": "model_output", "content": [{"type": "text", "text": text}]},
+        ],
+        "usage": _interactions_usage(),
+    }
+
+
+def _interactions_tool_completion():
+    return {
+        "object": "interaction",
+        "status": "requires_action",
+        "model": "gemini-4-argon",
+        "steps": [
+            {"type": "thought", "signature": GEMINI_THOUGHT_SIGNATURE},
+            {
+                "type": "function_call",
+                "id": "call_1",
+                "name": "lookup_inventory",
+                "arguments": {"sku": "1842"},
+            },
+        ],
+        "usage": _interactions_usage(),
+    }
+
+
+def _interactions_stream(text="streamed"):
+    frames = [
+        {
+            "event_type": "interaction.created",
+            "interaction": {"object": "interaction", "model": "gemini-4-argon"},
+        },
+        {"event_type": "interaction.status_update", "status": "in_progress"},
+        {"event_type": "step.start", "index": 0, "step": {"type": "thought"}},
+        {
+            "event_type": "step.delta",
+            "index": 0,
+            "delta": {
+                "type": "thought_summary",
+                "content": {"type": "text", "text": "Thinking."},
+            },
+        },
+        {
+            "event_type": "step.delta",
+            "index": 0,
+            "delta": {
+                "type": "thought_signature",
+                "signature": GEMINI_THOUGHT_SIGNATURE,
+            },
+        },
+        {"event_type": "step.stop", "index": 0},
+        {"event_type": "step.start", "index": 1, "step": {"type": "model_output"}},
+        {
+            "event_type": "step.delta",
+            "index": 1,
+            "delta": {"type": "text", "text": text},
+        },
+        {"event_type": "step.stop", "index": 1},
+        {
+            "event_type": "interaction.completed",
+            "interaction": {
+                "object": "interaction",
+                "status": "completed",
+                "model": "gemini-4-argon",
+                "usage": _interactions_usage(),
+            },
+        },
+    ]
+    payloads = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+    return payloads + "data: [DONE]\n\n"
+
+
+def _interactions_tool_stream():
+    frames = [
+        {
+            "event_type": "interaction.created",
+            "interaction": {"object": "interaction", "model": "gemini-4-argon"},
+        },
+        {"event_type": "step.start", "index": 0, "step": {"type": "thought"}},
+        {
+            "event_type": "step.delta",
+            "index": 0,
+            "delta": {
+                "type": "thought_summary",
+                "content": {"type": "text", "text": "Need the order."},
+            },
+        },
+        {
+            "event_type": "step.delta",
+            "index": 0,
+            "delta": {
+                "type": "thought_signature",
+                "signature": GEMINI_THOUGHT_SIGNATURE,
+            },
+        },
+        {"event_type": "step.stop", "index": 0},
+        {
+            "event_type": "step.start",
+            "index": 1,
+            "step": {
+                "type": "function_call",
+                "id": "call_1",
+                "name": "lookup_inventory",
+            },
+        },
+        {
+            "event_type": "step.delta",
+            "index": 1,
+            "delta": {
+                "type": "arguments_delta",
+                "arguments": '{"sku":"BOLT-17"}',
+            },
+        },
+        {"event_type": "step.stop", "index": 1},
+        {
+            "event_type": "interaction.completed",
+            "interaction": {
+                "object": "interaction",
+                "status": "requires_action",
+                "model": "gemini-4-argon",
+                "usage": _interactions_usage(),
+            },
+        },
+    ]
+    payloads = "".join(f"data: {json.dumps(frame)}\n\n" for frame in frames)
+    return payloads + "data: [DONE]\n\n"
 
 
 def _sse(*events):
@@ -374,6 +551,7 @@ def test_defaults_and_factory_registration(provider):
         "chat_completions",
         "responses",
         "anthropic_messages",
+        "interactions",
     )
     assert isinstance(model.chat_transport, HTTPChatTransport)
     assert model._get_base_url() == provider.base_url
@@ -406,9 +584,12 @@ def test_defaults_and_factory_registration(provider):
 
     with pytest.raises(
         ValueError,
-        match=("supported modes: chat_completions, responses, anthropic_messages"),
+        match=(
+            "supported modes: chat_completions, responses, anthropic_messages, "
+            "interactions"
+        ),
     ):
-        facade(model_id="deepseek-v4.1-flash", api_mode="interactions")
+        facade(model_id="deepseek-v4.1-flash", api_mode="generate_content")
 
 
 def test_registry_and_accounts_expose_both_providers_without_private_classes():
@@ -428,16 +609,27 @@ def test_registry_and_accounts_expose_both_providers_without_private_classes():
         opencode.OpenCodeZenChatCompletion._anthropic_messages_backend
         is opencode._OpenCodeZenAnthropicMessages
     )
+    assert (
+        opencode.OpenCodeGoChatCompletion._gemini_interactions_backend
+        is opencode._OpenCodeGoGeminiInteractions
+    )
+    assert (
+        opencode.OpenCodeZenChatCompletion._gemini_interactions_backend
+        is opencode._OpenCodeZenGeminiInteractions
+    )
 
     private_classes = {
         opencode._BaseOpenCode,
         opencode._OpenCodeSessions,
         opencode._OpenCodeAnthropicMessages,
+        opencode._OpenCodeGeminiInteractions,
         opencode._OpenCodeChatCompletion,
         opencode._OpenCodeGoConfig,
         opencode._OpenCodeZenConfig,
         opencode._OpenCodeGoAnthropicMessages,
         opencode._OpenCodeZenAnthropicMessages,
+        opencode._OpenCodeGoGeminiInteractions,
+        opencode._OpenCodeZenGeminiInteractions,
     }
     assert private_classes.isdisjoint(registry.values())
 
@@ -451,20 +643,30 @@ def test_base_url_override_and_missing_key(provider, monkeypatch):
     monkeypatch.setenv(provider.base_url_env, "https://gateway.example/openai/v1")
     chat = _model(provider)
     native = _native_model(provider)
+    gemini = _gemini_model(provider)
 
     assert chat._get_base_url() == "https://gateway.example/openai/v1"
     assert native._get_base_url() == "https://gateway.example/anthropic"
     assert native._native_url() == ("https://gateway.example/anthropic/v1/messages")
+    assert gemini._get_base_url() == "https://gateway.example/google"
+    assert gemini._native_endpoint() == "/v1beta/interactions"
 
     monkeypatch.setenv(provider.base_url_env, "https://gateway.example/v1")
     native = _native_model(provider)
     assert native._get_base_url() == "https://gateway.example"
     assert native._native_url() == "https://gateway.example/v1/messages"
+    gemini = _gemini_model(provider)
+    assert gemini._get_base_url() == "https://gateway.example"
+
+    monkeypatch.setenv(provider.base_url_env, "https://gateway.example/google")
+    gemini = _gemini_model(provider)
+    assert gemini._get_base_url() == "https://gateway.example/google"
 
     monkeypatch.delenv(provider.base_url_env)
     monkeypatch.delenv(provider.api_key_env)
     monkeypatch.setenv("OPENAI_API_KEY", "openai-decoy")
     monkeypatch.setenv("ANTHROPIC_API_KEY", "anthropic-decoy")
+    monkeypatch.setenv("GEMINI_API_KEY", "gemini-decoy")
 
     with pytest.raises(ValueError, match=provider.api_key_env):
         facade(model_id="deepseek-v4.1-flash")
@@ -473,6 +675,8 @@ def test_base_url_override_and_missing_key(provider, monkeypatch):
             model_id="anthropic/claude-sonnet-4-6",
             api_mode="anthropic_messages",
         )
+    with pytest.raises(ValueError, match=provider.api_key_env):
+        facade(model_id="gemini-4-argon", api_mode="interactions")
 
 
 @pytest.mark.parametrize("api_mode", API_MODES)
@@ -1214,7 +1418,9 @@ def test_cross_provider_credentials_and_bases_stay_isolated(monkeypatch):
             return httpx2.Response(200, json=_completion())
         if url.endswith("/responses"):
             return httpx2.Response(200, json=_responses_completion())
-        return httpx2.Response(200, json=_anthropic_completion())
+        if url.endswith("/v1/messages"):
+            return httpx2.Response(200, json=_anthropic_completion())
+        return httpx2.Response(200, json=_interactions_completion())
 
     client = httpx2.Client(transport=httpx2.MockTransport(handler))
     models = []
@@ -1225,6 +1431,7 @@ def test_cross_provider_credentials_and_bases_stay_isolated(monkeypatch):
                     _model(case, client=client),
                     _model(case, client=client, api_mode="responses"),
                     _native_model(case, client=client),
+                    _gemini_model(case, client=client),
                 ]
             )
         for model in models:
@@ -1236,14 +1443,18 @@ def test_cross_provider_credentials_and_bases_stay_isolated(monkeypatch):
         "https://go-gateway.example/openai/v1/chat/completions",
         "https://go-gateway.example/openai/v1/responses",
         "https://go-gateway.example/anthropic/v1/messages",
+        "https://go-gateway.example/google/v1beta/interactions",
         "https://zen-gateway.example/openai/v1/chat/completions",
         "https://zen-gateway.example/openai/v1/responses",
         "https://zen-gateway.example/anthropic/v1/messages",
+        "https://zen-gateway.example/google/v1beta/interactions",
     ]
     assert [request.headers["authorization"] for request in captured] == [
         "Bearer go-key",
         "Bearer go-key",
         "Bearer go-key",
+        "Bearer go-key",
+        "Bearer zen-key",
         "Bearer zen-key",
         "Bearer zen-key",
         "Bearer zen-key",
@@ -1252,6 +1463,10 @@ def test_cross_provider_credentials_and_bases_stay_isolated(monkeypatch):
         request for request in captured if "anthropic" in str(request.url)
     ]
     assert all("x-api-key" not in request.headers for request in anthropic_requests)
+    gemini_requests = [
+        request for request in captured if "interactions" in str(request.url)
+    ]
+    assert all("x-goog-api-key" not in request.headers for request in gemini_requests)
 
 
 def test_cross_provider_serialization_restores_its_own_backend(monkeypatch):
@@ -1262,14 +1477,18 @@ def test_cross_provider_serialization_restores_its_own_backend(monkeypatch):
 
     for case in (GO, ZEN):
         facade, backend = _classes(case)
+        gemini_backend = _gemini_backend(case)
         expected = {
             "chat_completions": facade,
             "responses": facade,
             "anthropic_messages": backend,
+            "interactions": gemini_backend,
         }
         for api_mode, expected_class in expected.items():
             if api_mode == "anthropic_messages":
                 model = _native_model(case)
+            elif api_mode == "interactions":
+                model = _gemini_model(case)
             else:
                 model = _model(case, api_mode=api_mode)
             serialized = model.serialize()
@@ -1286,8 +1505,10 @@ def test_cross_provider_serialization_restores_its_own_backend(monkeypatch):
             assert restored.api_mode == api_mode
             other = _other_provider(case)
             other_facade, other_backend = _classes(other)
+            other_gemini_backend = _gemini_backend(other)
             assert not isinstance(restored, other_facade)
             assert not isinstance(restored, other_backend)
+            assert not isinstance(restored, other_gemini_backend)
 
 
 def test_anthropic_typed_tools_signed_history_replay_and_cache_usage(provider):
@@ -1482,3 +1703,384 @@ async def test_anthropic_stream_tool_outcomes_replay_one_call_and_result(
     assert len(tool_results) == 1
     assert tool_results[0]["tool_use_id"] == "toolu_stream_1"
     assert json.loads(tool_results[0]["content"]) == {"status": "accepted"}
+
+
+def test_gemini_interactions_defaults_and_factory_registration(provider):
+    import msgflux as mf
+    from msgflux.accounts.providers import get_api_key_env
+
+    facade, _ = _classes(provider)
+    backend = _gemini_backend(provider)
+
+    native = mf.Model.chat_completion(
+        f"{provider.provider}/gemini-4-argon", api_mode="interactions"
+    )
+
+    assert isinstance(native, backend)
+    assert isinstance(native, GeminiChatCompletion)
+    assert not isinstance(native, facade)
+    assert native.provider == provider.provider
+    assert native.display_name == provider.display_name
+    assert native.model_id == "gemini-4-argon"
+    assert native.api_mode == "interactions"
+    assert native.supported_api_modes == ("interactions",)
+    assert native.api_key_env == provider.api_key_env
+    assert native.store is False
+    assert native.api_version == "v1beta"
+    assert native._native_endpoint() == "/v1beta/interactions"
+    assert native._get_base_url() == provider.google_base
+    assert native.credential_resolver.resolve(native).headers == {
+        "Authorization": "Bearer test-key"
+    }
+    assert "x-goog-api-key" not in native.credential_resolver.resolve(native).headers
+    assert get_api_key_env(provider.provider) == provider.api_key_env
+
+
+def test_gemini_completion_uses_gateway_bearer_and_session(provider):
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return httpx2.Response(200, json=_interactions_completion())
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    model = _gemini_model(provider, client=client)
+    try:
+        response = model("Reply with exactly: OK", system_prompt="Be concise.")
+    finally:
+        client.close()
+
+    assert response.consume() == "OK"
+    assert response.metadata.model["provider"] == provider.provider
+    assert response.metadata.model["api_mode"] == "interactions"
+    usage = response.metadata.usage
+    assert usage.input_tokens == 36
+    assert usage.output_tokens == 5
+    request = captured[0]
+    assert str(request.url) == f"{provider.google_base}/v1beta/interactions"
+    assert request.headers["authorization"] == "Bearer test-key"
+    assert request.headers["user-agent"] == "msgflux"
+    assert request.headers["x-opencode-session"] == model._fallback_session_id
+    assert "x-goog-api-key" not in request.headers
+    body = _request_body(request)
+    assert body["model"] == "gemini-4-argon"
+    assert body["store"] is False
+    assert body["system_instruction"] == "Be concise."
+    assert body["input"] == [
+        {
+            "type": "user_input",
+            "content": [{"type": "text", "text": "Reply with exactly: OK"}],
+        }
+    ]
+    (thought,) = [
+        item for item in response.history_items if item.get("type") == "reasoning"
+    ]
+    assert thought["provider_state"]["provider"] == provider.provider
+    assert thought["provider_state"]["api_mode"] == "interactions"
+    assert thought["provider_state"]["data"]["signature"] == GEMINI_THOUGHT_SIGNATURE
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.parametrize("stream", [False, True])
+@pytest.mark.asyncio
+async def test_gemini_all_execution_modes_keep_session_and_identity(
+    provider, asynchronous, stream
+):
+    captured = []
+
+    def sync_handler(request):
+        captured.append(request)
+        if _request_body(request).get("stream"):
+            return httpx2.Response(200, text=_interactions_stream("streamed"))
+        return httpx2.Response(200, json=_interactions_completion("RESP"))
+
+    async def async_handler(request):
+        captured.append(request)
+        if _request_body(request).get("stream"):
+            return httpx2.Response(200, text=_interactions_stream("streamed"))
+        return httpx2.Response(200, json=_interactions_completion("RESP"))
+
+    client = httpx2.Client(transport=httpx2.MockTransport(sync_handler))
+    aclient = httpx2.AsyncClient(transport=httpx2.MockTransport(async_handler))
+    model = _gemini_model(provider, client=client, async_client=aclient)
+    try:
+        with thread_context(thread_id="gemini-thread"):
+            if asynchronous:
+                response = await model.acall("Hello", stream=stream)
+            else:
+                response = model("Hello", stream=stream)
+            if stream:
+                chunks = [chunk async for chunk in response.consume()]
+                assert chunks == ["streamed"]
+            else:
+                assert response.consume() == "RESP"
+    finally:
+        client.close()
+        await aclient.aclose()
+
+    request = captured[0]
+    assert str(request.url) == f"{provider.google_base}/v1beta/interactions"
+    assert request.headers["authorization"] == "Bearer test-key"
+    assert request.headers["user-agent"] == "msgflux"
+    assert request.headers["x-opencode-session"] == "gemini-thread"
+    assert "x-goog-api-key" not in request.headers
+    assert _request_body(request)["store"] is False
+
+
+def test_gemini_session_precedence_and_case_insensitive_override(provider):
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return httpx2.Response(200, json=_interactions_completion())
+
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    model = _gemini_model(provider, client=client)
+    messages = ChatMessages(
+        [{"role": "user", "content": "Continue."}], thread_id="messages-thread"
+    )
+    try:
+        with thread_context(thread_id="active-thread"):
+            model(messages)
+        with thread_context(thread_id=""):
+            model(messages)
+        model("Standalone")
+        model.sampling_run_params["extra_headers"] = {
+            "X-OpenCode-Session": "explicit-session",
+            "user-agent": "custom-client/1.0",
+        }
+        with thread_context(thread_id="active-thread"):
+            model(messages)
+    finally:
+        client.close()
+
+    assert captured[0].headers["x-opencode-session"] == "active-thread"
+    assert captured[1].headers["x-opencode-session"] == "messages-thread"
+    assert captured[2].headers["x-opencode-session"] == model._fallback_session_id
+    assert captured[3].headers["x-opencode-session"] == "explicit-session"
+    assert captured[3].headers["user-agent"] == "custom-client/1.0"
+
+
+def _gemini_catalog():
+    return ToolCatalog.from_function_schemas(
+        schemas=[
+            {
+                "type": "function",
+                "function": {
+                    "name": "lookup_inventory",
+                    "description": "Look up a SKU.",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {"sku": {"type": "string"}},
+                        "required": ["sku"],
+                    },
+                },
+            }
+        ],
+        choice="auto",
+    )
+
+
+def test_gemini_tools_and_thought_replay(provider):
+    requests = []
+
+    def handler(request):
+        requests.append(_request_body(request))
+        if len(requests) == 1:
+            return httpx2.Response(200, json=_interactions_tool_completion())
+        return httpx2.Response(200, json=_interactions_completion("Available: 7"))
+
+    catalog = _gemini_catalog()
+    client = httpx2.Client(transport=httpx2.MockTransport(handler))
+    model = _gemini_model(provider, client=client)
+    messages = ChatMessages(
+        [{"role": "user", "content": "Check SKU-1842."}],
+        thread_id="opencode-gemini-tools",
+    )
+    try:
+        response = model(messages, tool_catalog=catalog)
+        assert response.consume().get_calls() == [
+            ("call_1", "lookup_inventory", {"sku": "1842"})
+        ]
+        intent = next(iter(response.get_tool_intents()))
+        outcomes = response.render_tool_outcomes(
+            [ToolOutcome.completed(intent, {"available": 7})]
+        )
+        assert [item["type"] for item in outcomes] == ["function_call_output"]
+        messages.extend(response.history_items)
+        messages.extend(outcomes)
+        replay_catalog = ToolCatalog(tools=catalog.tools, choice="none")
+        final = model(messages, tool_catalog=replay_catalog)
+        assert final.consume() == "Available: 7"
+    finally:
+        client.close()
+
+    first = requests[0]
+    assert first["model"] == "gemini-4-argon"
+    assert first["store"] is False
+    assert first["tools"] == [
+        {
+            "type": "function",
+            "name": "lookup_inventory",
+            "description": "Look up a SKU.",
+            "parameters": {
+                "type": "object",
+                "properties": {"sku": {"type": "string"}},
+                "required": ["sku"],
+            },
+        }
+    ]
+    assert "tool_choice" not in first
+    assert first["generation_config"] == {"tool_choice": "auto"}
+    replay = requests[1]
+    assert [step["type"] for step in replay["input"]] == [
+        "user_input",
+        "thought",
+        "function_call",
+        "function_result",
+    ]
+    assert replay["input"][1]["signature"] == GEMINI_THOUGHT_SIGNATURE
+    assert replay["input"][2] == {
+        "type": "function_call",
+        "id": "call_1",
+        "name": "lookup_inventory",
+        "arguments": {"sku": "1842"},
+    }
+    assert replay["input"][3]["type"] == "function_result"
+    assert replay["input"][3]["call_id"] == "call_1"
+    assert replay["input"][3]["name"] == "lookup_inventory"
+    assert json.loads(replay["input"][3]["result"]) == {"available": 7}
+    assert replay["generation_config"]["tool_choice"] == "none"
+
+
+@pytest.mark.parametrize("asynchronous", [False, True])
+@pytest.mark.asyncio
+async def test_gemini_stream_tool_outcomes_replay_one_call_and_result(
+    provider, asynchronous
+):
+    requests = []
+    stream_body = _interactions_tool_stream()
+
+    def handler(request):
+        requests.append(_request_body(request))
+        if requests[-1].get("stream"):
+            return httpx2.Response(
+                200,
+                text=stream_body,
+                headers={"content-type": "text/event-stream"},
+            )
+        return httpx2.Response(200, json=_interactions_completion("DONE"))
+
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+        async with httpx2.AsyncClient(
+            transport=httpx2.MockTransport(handler)
+        ) as aclient:
+            model = _gemini_model(provider, client=client, async_client=aclient)
+            with thread_context(thread_id="opencode-gemini-stream"):
+                if asynchronous:
+                    response = await model.acall(
+                        "Check BOLT-17.", stream=True, tool_catalog=_gemini_catalog()
+                    )
+                else:
+                    response = model(
+                        "Check BOLT-17.", stream=True, tool_catalog=_gemini_catalog()
+                    )
+                [chunk async for chunk in response.consume()]
+
+            snapshot = response.chat_accumulator.snapshot()
+            (intent,) = list(response.get_tool_intents())
+            assert intent.name == "lookup_inventory"
+            assert intent.arguments == {"sku": "BOLT-17"}
+            assert [item["type"] for item in snapshot] == [
+                "reasoning",
+                "function_call",
+            ]
+            assert snapshot[0]["provider_state"]["data"]["signature"] == (
+                GEMINI_THOUGHT_SIGNATURE
+            )
+
+            outcomes = response.render_tool_outcomes(
+                [ToolOutcome.completed(intent, {"available": 7})]
+            )
+            messages = ChatMessages(
+                json.loads(
+                    json.dumps(
+                        [
+                            {
+                                "type": "message",
+                                "role": "user",
+                                "content": "Check BOLT-17.",
+                            },
+                            *snapshot,
+                            *outcomes,
+                        ]
+                    )
+                ),
+                thread_id="opencode-gemini-replay",
+            )
+            replay_catalog = ToolCatalog(tools=_gemini_catalog().tools, choice="none")
+            if asynchronous:
+                final = await model.acall(messages, tool_catalog=replay_catalog)
+            else:
+                final = model(messages, tool_catalog=replay_catalog)
+            assert final.consume() == "DONE"
+
+    assert len(requests) == 2
+    assert requests[0]["stream"] is True
+    replay = requests[1]
+    assert [step["type"] for step in replay["input"]] == [
+        "user_input",
+        "thought",
+        "function_call",
+        "function_result",
+    ]
+    assert replay["input"][1]["signature"] == GEMINI_THOUGHT_SIGNATURE
+    assert replay["input"][2] == {
+        "type": "function_call",
+        "id": "call_1",
+        "name": "lookup_inventory",
+        "arguments": {"sku": "BOLT-17"},
+    }
+    assert replay["input"][3]["call_id"] == "call_1"
+    assert json.loads(replay["input"][3]["result"]) == {"available": 7}
+    assert replay["generation_config"]["tool_choice"] == "none"
+
+
+def test_gemini_fallback_session_is_recreated_and_used_on_restore(provider):
+    from msgflux import Model
+
+    model = _gemini_model(provider)
+    session = model._fallback_session_id
+    serialized = model.serialize()
+
+    assert serialized["provider"] == provider.provider
+    assert serialized["state"]["api_mode"] == "interactions"
+    assert serialized["state"]["api_version"] == "v1beta"
+    assert "_fallback_session_id" not in serialized["state"]
+    assert session not in str(serialized)
+
+    restored = Model.from_serialized(
+        serialized["provider"], serialized["model_type"], serialized["state"]
+    )
+
+    assert isinstance(restored, _gemini_backend(provider))
+    assert restored.provider == provider.provider
+    assert restored.api_mode == "interactions"
+    assert restored.api_version == "v1beta"
+    assert restored._fallback_session_id != session
+
+    captured = []
+
+    def handler(request):
+        captured.append(request)
+        return httpx2.Response(200, json=_interactions_completion())
+
+    with httpx2.Client(transport=httpx2.MockTransport(handler)) as client:
+        restored.http_transport = HTTPTransport(client=client, max_retries=0)
+        assert restored("Continue after restore").consume() == "OK"
+
+    request = captured[0]
+    assert str(request.url) == f"{provider.google_base}/v1beta/interactions"
+    assert request.headers["authorization"] == "Bearer test-key"
+    assert request.headers["x-opencode-session"] == restored._fallback_session_id
+    assert "x-goog-api-key" not in request.headers
