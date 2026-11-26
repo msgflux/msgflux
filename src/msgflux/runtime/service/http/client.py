@@ -26,6 +26,7 @@ from msgflux.runtime.service import (
     ServiceConflictError,
     ServiceRecoveryRequiredError,
     ServiceThread,
+    ThreadExtensions,
     ThreadSteerResult,
 )
 from msgflux.runtime.service.activity import (
@@ -39,6 +40,7 @@ from msgflux.runtime.service.http.records import (
     CompactRequest,
     ErrorResponse,
     EventRecord,
+    ExtensionUpdateRequest,
     HealthRecord,
     InterruptResponse,
     OpenThreadRequest,
@@ -232,6 +234,37 @@ class AgentServiceClient:
         """Request graceful shutdown of the expected runtime instance."""
         request = ShutdownRequest(expected_instance_id=expected_instance_id)
         return await self._json("POST", "/v1/shutdown", ShutdownResponse, request)
+
+    async def thread_extensions(self, thread_id: str) -> ThreadExtensions:
+        return await self._json(
+            "GET",
+            "/v1/threads/" + _segment(thread_id) + "/extensions",
+            ThreadExtensions,
+        )
+
+    async def update_extensions(
+        self,
+        thread_id: str,
+        *,
+        scope=None,
+        agent_ids=None,
+        enable=(),
+        disable=(),
+        expected_revision=None,
+    ) -> ThreadExtensions:
+        request = ExtensionUpdateRequest(
+            scope=scope,
+            agent_ids=agent_ids,
+            enable=enable,
+            disable=disable,
+            expected_revision=expected_revision,
+        )
+        return await self._json(
+            "PATCH",
+            "/v1/threads/" + _segment(thread_id) + "/extensions",
+            ThreadExtensions,
+            request,
+        )
 
     async def workspace_policy(self, thread_id: str) -> WorkspacePolicy:
         """Return the host-selected current workspace policy for a thread."""

@@ -76,6 +76,27 @@ class AgentSessionClient:
         """Canonical host path bound to the thread, if one was supplied."""
         return self._thread.cwd
 
+    async def thread_extensions(self):
+        return await self._client.thread_extensions(self.thread_id)
+
+    async def update_extensions(
+        self,
+        *,
+        scope=None,
+        agent_ids=None,
+        enable=(),
+        disable=(),
+        expected_revision=None,
+    ):
+        return await self._client.update_extensions(
+            self.thread_id,
+            scope=scope,
+            agent_ids=agent_ids,
+            enable=enable,
+            disable=disable,
+            expected_revision=expected_revision,
+        )
+
     async def workspace_policy(self) -> WorkspacePolicy:
         """Read the current host-selected permission and approval policy."""
         return await self._client.workspace_policy(self.thread_id)

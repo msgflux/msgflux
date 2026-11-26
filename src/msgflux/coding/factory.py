@@ -249,6 +249,8 @@ class _CodingSessionBuilder:
             )
             return AgentSession(
                 agent,
+                extension_catalog=self.extension_catalog,
+                extension_import_root=self.config_path.parent,
                 on_close=lambda: _close_resources(
                     (*models, *tool_resources, registry), workspace
                 ),

@@ -208,3 +208,28 @@ class EventRecord(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
     run_id: str | None = None
     source_path: tuple[str, ...] = ()
     version: Literal[1] = 1
+
+
+class ExtensionSelection(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """Durable constructor selections, without plugin objects or options."""
+
+    thread_id: str
+    revision: int = 0
+    agents: dict[str, tuple[str, ...]] = msgspec.field(default_factory=dict)
+
+
+class AgentExtensionStatus(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    """One position in a session's composed Agent tree."""
+
+    agent_id: str
+    name: str
+    parent_id: str | None
+    status: Literal["idle", "busy"]
+    extensions: tuple[str, ...]
+
+
+class ThreadExtensions(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    thread_id: str
+    revision: int
+    agents: tuple[AgentExtensionStatus, ...]
+    available: tuple[str, ...] = ()

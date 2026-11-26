@@ -17,6 +17,7 @@ from msgflux.runtime.service.records import (
     AdmissionReceipt,
     AdmissionRecord,
     AdmissionStatus,
+    ExtensionSelection,
     ServiceBusyError,
     ServiceConflictError,
     ServiceThread,
@@ -168,6 +169,14 @@ class SQLiteServiceStore:
                         SELECT RAISE(ABORT, 'workspace policy history is append-only');
                     END"""
                 )
+                self._connection.execute(
+                    """CREATE TABLE IF NOT EXISTS service_thread_extensions (
+                    thread_id TEXT PRIMARY KEY
+                        REFERENCES service_threads(thread_id) ON DELETE CASCADE,
+                    revision INTEGER NOT NULL CHECK (revision > 0),
+                    selection TEXT NOT NULL
+                    )"""
+                )
                 self._connection.commit()
                 if str(path) != ":memory:":
                     _enable_wal(self._connection)
@@ -249,6 +258,77 @@ class SQLiteServiceStore:
             )
             for row in rows
         )
+
+    def extension_revision(self, thread_id: str) -> int:
+        """Check a cached generation without decoding the composition on every poll."""
+        with self._lock:
+            row = self._connection.execute(
+                "SELECT revision FROM service_thread_extensions WHERE thread_id=?",
+                (thread_id,),
+            ).fetchone()
+            if row is None:
+                self.thread(thread_id)
+                return 0
+            return row["revision"]
+
+    def extension_selection(self, thread_id: str) -> ExtensionSelection:
+        with self._lock:
+            self.thread(thread_id)
+            row = self._connection.execute(
+                "SELECT revision, selection FROM service_thread_extensions "
+                "WHERE thread_id=?",
+                (thread_id,),
+            ).fetchone()
+        if row is None:
+            return ExtensionSelection(thread_id)
+        agents = msgspec.json.decode(row["selection"], type=dict[str, tuple[str, ...]])
+        return ExtensionSelection(thread_id, row["revision"], agents)
+
+    def _require_extension_revision(self, thread_id, expected_revision):
+        if expected_revision is not None:
+            if self.extension_revision(thread_id) != expected_revision:
+                raise ServiceConflictError("The thread extension configuration changed")
+
+    def update_extension_selection(
+        self, selection: ExtensionSelection, *, expected_revision: int
+    ) -> ExtensionSelection:
+        if type(expected_revision) is not int or expected_revision < 0:
+            raise ValueError("expected_revision must be a non-negative integer")
+        selection = msgspec.convert(selection, type=ExtensionSelection, strict=True)
+        if not selection.agents:
+            raise ValueError("An extension composition must contain its root Agent")
+        for agent_id, names in selection.agents.items():
+            validate_identifier(agent_id, "agent_id")
+            if len(names) != len(set(names)):
+                raise ValueError("Duplicate extension names")
+            for name in names:
+                validate_identifier(name, "extension")
+        with self._lock, self._connection:
+            self._connection.execute("BEGIN IMMEDIATE")
+            self._require_extension_revision(selection.thread_id, expected_revision)
+            active = self._connection.execute(
+                """SELECT 1 FROM service_admissions WHERE thread_id=?
+                AND status IN ('accepted', 'running', 'paused') LIMIT 1""",
+                (selection.thread_id,),
+            ).fetchone()
+            if active is not None:
+                raise ServiceBusyError("The thread has unfinished admitted work")
+            current = self.extension_selection(selection.thread_id)
+            if current.agents == selection.agents:
+                return current
+            result = msgspec.structs.replace(selection, revision=current.revision + 1)
+            self._connection.execute(
+                """INSERT INTO service_thread_extensions
+                (thread_id, revision, selection)
+                VALUES (?, ?, ?) ON CONFLICT(thread_id) DO UPDATE SET
+                revision=excluded.revision, selection=excluded.selection""",
+                (
+                    result.thread_id,
+                    result.revision,
+                    msgspec.json.encode(result.agents).decode(),
+                ),
+            )
+            return result
 
     @staticmethod
     def _policy_values(policy: WorkspacePolicy) -> tuple[str, str, str]:
@@ -515,6 +595,7 @@ class SQLiteServiceStore:
         account_name: str | None = None,
         *,
         check_account: bool = True,
+        extension_revision: int | None = None,
     ) -> AdmissionRecord:
         validate_identifier(thread_id, "thread_id")
         validate_identifier(request_id, "request_id")
@@ -530,6 +611,7 @@ class SQLiteServiceStore:
             # Serialize admission across independent connections as well as callers.
             self._connection.execute("BEGIN IMMEDIATE")
             self.thread(thread_id)
+            self._require_extension_revision(thread_id, extension_revision)
             existing = self.get(thread_id, request_id)
             if existing is not None:
                 if (existing.namespace, existing.prompt) != (namespace, prompt):
@@ -621,7 +703,9 @@ class SQLiteServiceStore:
                 )
             return self.get(receipt.thread_id, receipt.request_id).receipt
 
-    def prepare_resume(self, record: AdmissionRecord) -> AdmissionRecord:
+    def prepare_resume(
+        self, record: AdmissionRecord, *, extension_revision: int | None = None
+    ) -> AdmissionRecord:
         """CAS after the trusted host has established old-worker quiescence."""
         record = msgspec.convert(record, type=AdmissionRecord, strict=True)
         if (
@@ -633,6 +717,9 @@ class SQLiteServiceStore:
             )
         with self._lock, self._connection:
             self._connection.execute("BEGIN IMMEDIATE")
+            self._require_extension_revision(
+                record.receipt.thread_id, extension_revision
+            )
             changed = self._connection.execute(
                 """UPDATE service_admissions
                 SET status='accepted', owner_id=NULL, error=NULL,

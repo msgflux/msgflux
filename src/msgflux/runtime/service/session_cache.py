@@ -261,6 +261,33 @@ class _SessionCache:
             raise
         return False
 
+    async def install(self, thread: Any, session: Any, *, close_error=None) -> None:
+        """Publish a prebuilt generation after service-owned idle reconstruction."""
+        key = self._thread_key(thread)
+        async with self._lock:
+            if self._closed:
+                raise ServiceRecoveryRequiredError("The session cache is closing")
+            if key in self._entries or key in self._loads:
+                raise ServiceBusyError("The session changed during reconstruction")
+            if close_error is None and self._at_capacity_locked():
+                raise ServiceBusyError(self._capacity_busy_reason_locked())
+            if self._validate is not None:
+                self._validate(session)
+            self._generation += 1
+            now = self._clock()
+            self._entries[key] = _Entry(
+                thread,
+                key,
+                self._generation,
+                session,
+                last_used=now,
+                idle_since=now,
+                next_probe_at=now,
+                close_error=close_error,
+            )
+            self._ensure_cleaner_locked()
+            self._cleaner_wakeup.set()
+
     async def release(self, thread: Any) -> bool:
         """Close an idle unpinned generation; absent threads are a no-op."""
         key = self._thread_key(thread)

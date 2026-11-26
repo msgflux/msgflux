@@ -140,3 +140,11 @@ class ServiceInspection(msgspec.Struct, frozen=True, forbid_unknown_fields=True)
 
     instance_id: str
     http: ServiceHTTPConfig
+
+
+class ExtensionUpdateRequest(msgspec.Struct, frozen=True, forbid_unknown_fields=True):
+    scope: Literal["tree"] | None = None
+    agent_ids: tuple[str, ...] | None = None
+    enable: tuple[str, ...] = ()
+    disable: tuple[str, ...] = ()
+    expected_revision: Annotated[int, msgspec.Meta(ge=0)] | None = None
