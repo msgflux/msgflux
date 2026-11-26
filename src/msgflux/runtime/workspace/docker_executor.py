@@ -461,7 +461,10 @@ class DockerProcessExecutor(ProcessExecutor):
             return command_inspection(receipt, "blocked", "unavailable", str(error))
 
         record = receipt_mapping(receipt)
-        if record["state"] == "completed" and record.get("returncode") is not None:
+        if (
+            record["state"] in {"completed", "terminated"}
+            and record.get("returncode") is not None
+        ):
             return command_inspection(
                 receipt,
                 "completed",
@@ -681,6 +684,7 @@ class DockerProcessExecutor(ProcessExecutor):
         resource = None
         daemon_identity = None
         completed = False
+        interrupted_drain = False
         failure = None
         create_task = None
         launch_task = None
@@ -758,14 +762,18 @@ class DockerProcessExecutor(ProcessExecutor):
                         target.extend(data[:remaining])
                 await on_output(channel, data)
 
-            code = await drain_subprocess(
-                process,
-                capture,
-                max_output_bytes=request.max_output_bytes,
-                timeout_seconds=request.timeout_seconds,
-                abort_signal=abort_signal,
-                owns_process_group=True,
-            )
+            try:
+                code = await drain_subprocess(
+                    process,
+                    capture,
+                    max_output_bytes=request.max_output_bytes,
+                    timeout_seconds=request.timeout_seconds,
+                    abort_signal=abort_signal,
+                    owns_process_group=True,
+                )
+            except (TimeoutError, asyncio.CancelledError):
+                interrupted_drain = True
+                raise
             if execution is not None:
                 await execution.update(
                     "completed",
@@ -853,7 +861,19 @@ class DockerProcessExecutor(ProcessExecutor):
                         )
                     except BaseException:  # noqa: S110
                         pass
-                    return
+                    if not interrupted_drain:
+                        return
+                    # Only release the run after verifying the exact container's
+                    # exit and durably recording it, before deleting evidence.
+                    observed = await self.inspect_command(execution.receipt)
+                    if observed.classification != "completed":
+                        return
+                    await execution.update(
+                        "terminated",
+                        returncode=observed.returncode,
+                        stdout=observed.stdout,
+                        stderr=observed.stderr,
+                    )
                 await self._remove(
                     container_id, expected_name=name, execution=execution
                 )
