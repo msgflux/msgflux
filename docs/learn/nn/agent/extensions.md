@@ -366,3 +366,56 @@ within one invocation. Nested or concurrent Agent calls with different execution
 scopes receive independent state, even when they use the same Agent instance.
 Returning from a nested call restores the parent's state. Temporary state is
 not persisted in checkpoints and must not hold durable conversation state.
+
+## Project Instructions From AGENTS.md
+
+`AgentsFileExtension` adds a project instruction file to the model-facing system
+prompt. It is opt-in and reads from the current directory of the **live
+workspace**, independently of the Python process's working directory.
+
+```python
+from msgflux import Model
+from msgflux.nn import Agent, AgentsFileExtension
+from msgflux.runtime import AgentWorkspace
+
+agent = Agent(
+    name="coder",
+    model=Model.chat_completion("opencode-go/deepseek-v4.1-flash"),
+    workspace=AgentWorkspace.local("/path/to/project"),
+    extensions=[AgentsFileExtension()],
+)
+```
+
+This Agent receives the project instructions before each model request. The
+extension tries `AGENTS.md`, `Agents.md`, then `agents.md`, using the first
+existing file. It does not concatenate variants. A blank winning file disables
+the section even if a lower-priority variant has content. Missing files, empty
+content or the absence of a workspace leave the system prompt unchanged.
+
+The read follows the workspace's read permissions and backend file rules; it
+needs no directory listing. It does not search ancestor directories, recurse
+into subdirectories or load a file from the process cwd as a fallback. Set the
+workspace cwd to choose the project directory.
+
+Instructions are reread on each model request, including prompt warmup. Edits
+therefore appear on the next request. The extension preserves the base prompt
+and does not append instructions to canonical conversation messages or store a
+second copy in checkpoint history. Async Agents use the existing asynchronous
+hook dispatch to perform file reads outside the event loop.
+
+Files use UTF-8, with an optional BOM. Reads default to at most 65,536 bytes;
+configure `AgentsFileExtension(max_bytes=131_072)` for a larger limit. An
+oversized, unreadable, unsupported or invalid UTF-8 file raises its read error
+instead of silently dropping or truncating project instructions.
+
+For the local harness, declare the factory in the existing configuration:
+
+```toml
+[extensions.agents_file]
+factory = "msgflux.nn.extensions:AgentsFileExtension"
+```
+
+Then include `"agents_file"` in the desired agent's `extensions` selection, or
+use `msgflux extensions add agents_file --agent coding`. This uses the normal
+extension configuration workflow; the extension is not automatically installed
+in coding presets.
