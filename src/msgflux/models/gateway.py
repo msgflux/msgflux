@@ -1,3 +1,4 @@
+import random
 import warnings
 from datetime import datetime, time, timezone
 from typing import TYPE_CHECKING, Any, Dict, List, Optional, Tuple, Union
@@ -22,6 +23,10 @@ _CONTROL_EXCEPTIONS = (
     TaskPauseRequestedError,
 )
 
+# Reserved `model_preference` pseudo-alias: pick one unrestricted deployment
+# uniformly at random and try it first. Deployment aliases cannot use it.
+RANDOM_MODEL_PREFERENCE = "random"
+
 if TYPE_CHECKING:
     from msgflux.tools.catalog import ToolCatalogView
 
@@ -37,6 +42,10 @@ class ModelGateway:
         - ``description`` (optional str): A concise description of the model's
           capabilities for model-facing selection interfaces.
         - ``time_constraints`` (optional): List of ``(start, end)`` HH:MM tuples.
+
+    Calls accept ``model_preference="random"`` to pick one unrestricted
+    deployment uniformly at random and try it first; the alias ``random`` is
+    reserved and cannot name a deployment.
     """
 
     msgflux_type = "model_gateway"
@@ -231,6 +240,12 @@ class ModelGateway:
         if not isinstance(model_name, str) or not model_name:
             raise TypeError(
                 f"`model_name` at position {index} must be a non-empty string"
+            )
+        if model_name == RANDOM_MODEL_PREFERENCE:
+            raise ValueError(
+                f"`model_name` at position {index} cannot be "
+                f"`{RANDOM_MODEL_PREFERENCE}`; it is reserved for random "
+                "deployment selection"
             )
 
         model = self._normalize_deployment_model(model_name, model)
@@ -450,14 +465,43 @@ class ModelGateway:
             message=error_message,
         )
 
+    @staticmethod
+    def _random_deployment(
+        available: List[Tuple[str, BaseModel]],
+    ) -> Tuple[str, BaseModel]:
+        """Pick one deployment uniformly at random.
+
+        Used for routing only, not for any cryptographic purpose.
+        """
+        return random.choice(available)  # noqa: S311
+
+    def _unrestricted_models(self) -> List[Tuple[str, BaseModel]]:
+        """Return the deployments that are not restricted at the current time."""
+        return [
+            (name, model)
+            for name, model in zip(self.model_names, self.models)
+            if not self._is_time_restricted(name)
+        ]
+
     def _available_models(
         self,
         model_preference: Optional[str] = None,
     ) -> List[Tuple[str, BaseModel]]:
-        if model_preference is not None:
+        if model_preference is not None and model_preference != (
+            RANDOM_MODEL_PREFERENCE
+        ):
             self.validate_model_name(model_preference)
 
         if not self.fallback:
+            if model_preference == RANDOM_MODEL_PREFERENCE:
+                available = self._unrestricted_models()
+                if not available:
+                    raise ModelRouterError(
+                        [],
+                        [],
+                        message="No model available due to time constraints",
+                    )
+                return [self._random_deployment(available)]
             selected_name = model_preference or self.model_names[0]
             if self._is_time_restricted(selected_name):
                 raise ModelRouterError(
@@ -471,11 +515,18 @@ class ModelGateway:
             selected_index = self._model_name_to_index[selected_name]
             return [(selected_name, self.models[selected_index])]
 
-        available = [
-            (name, model)
-            for name, model in zip(self.model_names, self.models)
-            if not self._is_time_restricted(name)
-        ]
+        available = self._unrestricted_models()
+        if model_preference == RANDOM_MODEL_PREFERENCE:
+            if not available:
+                raise ModelRouterError(
+                    [],
+                    [],
+                    message="No model available due to time constraints",
+                )
+            preferred = self._random_deployment(available)
+            return [preferred] + [
+                (name, model) for name, model in available if name != preferred[0]
+            ]
         if model_preference:
             preferred = next(
                 ((n, m) for n, m in available if n == model_preference), None
@@ -748,8 +799,11 @@ class ModelGateway:
 
         Args:
             model_preference:
-                The ``model_name`` of the deployment that should be tried first.
-                If None, starts from the first model in the list.
+                The ``model_name`` of the deployment that should be tried
+                first, the literal ``"random"`` to pick one unrestricted
+                deployment uniformly at random, or None to start from the
+                first model in the list. With ``fallback=True`` the remaining
+                deployments follow in their configured order.
             kwargs:
                 Arguments to pass to the __call__ method of the selected model.
 
@@ -770,8 +824,11 @@ class ModelGateway:
 
         Args:
             model_preference:
-                The ``model_name`` of the deployment that should be tried first.
-                If None, starts from the first model in the list.
+                The ``model_name`` of the deployment that should be tried
+                first, the literal ``"random"`` to pick one unrestricted
+                deployment uniformly at random, or None to start from the
+                first model in the list. With ``fallback=True`` the remaining
+                deployments follow in their configured order.
             kwargs:
                 Arguments to pass to the acall method of the selected model.
 

@@ -49,6 +49,32 @@ deep_result = agent(
 unavailable because of a time constraint, the Gateway tries another available
 deployment.
 
+## Random selection
+
+Pass the reserved value `model_preference="random"` to pick one deployment
+uniformly at random instead of naming it:
+
+```python
+first = agent("Summarize the log:\n\n" + incident_log, model_preference="random")
+second = agent("Draft the follow-up:\n\n" + incident_log, model_preference="random")
+```
+
+Every call draws again, so `first` and `second` can be served by different
+deployments. The draw only considers deployments that are not restricted by
+`time_constraints` at call time. With `fallback=True`, the drawn deployment is
+tried first and the remaining ones follow in their configured order; with
+`fallback=False`, only the drawn deployment is attempted. Direct Gateway
+calls follow the same rule:
+
+```python
+response = gateway("Summarize this log.", model_preference="random")
+```
+
+The alias `random` is reserved and cannot name a deployment; a deployment
+named `random` is rejected when the Gateway is created. The value is also not
+a deployment alias for helpers such as `get_model_description` or
+`set_reasoning_effort`, which keep validating real deployment names.
+
 Streaming calls follow the same rule until the stream starts producing output.
 If a deployment fails while setting up the stream, before emitting a response
 type, content, commentary, reasoning, a tool call, or any stream event, the
