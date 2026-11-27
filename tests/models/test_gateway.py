@@ -844,6 +844,169 @@ class TestModelExecution:
             await gateway.acall()
 
 
+class TestRandomModelPreference:
+    """Test suite for the reserved `model_preference="random"` selection."""
+
+    @staticmethod
+    def _pick(index):
+        return staticmethod(lambda available: available[index])
+
+    def test_random_preference_puts_chosen_deployment_first_in_configured_order(self):
+        models = [_deployment("a"), _deployment("b"), _deployment("c")]
+        gateway = ModelGateway(models=models)
+
+        with patch.object(ModelGateway, "_random_deployment", self._pick(2)):
+            available = gateway._available_models("random")
+
+        assert [name for name, _ in available] == ["c", "a", "b"]
+
+    def test_random_preference_executes_only_the_chosen_deployment(self):
+        models = [_deployment("a"), _deployment("b"), _deployment("c")]
+        gateway = ModelGateway(models=models)
+
+        with patch.object(ModelGateway, "_random_deployment", self._pick(1)):
+            response = gateway(model_preference="random")
+
+        assert "b" in response.data
+        assert [model.call_count for model in gateway.models] == [0, 1, 0]
+
+    def test_random_preference_falls_back_in_configured_order(self):
+        models = [
+            _deployment("a"),
+            _deployment("b", should_fail=True),
+            _deployment("c"),
+        ]
+        gateway = ModelGateway(models=models)
+
+        with patch.object(ModelGateway, "_random_deployment", self._pick(1)):
+            response = gateway(model_preference="random")
+
+        assert "a" in response.data
+        assert [model.call_count for model in gateway.models] == [1, 1, 0]
+
+    def test_random_preference_without_fallback_only_tries_the_chosen_deployment(self):
+        models = [
+            _deployment("a"),
+            _deployment("b", should_fail=True),
+            _deployment("c"),
+        ]
+        gateway = ModelGateway(models=models, fallback=False)
+
+        with patch.object(ModelGateway, "_random_deployment", self._pick(1)):
+            with pytest.raises(ModelRouterError, match="All 1 available models failed"):
+                gateway(model_preference="random")
+
+        assert [model.call_count for model in gateway.models] == [0, 1, 0]
+
+    def test_random_preference_skips_time_restricted_deployments(self):
+        with patch(
+            "msgflux.models.gateway.utc_now",
+            return_value=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        ):
+            models = [
+                _deployment("a", time_constraints=[("09:00", "17:00")]),
+                _deployment("b"),
+                _deployment("c"),
+            ]
+            gateway = ModelGateway(models=models)
+
+            orders = []
+            for index in range(2):
+                with patch.object(
+                    ModelGateway, "_random_deployment", self._pick(index)
+                ):
+                    orders.append(
+                        [name for name, _ in gateway._available_models("random")]
+                    )
+
+            assert orders == [["b", "c"], ["c", "b"]]
+
+            with patch.object(ModelGateway, "_random_deployment", self._pick(0)):
+                response = gateway(model_preference="random")
+
+            assert "b" in response.data
+            assert gateway.models[0].call_count == 0
+
+    def test_random_preference_all_restricted_raises(self):
+        with patch(
+            "msgflux.models.gateway.utc_now",
+            return_value=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        ):
+            models = [
+                _deployment("a", time_constraints=[("09:00", "17:00")]),
+                _deployment("b", time_constraints=[("09:00", "17:00")]),
+            ]
+            gateway = ModelGateway(models=models)
+
+            with pytest.raises(
+                ModelRouterError,
+                match="No model available due to time constraints",
+            ):
+                gateway(model_preference="random")
+
+            assert all(model.call_count == 0 for model in gateway.models)
+
+    def test_random_preference_all_restricted_raises_without_fallback(self):
+        with patch(
+            "msgflux.models.gateway.utc_now",
+            return_value=datetime(2025, 1, 1, 10, 0, 0, tzinfo=timezone.utc),
+        ):
+            models = [
+                _deployment("a", time_constraints=[("09:00", "17:00")]),
+                _deployment("b", time_constraints=[("09:00", "17:00")]),
+            ]
+            gateway = ModelGateway(models=models, fallback=False)
+
+            with pytest.raises(
+                ModelRouterError,
+                match="No model available due to time constraints",
+            ):
+                gateway(model_preference="random")
+
+            assert all(model.call_count == 0 for model in gateway.models)
+
+    def test_random_preference_covers_every_deployment_over_repeated_calls(self):
+        models = [_deployment("a"), _deployment("b"), _deployment("c")]
+        gateway = ModelGateway(models=models)
+
+        for _ in range(60):
+            gateway(model_preference="random")
+
+        assert [model.call_count for model in gateway.models] != [60, 0, 0]
+        assert all(model.call_count >= 1 for model in gateway.models)
+        assert sum(model.call_count for model in gateway.models) == 60
+
+    @pytest.mark.asyncio
+    async def test_arandom_preference_executes_the_chosen_deployment(self):
+        models = [_deployment("a"), _deployment("b")]
+        gateway = ModelGateway(models=models)
+
+        with patch.object(ModelGateway, "_random_deployment", self._pick(1)):
+            response = await gateway.acall(model_preference="random")
+
+        assert "b" in response.data
+        assert [model.call_count for model in gateway.models] == [0, 1]
+
+    def test_deployment_named_random_is_rejected(self):
+        with pytest.raises(ValueError, match="reserved for random deployment"):
+            ModelGateway(
+                models=[
+                    _deployment("random"),
+                    _deployment("other"),
+                ]
+            )
+
+    def test_validate_model_name_still_rejects_random_alias(self):
+        """The reserved value is not a deployment alias for public helpers."""
+        gateway = ModelGateway(models=[_deployment("a"), _deployment("b")])
+
+        with pytest.raises(ValueError, match="Unknown model `random`"):
+            gateway.validate_model_name("random")
+
+        with pytest.raises(ValueError, match="Unknown model `random`"):
+            gateway.get_model_description("random")
+
+
 class TestGatewaySerialization:
     """Test suite for gateway serialization."""
 
